@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-20
+
 ### Added
 - **Physical data centre as an exit target** (`datacenter`; `exitrisk scan --target datacenter`). It asks
   where the hardware goes (existing space, colocation or a new build) and whether to buy a second site for
