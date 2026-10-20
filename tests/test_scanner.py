@@ -38,6 +38,7 @@ def test_organizations_unavailable_falls_back_to_single_account(monkeypatch):
 
     monkeypatch.setattr(scanner.organizations, "describe_org", no_org)
     monkeypatch.setattr(scanner.cost, "fetch_storage", lambda s, ids, services: [])
+    monkeypatch.setattr(scanner.cost, "fetch_commitments", lambda s: [])
     monkeypatch.setattr(
         scanner.cost,
         "fetch_costs",
@@ -109,6 +110,7 @@ def test_several_ous_scan_each_account_once(monkeypatch):
 
 def _single_account(monkeypatch):
     monkeypatch.setattr(scanner, "make_session", lambda profile: object())
+    monkeypatch.setattr(scanner.cost, "fetch_commitments", lambda s: [])
     monkeypatch.setattr(scanner, "caller_identity", lambda s: {"account_id": "123456789012", "arn": "arn:x"})
 
     def no_org(_s):
@@ -198,6 +200,7 @@ def _org(monkeypatch):
     )
     monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: [])
     monkeypatch.setattr(scanner.cost, "fetch_storage", lambda s, ids, services: [])
+    monkeypatch.setattr(scanner.cost, "fetch_commitments", lambda s: [])
 
 
 def test_account_tags_are_saved_on_accounts(monkeypatch):
@@ -221,3 +224,18 @@ def test_account_tags_refused_is_a_warning(monkeypatch):
     assert doc["status"] == "complete" and all("tags" not in a for a in doc["accounts"])
     issue = next(i for i in doc["issues"] if "account tags" in i["message"])
     assert issue["severity"] == "warning" and "ListTagsForResource" in issue["hint"]
+
+
+def test_commitments_failure_is_an_issue_not_a_failed_scan(monkeypatch):
+    _single_account(monkeypatch)
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: [])
+
+    def boom(*_a):
+        raise ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "denied"}}, "GetReservationUtilization"
+        )
+
+    monkeypatch.setattr(scanner.cost, "fetch_commitments", boom)
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
+    assert doc["status"] == "complete" and doc["commitments"] is None
+    assert any("Savings Plans and reservations unavailable" in i["message"] for i in doc["issues"])

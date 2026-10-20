@@ -57,7 +57,11 @@ Resources:
             {
               "Sid": "ReadCostAndUsage",
               "Effect": "Allow",
-              "Action": "ce:GetCostAndUsage",
+              "Action": [
+                "ce:GetCostAndUsage",
+                "ce:GetSavingsPlansUtilizationDetails",
+                "ce:GetReservationUtilization"
+              ],
               "Resource": "*"
             },
             {

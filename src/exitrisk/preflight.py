@@ -36,7 +36,16 @@ MANAGEMENT_POLICY = {
             ],
             "Resource": "*",
         },
-        {"Sid": "ReadCostAndUsage", "Effect": "Allow", "Action": "ce:GetCostAndUsage", "Resource": "*"},
+        {
+            "Sid": "ReadCostAndUsage",
+            "Effect": "Allow",
+            "Action": [
+                "ce:GetCostAndUsage",
+                "ce:GetSavingsPlansUtilizationDetails",
+                "ce:GetReservationUtilization",
+            ],
+            "Resource": "*",
+        },
         {
             "Sid": "OptionalDeepScanAssumeMemberRole",
             "Effect": "Allow",

@@ -282,6 +282,32 @@
         <dl class="answers" id="answers"></dl>
         <ul id="assumptions" class="assumptions"></ul>
       </div>
+      <div id="timing">
+      <h3 class="sub-head">Timing: your deadline and AWS commitments</h3>
+      <div class="grid-est">
+        <form class="card questionnaire" id="timeForm" autocomplete="off">
+          <h3>Deadline and contract</h3>
+          <label>Regulator or board notice period (months, 0 = none)<input name="exit_deadline_months" type="number" min="0" max="240" step="1"></label>
+          <div class="pair">
+            <label>Enterprise Discount Program ends<input name="edp_end" type="month"></label>
+            <label>EDP annual commit (USD)<input name="edp_annual_commit" type="number" min="0" step="100000"></label>
+          </div>
+          <p class="muted small">Leave the EDP blank if you have none. Saved in this browser only; these do not change the estimate.</p>
+        </form>
+        <div class="est-results">
+          <div class="tiles" id="timeTiles"></div>
+          <div class="card">
+            <ul id="timePoints" class="assumptions"></ul>
+            <div id="timeRunoff" class="split-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Savings Plans and reservations</h3>
+        <p class="muted small" id="timeNote"></p>
+        <div class="table-wrap"><table class="data compact" id="timeTable"></table></div>
+      </div>
+      </div>
     </section>
 
     <!-- 6. Resilience -->

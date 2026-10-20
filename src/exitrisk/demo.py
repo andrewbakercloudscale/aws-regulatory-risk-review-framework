@@ -410,6 +410,38 @@ def _storage(accounts: list[dict], costs: list[dict], months: int) -> list[dict]
     return rows
 
 
+# Savings Plans and reservations: (kind, type, service, term, payment, months left, monthly USD).
+_COMMITMENTS = [
+    ("savings_plan", "ComputeSavingsPlans", "", "3yr", "No Upfront", 22, 118000.0),
+    ("savings_plan", "EC2InstanceSavingsPlans", "", "1yr", "Partial Upfront", 7, 31000.0),
+    ("reservation", "Reserved db.r6g.4xlarge", "Amazon Relational Database Service", "3yr", "All Upfront", 35, 26500.0),
+    ("reservation", "Reserved dc2.large", "Amazon Redshift", "3yr", "All Upfront", 27, 17800.0),
+    ("reservation", "Reserved cache.r6g.xlarge", "Amazon ElastiCache", "1yr", "No Upfront", 4, 5200.0),
+]
+
+
+def _commitments() -> list[dict]:
+    from datetime import date, timedelta
+
+    today = date.today()
+    return [
+        {
+            "kind": kind,
+            "id": f"demo-{i}",
+            "type": typ,
+            "service": svc,
+            "account_id": "111111111111",
+            "region": "",
+            "term": term,
+            "payment": pay,
+            "end": (today + timedelta(days=round(months * 30.44))).isoformat(),
+            "monthly": monthly,
+            "utilization_pct": 97.0 - 4 * i,
+        }
+        for i, (kind, typ, svc, term, pay, months, monthly) in enumerate(_COMMITMENTS)
+    ]
+
+
 def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
     rng = random.Random(seed)  # noqa: S311 - deterministic synthetic data, not security
     start, end = month_window(months)
@@ -530,6 +562,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
         "costs": costs,
         "region_costs": region_costs,
         "storage": storage,
+        "commitments": _commitments(),
         "period": {"start": start, "end": end, "months": months},
         "inventory": inventory,
         "issues": issues,

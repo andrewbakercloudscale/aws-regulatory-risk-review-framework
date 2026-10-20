@@ -7,12 +7,14 @@ Runs the console on a throwaway data directory, so it never touches your real sc
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "images"
@@ -111,7 +113,9 @@ def main() -> int:
         page.keyboard.press("Escape")
 
         scan_id = create_demo_scan(12)["id"]
-        base = f"http://127.0.0.1:{PORT}/?scan={scan_id}"
+        # A 24-month notice period and an EDP, so the timing view has something to test.
+        q = quote(json.dumps({"exit_deadline_months": 24, "edp_end": "2028-06", "edp_annual_commit": 8000000}))
+        base = f"http://127.0.0.1:{PORT}/?scan={scan_id}&q={q}"
 
         page.goto(base + "&include=prod")
         page.wait_for_selector("body[data-ready='1']")
@@ -125,6 +129,7 @@ def main() -> int:
         shoot(page, "#sec-accounts", "accounts.png")
         shoot(page, "#sec-services", "services.png")
         shoot(page, "#sec-estimate", "estimate.png")
+        shoot(page, "#timing", "timing.png")
         shoot(page, "#sec-resilience", "resilience.png")
         shoot(page, "#sec-issues", "issues.png")
         page.locator("#sec-appendix .cat-group").first.screenshot(path=str(OUT / "appendix-catalog.png"))

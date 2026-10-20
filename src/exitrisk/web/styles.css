@@ -410,3 +410,7 @@ table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(-
 .split-row .bar i { display: block; height: 100%; border-radius: 4px; }
 .chip.crit { border-color: var(--t5); color: var(--t5); font-weight: 600; }
 #resTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* Timing (section 5) */
+.sub-head { margin: 28px 0 12px; font-size: 1.05rem; }
+#timeRunoff { margin-top: 12px; }

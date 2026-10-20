@@ -110,6 +110,11 @@ class Questionnaire(BaseModel):
     parallel_run_months: int = Field(6, ge=0, le=36)
     regulated: bool = True
     materiality: float = Field(25, ge=0, le=1_000_000)
+    # Timing (not the estimate): the months you would have to exit (supplier notice, regulator
+    # expectation; 0 = not set), and an enterprise discount agreement's end month and yearly commit.
+    exit_deadline_months: int = Field(0, ge=0, le=240)
+    edp_end: str = Field("", pattern=r"^(\d{4}-(0[1-9]|1[0-2]))?$")
+    edp_annual_commit: float = Field(0, ge=0, le=1e11)
     # Resilience view only (not the estimate): accounts to treat as critical when they carry no
     # criticality tag (comma-separated, name contains), and the link speed for moving data out.
     critical_accounts: str = Field("", max_length=200)
@@ -375,10 +380,10 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "(target ramps up as AWS ramps down)"
             + (f", converted at {q.fx_per_usd:g} {q.currency}/USD." if q.currency != "USD" else "."),
             *dc["assumptions"],
-            "Excluded: target-cloud run cost after exit, licence changes, early-termination of AWS commitments "
-            "(EDP, Savings Plans, RIs), and data-transfer-out fees (since March 2024 AWS credits egress for "
-            "customers leaving AWS, on request to AWS Support and subject to approval, for a move completed within "
-            "about 60 days; budget egress for any data moved outside that window).",
+            "Excluded: target-cloud run cost after exit, licence changes, AWS commitments still owed after the "
+            "exit (EDP, Savings Plans, RIs; shown under Timing), and data-transfer-out fees (since March 2024 AWS "
+            "credits egress for customers leaving AWS, on request to AWS Support and subject to approval, for a "
+            "move completed within about 60 days; budget egress for any data moved outside that window).",
             "Figures are quoted as ranges, widened to round numbers: −25% / +50% on cost and effort, "
             "−20% / +40% on duration (early-stage estimation cone). The model's single figures are "
             "planning midpoints, not forecasts.",

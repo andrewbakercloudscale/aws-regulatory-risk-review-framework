@@ -214,6 +214,30 @@ Each scan is stored as JSON (`~/.exitrisk/scans/<id>.json`) with the raw Cost Ex
 inventory and issues. `exitrisk report <id> --include prod --questionnaire answers.json` regenerates
 the full report deterministically; the report footer carries the tool version, catalog version and scan id.
 
+## Timing (report section 5)
+
+The estimate gives an exit window; this part asks whether the window fits, and what AWS is still owed
+when it closes. None of it changes the score or the estimate.
+
+**Deadline.** A notice period typed in section 5 (`exit_deadline_months`; 0 means none), measured from
+today. *Fits* when even the slow end of the duration range finishes inside it, *At risk* when only the
+fast end does, *Does not fit* when neither does.
+
+**Savings Plans and reservations.** Read from Cost Explorer for the last complete month
+(`GetSavingsPlansUtilizationDetails`, and `GetReservationUtilization` grouped by subscription for EC2,
+RDS, ElastiCache, Redshift, OpenSearch and MemoryDB), with each commitment's end date and amortised
+monthly cost, so upfront fees are already spread over the term. Commitments are bought in one account
+and shared, so they cover the whole organisation, not just the filtered accounts. *Still to run* is
+the monthly cost times the months left. *Stranded* is the part still owed after the exit finishes:
+from the slow end (least) to the fast end (most). A planned exit that outlasts every commitment strands
+nothing; leaving in a hurry would owe everything still to run, which is shown instead. The view also
+gives the last date a new 1-year or 3-year term can start and still end before the fastest exit.
+
+**Enterprise discount (EDP or PPA).** No AWS API exposes it, so its end month and annual commitment are
+typed in section 5. The shortfall is the commitment from the exit finishing to the agreement's end:
+spend stops when the exit finishes. Real agreements often allow the shortfall to roll forward or be
+renegotiated; treat the figure as the opening position for that discussion.
+
 ## Resilience (report section 6)
 
 The exit score answers how hard a *planned* exit is. Section 6 answers the regulator's harder

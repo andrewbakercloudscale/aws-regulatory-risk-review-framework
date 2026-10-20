@@ -86,7 +86,7 @@
 
   // ------------------------------------------------------------------ questionnaire
   const Q_NUM = ["cloud_team_size", "cloud_team_allocation_pct", "app_engineers_fte", "day_rate", "fx_per_usd",
-    "contingency_pct", "parallel_run_months", "materiality", "transfer_gbps"];
+    "contingency_pct", "parallel_run_months", "materiality", "transfer_gbps", "exit_deadline_months", "edp_annual_commit"];
 
   function loadQuestionnaire() {
     let q = { ...(state.options?.defaults || {}) };
@@ -106,7 +106,7 @@
     fillSelect("iac", state.options.iac);
     fillSelect("target", state.options.target);
     fillSelect("dc_facility", state.options.dc_facility);
-    for (const form of [f, $("#resForm")]) {
+    for (const form of [f, $("#resForm"), $("#timeForm")]) {
       for (const [k, v] of Object.entries(q)) {
         if (!form[k]) continue;
         if (form[k].type === "checkbox") form[k].checked = !!v; else form[k].value = v;
@@ -122,8 +122,8 @@
 
   function readQuestionnaire() {
     const q = {};
-    // The resilience inputs (section 6) travel with the delivery answers but do not confirm them.
-    for (const el of [...$("#qForm").elements, ...$("#resForm").elements]) {
+    // The resilience (section 6) and timing inputs travel with the delivery answers but do not confirm them.
+    for (const el of [...$("#qForm").elements, ...$("#resForm").elements, ...$("#timeForm").elements]) {
       if (!el.name) continue;
       if (el.type === "checkbox") q[el.name] = el.checked;
       else if (el.name === "confirmed") q.confirmed = el.value === "true";
@@ -185,6 +185,7 @@
       renderServices(r);
       renderEstimate(r);
       renderResilience(r);
+      renderTiming(r);
       renderIssues(r);
       renderAppendix(r);
     } catch (e) {
@@ -676,6 +677,57 @@
     const cells = (x) => `<td class="num-cell">${tb(x.live_tb)}</td><td class="num-cell">${tb(x.archive_tb)}</td><td class="num-cell">${tb(x.copy_tb)}</td>`;
     $("#resDataServices").innerHTML = head("Service") + `<tbody>${d.services.slice(0, 8).map((x) => `<tr><td>${esc(x.service.replace(/^Amazon |^AWS /, ""))}</td>${cells(x)}</tr>`).join("")}</tbody>`;
     $("#resDataAccounts").innerHTML = head("Account") + `<tbody>${d.accounts.slice(0, 8).map((x) => `<tr><td>${esc(x.name)}${x.critical ? ' <span class="chip crit">Critical</span>' : ""}</td>${cells(x)}</tr>`).join("")}</tbody>`;
+  }
+
+  // ------------------------------------------------------------------ timing
+  const monthYear = (iso) => (iso ? new Date(`${iso.slice(0, 7)}-15`).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : "–");
+  const mrange = (x) => (x[0] === x[1] ? money(x[0]) : `${money(x[0])}–${money(x[1])}`);
+
+  function renderTiming(r) {
+    const t = r.timing, d = t.deadline, c = t.commitments, e = t.edp;
+    const exitEnd = t.exit_end ? `${monthYear(t.exit_end[0])} to ${monthYear(t.exit_end[1])}` : "–";
+    const tiles = [
+      tile("Exit finishes", exitEnd, t.duration_range ? `${t.duration_range} if it starts now` : "No spend in scope", t.provisional),
+      d.set ? tile("Deadline", d.label, `${d.months}-month notice`, t.provisional)
+        : tile("Deadline", "Not set", "Enter a notice period"),
+    ];
+    if (c.available && !c.empty) tiles.push(tile("Commitments", `${money(c.monthly)}/mo`, `${money(c.remaining)} still to run · last ends ${monthYear(c.last_end)}`));
+    if (e.set) tiles.push(tile("EDP", `ends ${monthYear(`${e.end_month}-15`)}`, `${money(e.remaining)} of commit left`));
+    $("#timeTiles").innerHTML = tiles.join("");
+
+    const pts = [];
+    if (d.set) {
+      pts.push(d.status === "fits" ? `The exit fits the ${d.months}-month notice period even at the slow end.`
+        : d.status === "at_risk" ? `The ${d.months}-month notice period only fits if the exit runs at the fast end; at the slow end it is ${num(d.short_months, 0)} months over.`
+          : d.status === "misses" ? `The exit does not fit the ${d.months}-month notice period: even the fast end runs over, and the slow end is ${num(d.short_months, 0)} months over.`
+            : "Set the delivery answers to test the deadline.");
+    }
+    if (c.available && !c.empty) {
+      pts.push(c.stranded_range
+        ? `About ${c.stranded_range} of commitments would still be owed after the exit finishes; ${money(c.monthly_past_exit)}/mo runs past the fastest finish.`
+        : `Every Savings Plan and reservation ends before the fastest exit finishes, so a planned exit pays nothing to break them. Leaving in a hurry would still owe ${c.stressed_range}.`);
+      if (c.buy_by?.["3yr"]) pts.push(`A new 3-year term bought after ${monthYear(c.buy_by["3yr"])} would outlast the fastest exit; ${c.buy_by["1yr"] ? `1-year terms stay safe until ${monthYear(c.buy_by["1yr"])}` : "buy 1-year terms"}.`);
+      else if (c.buy_by?.["1yr"]) pts.push(`3-year terms already outlast the fastest exit; 1-year terms stay safe until ${monthYear(c.buy_by["1yr"])}.`);
+    }
+    if (e.set) {
+      pts.push(e.shortfall_range
+        ? `The EDP runs beyond the exit: about ${e.shortfall_range} of commit could go unspent. Negotiate the term or a shortfall clause before signing the next one.`
+        : `The EDP ends ${monthYear(`${e.end_month}-15`)}${e.ends_before_exit ? ", before the exit finishes: renew on a shorter term or without a commit" : ""}.`);
+    }
+    $("#timePoints").innerHTML = pts.length ? pts.map((x) => `<li>${esc(x)}</li>`).join("") : '<li class="hint">Enter a notice period and your EDP to test the timing.</li>';
+    const maxRun = Math.max(...(c.runoff || []).map((x) => x.monthly), 1);
+    $("#timeRunoff").innerHTML = c.runoff?.length
+      ? `<p class="muted small">Monthly commitment that runs off, by quarter</p>` + c.runoff.map((x) => `<div class="split-row"><div class="split-label"><span>${esc(x.quarter)}</span><span class="num-cell">${money(x.monthly)}/mo</span></div>
+        <div class="bar"><i style="width:${(100 * x.monthly / maxRun).toFixed(1)}%;background:${css("--accent")}"></i></div></div>`).join("")
+      : "";
+
+    if (!c.available || c.empty) {
+      $("#timeNote").textContent = c.reason || "No active Savings Plans or reservations in this scan.";
+      $("#timeTable").innerHTML = "";
+      return;
+    }
+    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Stranded is what would still be owed between the exit finishing and the commitment ending.`;
+    $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Stranded</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
   }
 
   function renderIssues(r) {
@@ -1409,8 +1461,10 @@
     const confirmAnswers = () => { $("#qForm").confirmed.value = "true"; syncDatacenter(); loadReport(); };
     $("#btnRecalc").addEventListener("click", confirmAnswers);
     $("#qForm").addEventListener("change", confirmAnswers);
-    $("#resForm").addEventListener("change", loadReport);
-    $("#resForm").addEventListener("submit", (ev) => { ev.preventDefault(); loadReport(); });
+    for (const id of ["#resForm", "#timeForm"]) {
+      $(id).addEventListener("change", loadReport);
+      $(id).addEventListener("submit", (ev) => { ev.preventDefault(); loadReport(); });
+    }
     $("#btnAnswerQs").addEventListener("click", (ev) => {
       ev.preventDefault();
       $("#sec-estimate").scrollIntoView({ behavior: "smooth", block: "start" });

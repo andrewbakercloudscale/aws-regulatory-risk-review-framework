@@ -6,6 +6,19 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **Timing** (report section 5): the exit window against a regulator or board notice period you enter
+  (Fits, At risk, Does not fit), and the AWS commitments still running.
+  - **Savings Plans and reservations** from Cost Explorer: amortised monthly cost, end date, what is
+    still to run, run-off by quarter, and what would be stranded after the exit finishes. The last date
+    a new 1-year or 3-year term can start and still end inside the exit window.
+  - **Enterprise discount (EDP)**: end month and annual commitment typed on the page; the shortfall if
+    the agreement outlasts the exit.
+  - Findings for a missed deadline and for commitments still owed, and an action to keep new terms
+    inside the exit window. The demo scan carries Savings Plans and reservations.
+- IAM: `ce:GetSavingsPlansUtilizationDetails` and `ce:GetReservationUtilization` (read only; a refusal
+  is a warning on the report, not a failed scan).
+
 ## [0.4.0] - 2026-10-20
 
 ### Added

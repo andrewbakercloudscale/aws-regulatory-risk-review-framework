@@ -146,6 +146,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False) -> dict:
         "costs": data.get("costs", []),
         "region_costs": data.get("region_costs"),
         "storage": data.get("storage"),
+        "commitments": data.get("commitments"),
         "period": data.get("period"),
         "inventory": data.get("inventory", {}),
         "issues": [i.to_dict() for i in job.issues],
@@ -335,6 +336,32 @@ def run_scan(job: ScanJob) -> dict:
             )
         )
     job.update("cost", 58, f"{len(data.get('storage') or [])} storage line(s) collected")
+
+    # 3d. Savings Plans and reservations with their end dates, to time an exit. Optional.
+    job.update("cost", 59, "Querying Cost Explorer for Savings Plans and reservations")
+    try:
+        data["commitments"] = cost.fetch_commitments(session)
+    except Exception as exc:  # optional data: never fail a scan for it
+        if not isinstance(exc, (ClientError, BotoCoreError)):
+            log.exception("commitments failed with an unexpected error")
+        code, msg, hint = describe_exception(exc)
+        job.add_issue(
+            Issue(
+                "warning",
+                "cost",
+                f"Savings Plans and reservations unavailable: {msg}",
+                " ".join(
+                    x
+                    for x in (
+                        hint,
+                        "Grant ce:GetSavingsPlansUtilizationDetails and ce:GetReservationUtilization "
+                        "to time the exit against commitments.",
+                    )
+                    if x
+                ),
+                error_code=code,
+            )
+        )
 
     # 4. Optional deep inventory through a role in each member account.
     if p.inventory:

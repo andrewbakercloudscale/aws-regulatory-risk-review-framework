@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date
 
 import boto3
+from botocore.exceptions import ClientError
 
 from ..aws_session import BOTO_CONFIG
 from ..logging_config import get_logger
@@ -247,3 +248,124 @@ def fetch_costs(session: boto3.Session, account_ids: list[str], months: int) -> 
         for k, v in merged.items()
     ]
     return out, {"start": start, "end": end, "months": months}
+
+
+# Services sold with reserved capacity. Each is queried on its own and the results merged, so a
+# service with no reservations (or none in this organisation) costs one empty call.
+RESERVATION_SERVICES = (
+    "Amazon Elastic Compute Cloud - Compute",
+    "Amazon Relational Database Service",
+    "Amazon ElastiCache",
+    "Amazon Redshift",
+    "Amazon OpenSearch Service",
+    "Amazon MemoryDB",
+)
+# Reservations that cannot be queried for a service (not offered, no data) are skipped, not fatal.
+_SKIPPABLE = ("DataUnavailableException", "ValidationException")
+
+
+def _attrs(raw: dict | None) -> dict[str, str]:
+    """Commitment attributes with case-insensitive keys: AWS returns ``EndDateTime`` and ``endDateTime``."""
+    return {k.lower(): v for k, v in (raw or {}).items()}
+
+
+def fetch_commitments(session: boto3.Session) -> list[dict]:
+    """Savings Plans and reservations active in the last complete month, with their end dates.
+
+    ``monthly`` is the amortised commitment for that month (upfront fees spread over the term), so
+    the remaining obligation is ``monthly`` times the months left. Commitments are bought in one
+    account and shared across the organisation, so this is organisation-wide, not per OU.
+    """
+    client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
+    start, end = month_window(1)
+    period = {"Start": start, "End": end}
+    out: list[dict] = []
+
+    token = None
+    while True:
+        kwargs = {"TimePeriod": period, **({"NextToken": token} if token else {})}
+        try:
+            resp = client.get_savings_plans_utilization_details(**kwargs)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in _SKIPPABLE:
+                log.info("no Savings Plans data: %s", exc)
+                break
+            raise
+        for d in resp.get("SavingsPlansUtilizationDetails", []):
+            a = _attrs(d.get("Attributes"))
+            out.append(
+                {
+                    "kind": "savings_plan",
+                    "id": d.get("SavingsPlanArn", "").rsplit("/", 1)[-1],
+                    "type": a.get("savingsplanstype", "Savings Plan"),
+                    "service": "",
+                    "account_id": a.get("accountid", ""),
+                    "region": a.get("region", ""),
+                    "term": a.get("purchaseterm", ""),
+                    "payment": a.get("paymentoption", ""),
+                    "end": a.get("enddatetime", "")[:10],
+                    "monthly": round(float((d.get("AmortizedCommitment") or {}).get("TotalAmortizedCommitment", 0)), 2),
+                    "utilization_pct": _pct((d.get("Utilization") or {}).get("UtilizationPercentage")),
+                }
+            )
+        token = resp.get("NextToken")
+        if not token:
+            break
+
+    seen: set[str] = set()
+    for service in RESERVATION_SERVICES:
+        token = None
+        while True:
+            kwargs = {
+                "TimePeriod": period,
+                "GroupBy": [{"Type": "DIMENSION", "Key": "SUBSCRIPTION_ID"}],
+                "Filter": {"Dimensions": {"Key": "SERVICE", "Values": [service]}},
+                **({"NextPageToken": token} if token else {}),
+            }
+            try:
+                resp = client.get_reservation_utilization(**kwargs)
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") in _SKIPPABLE:
+                    log.info("no reservation data for %s: %s", service, exc)
+                    break
+                raise
+            for period_out in resp.get("UtilizationsByTime", []):
+                for g in period_out.get("Groups", []):
+                    rid = g.get("Value") or _attrs(g.get("Attributes")).get("subscriptionid", "")
+                    if rid in seen:
+                        continue
+                    seen.add(rid)
+                    a = _attrs(g.get("Attributes"))
+                    u = g.get("Utilization") or {}
+                    out.append(
+                        {
+                            "kind": "reservation",
+                            "id": rid,
+                            "type": "Reserved " + (a.get("instancetype") or "capacity"),
+                            "service": service,
+                            "account_id": a.get("accountid", ""),
+                            "region": a.get("region", ""),
+                            "term": a.get("leaseterm", "") or a.get("term", ""),
+                            "payment": a.get("subscriptiontype", ""),
+                            "end": a.get("enddatetime", "")[:10],
+                            "monthly": round(float(u.get("TotalAmortizedFee", 0) or 0), 2),
+                            "utilization_pct": _pct(u.get("UtilizationPercentage")),
+                        }
+                    )
+            token = resp.get("NextPageToken")
+            if not token:
+                break
+    log.info(
+        "commitments: %d savings plan(s), %d reservation(s), month %s",
+        sum(1 for c in out if c["kind"] == "savings_plan"),
+        sum(1 for c in out if c["kind"] == "reservation"),
+        start[:7],
+    )
+    return out
+
+
+def _pct(v) -> float | None:
+    try:
+        return round(float(v), 1)
+    except (TypeError, ValueError):
+        return None

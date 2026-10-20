@@ -65,6 +65,9 @@ exit" (a fact a board can govern).
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs
   manual failover). See [MULTI_REGION.md](docs/MULTI_REGION.md).
+- **Times the exit** (section 5): whether it fits a regulator or board notice period you enter, which
+  Savings Plans and reservations run off before it finishes and what would still be owed, the last
+  date a 3-year term stays inside the window, and any EDP shortfall.
 - **Tests resilience** (section 6): which accounts are critical (from account tags such as
   `Criticality = Tier1`, or names you give), how much of the critical estate one regional event would
   take down, whether tier 1 channels are isolated from each other (anti-affinity), what could move in
@@ -152,6 +155,10 @@ exitrisk catalog                                                        # list s
 **Exit estimate** — Your answers (CI/CD, Terraform, team size), the exit timeline and where the effort goes.
 
 ![Exit estimate](docs/images/estimate.png)
+
+**Timing** — The exit window against your notice period, Savings Plans and reservations running off, and the EDP.
+
+![Timing](docs/images/timing.png)
 
 **Resilience** — Critical accounts, correlated failure by region and channel, a stressed exit and the data to move.
 

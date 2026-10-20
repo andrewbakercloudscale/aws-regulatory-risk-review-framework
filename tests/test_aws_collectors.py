@@ -157,3 +157,52 @@ def test_fetch_account_tags_trims_keys(monkeypatch):
         assert organizations.fetch_account_tags(session, ["222222222222"]) == {
             "222222222222": {"Criticality": "Tier 1"}
         }
+
+
+def test_fetch_commitments_reads_savings_plans_and_reservations(monkeypatch):
+    client = boto3.client("ce", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
+    stub = Stubber(client)
+    stub.add_response(
+        "get_savings_plans_utilization_details",
+        {
+            "SavingsPlansUtilizationDetails": [
+                {
+                    "SavingsPlanArn": "arn:aws:savingsplans::111111111111:savingsplan/sp-1",
+                    "Attributes": {
+                        "SavingsPlansType": "ComputeSavingsPlans",
+                        "PurchaseTerm": "3yr",
+                        "PaymentOption": "No Upfront",
+                        "EndDateTime": "2028-08-20T00:00:00.000Z",
+                    },
+                    "Utilization": {"UtilizationPercentage": "97.5"},
+                    "AmortizedCommitment": {"TotalAmortizedCommitment": "118000.004"},
+                }
+            ],
+            "TimePeriod": {"Start": "2026-09-01", "End": "2026-10-01"},
+        },
+    )
+    rds = {
+        "TimePeriod": {"Start": "2026-09-01", "End": "2026-10-01"},
+        "Groups": [
+            {
+                "Key": "SUBSCRIPTION_ID",
+                "Value": "ri-1",
+                "Attributes": {"instanceType": "db.r6g.4xlarge", "leaseTerm": "3yr", "endDateTime": "2029-05-21"},
+                "Utilization": {"UtilizationPercentage": "89", "TotalAmortizedFee": "26500"},
+            }
+        ],
+    }
+    for service in cost.RESERVATION_SERVICES:
+        if service == "Amazon Relational Database Service":
+            stub.add_response("get_reservation_utilization", {"UtilizationsByTime": [rds, rds]})
+        else:
+            stub.add_client_error("get_reservation_utilization", "DataUnavailableException")
+    session = _session()
+    monkeypatch.setattr(session, "client", lambda *a, **k: client)
+    with stub:
+        rows = cost.fetch_commitments(session)
+    assert [(r["kind"], r["id"], r["end"], r["monthly"], r["term"]) for r in rows] == [
+        ("savings_plan", "sp-1", "2028-08-20", 118000.0, "3yr"),
+        ("reservation", "ri-1", "2029-05-21", 26500.0, "3yr"),
+    ]
+    assert rows[0]["utilization_pct"] == 97.5 and rows[1]["type"] == "Reserved db.r6g.4xlarge"

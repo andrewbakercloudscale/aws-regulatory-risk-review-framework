@@ -31,6 +31,7 @@ from .estimate import TARGET_LABELS, TARGET_PHRASES, TYPICAL_COUNTS, Questionnai
 from .filtering import AccountFilter
 from .issues import Issue
 from .resilience import build_resilience
+from .timing import build_timing
 
 RATINGS = [(25, "Low"), (40, "Moderate"), (55, "Elevated"), (70, "High"), (101, "Critical")]
 
@@ -453,8 +454,9 @@ def build_report(
     estimate["provisional"] = not questionnaire.confirmed
     summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
     summary["narrative"] = _narrative(summary, accounts_out, estimate, questionnaire)
+    timing = build_timing(scan, estimate, questionnaire)
     summary["executive"] = _executive_summary(
-        summary, accounts_out, estimate, questionnaire, scan, bool(inventory), resilience
+        summary, accounts_out, estimate, questionnaire, scan, bool(inventory), resilience, timing
     )
 
     sev_order = {"critical": 0, "error": 1, "warning": 2, "info": 3}
@@ -490,6 +492,7 @@ def build_report(
         "growth": growth,
         "estimate": estimate,
         "resilience": resilience,
+        "timing": timing,
         "issues": issues,
         "issue_counts": {s: sum(1 for i in issues if i.get("severity") == s) for s in sev_order},
     }
@@ -561,6 +564,7 @@ def _executive_summary(
     scan: dict,
     deep_scan: bool,
     resilience: dict | None = None,
+    timing: dict | None = None,
 ) -> dict:
     """The one-page brief that opens the report: bottom line, findings, the exit, actions, confidence.
 
@@ -572,9 +576,9 @@ def _executive_summary(
     defaults, empty = not q.confirmed, bool(est.get("empty"))
     headline = _headline(summary, est, defaults)
     context = _context(summary)
-    findings = _findings(summary, accounts) + _resilience_findings(resilience or {})
+    findings = _findings(summary, accounts) + _timing_findings(timing or {}) + _resilience_findings(resilience or {})
     exit_facts, exit_line = _exit(est, q, defaults)
-    actions = _actions(summary, accounts, defaults, deep_scan, resilience or {})
+    actions = _actions(summary, accounts, defaults, deep_scan, resilience or {}, timing or {})
     confidence, reasons = _confidence(summary, scan, defaults, deep_scan)
     plain = lambda x: f"{x['lead']} {x['text']}"  # noqa: E731
     return {
@@ -772,7 +776,66 @@ def _resilience_action(r: dict) -> dict | None:
     return None
 
 
-def _actions(s: dict, accounts: list[dict], defaults: bool, deep_scan: bool, resilience: dict) -> list[dict]:
+def _timing_findings(tm: dict) -> list[dict]:
+    """Would the exit meet the deadline, and what would still be owed to AWS when it finishes."""
+    out = []
+    d, c, e = tm.get("deadline") or {}, tm.get("commitments") or {}, tm.get("edp") or {}
+    if d.get("status") in ("at_risk", "misses"):
+        out.append(
+            {
+                "lead": f"The exit {'may not fit' if d['status'] == 'at_risk' else 'does not fit'} the "
+                f"{d['months']}-month deadline:",
+                "text": f"it takes roughly {tm['duration_range']}"
+                + (" on default delivery answers" if tm.get("provisional") else "")
+                + ". Start earlier, add capacity, or agree a longer transition.",
+            }
+        )
+    owed = [x for x in (c.get("stranded_range"), e.get("shortfall_range")) if x]
+    if not owed and c.get("stressed_range"):
+        out.append(
+            {
+                "lead": f"Leaving in a hurry would still owe AWS {c['stressed_range']}",
+                "text": f"in Savings Plans and reservations (the last ends {_month(c['last_end'][:7])}); a planned "
+                "exit lets them run off.",
+            }
+        )
+    if owed:
+        parts = []
+        if c.get("stranded_range"):
+            parts.append(f"{c['stranded_range']} of Savings Plans and reservations")
+        if e.get("shortfall_range"):
+            parts.append(f"{e['shortfall_range']} of enterprise discount commitment")
+        out.append(
+            {
+                "lead": "Commitments outlast the exit:",
+                "text": f"{_join(parts)} would still be owed when it finishes; the last commitment ends "
+                f"{_month(max(x for x in ((c.get('last_end') or '')[:7], e.get('end_month') or '') if x))}.",
+            }
+        )
+    return out
+
+
+def _timing_action(tm: dict) -> dict | None:
+    c = tm.get("commitments") or {}
+    buy_by = c.get("buy_by") or {}
+    if c.get("stranded_range"):
+        return {
+            "lead": "Match commitment terms to the exit plan:",
+            "text": f"{_money(c['monthly_past_exit'] * 12)} a year of commitments runs past the fastest exit. "
+            "Buy new Savings Plans and reservations on terms that end inside the exit window.",
+        }
+    if "3yr" in buy_by and c.get("available") and not c.get("empty"):
+        return {
+            "lead": "Keep commitments inside the exit window:",
+            "text": f"a 3-year Savings Plan or reservation bought after {_month(buy_by['3yr'][:7])} would outlast "
+            "the fastest exit; after that, buy 1-year terms.",
+        }
+    return None
+
+
+def _actions(
+    s: dict, accounts: list[dict], defaults: bool, deep_scan: bool, resilience: dict, timing: dict
+) -> list[dict]:
     top, _ = _pace_setters(accounts)
     lockin = [x["display"] for x in s["top_lockin_services"][:3]]
     actions = []
@@ -800,9 +863,9 @@ def _actions(s: dict, accounts: list[dict], defaults: bool, deep_scan: bool, res
                 "unless the business case says otherwise.",
             }
         )
-    res = _resilience_action(resilience)
-    if res:
-        actions.append(res)
+    for extra in (_resilience_action(resilience), _timing_action(timing)):
+        if extra:
+            actions.append(extra)
     if not deep_scan:
         actions.append(
             {
