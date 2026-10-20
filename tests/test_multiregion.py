@@ -75,6 +75,18 @@ def test_per_account_risks_name_the_failover_gap():
     assert instant["readiness"] == "Critical"
 
 
+def test_dynamodb_import_quota_depends_on_the_second_region():
+    costs = [{"month": "2026-09", "account_id": "1", "service": "Amazon DynamoDB", "amount": 2000}]
+    rc = [{"account_id": "1", "service": "Amazon DynamoDB", "region": "af-south-1", "monthly": 2000}]
+
+    def note(secondary):
+        mr = build_multiregion(_scan(costs, rc), mq=MultiRegionAnswers(secondary=secondary))
+        return mr["accounts"][0]["risks"][0]["note"]
+
+    assert "only 1 TB" in note("eu-central-1") and "Frankfurt" in note("eu-central-1")
+    assert "up to 15 TB" in note("eu-west-1")
+
+
 def test_missing_service_in_the_second_region_is_flagged():
     costs = [{"month": "2026-09", "account_id": "1", "service": "Amazon Connect", "amount": 9000}]
     rc = [{"account_id": "1", "service": "Amazon Connect", "region": "eu-west-2", "monthly": 9000}]

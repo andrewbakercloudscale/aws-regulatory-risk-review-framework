@@ -21,7 +21,7 @@
 #             availability is "not verified"; global: one instance serves every region)
 #   class     how its spend scales with the resilience pattern (see `classes`)
 
-version: "2026.10.2"
+version: "2026.10.3"
 
 regions:
   us-east-1:      {name: US East (N. Virginia),          country: US, jurisdiction: US, continent: North America, lat: 38.9,  lon: -77.4,  price: 1.00}
@@ -280,7 +280,14 @@ risks:
   AWS Lambda: {failover: manual, note: "Functions are regional: deploy to both regions and route with Route 53 or API Gateway; event sources (queues, streams) do not move with them."}
   Amazon Relational Database Service: {failover: manual, note: "Cross-region read replica or Aurora Global Database. Promotion is a manual or scripted step (Aurora Global managed failover in about a minute); asynchronous, so a few seconds of writes can be lost."}
   Amazon Aurora DSQL: {failover: native, note: "Multi-Region clusters are active-active with strong consistency, in supported region sets only."}
-  Amazon DynamoDB: {failover: native, note: "Global tables replicate both ways and both regions take writes; conflicting writes resolve last-writer-wins."}
+  Amazon DynamoDB:
+    failover: native
+    note: "Global tables replicate both ways and both regions take writes; conflicting writes resolve last-writer-wins. A new replica backfills up to 10 TB per region per day unless AWS raises the quota."
+    # Import from S3 quotas differ by region (DynamoDB service quotas, "Import from Amazon S3").
+    quota:
+      regions: [us-east-1, us-west-2, eu-west-1]
+      inside: "Import from S3 takes up to 15 TB of source data at a time in {region}."
+      outside: "Import from S3 takes only 1 TB of source data at a time in {region} (15 TB only in us-east-1, us-west-2 and eu-west-1): rebuilding a large table there from an S3 export must be batched and takes longer."
   Amazon DocumentDB (with MongoDB compatibility): {failover: manual, note: "Global clusters replicate to the second region; failover promotes the secondary cluster."}
   Amazon ElastiCache: {failover: manual, note: "Global Datastore (Redis OSS / Valkey) replicates cross-region; without it the cache starts cold after failover."}
   Amazon MemoryDB: {failover: manual, note: "Multi-Region clusters only in some regions; otherwise snapshot copy and restore."}

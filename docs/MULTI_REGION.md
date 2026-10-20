@@ -51,6 +51,13 @@ and what has to be done, for example:
 | High | No live replica: restore or re-run (Redshift, Glue, EMR, Athena) | Critical |
 | Critical | Not offered in the second region: re-architect | Critical |
 
+Some notes depend on the second region. DynamoDB import from S3 takes up to 15 TB of source data at a
+time in us-east-1, us-west-2 and eu-west-1 but only 1 TB in every other region ([DynamoDB service
+quotas](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ServiceQuotas.html#import-limits)),
+so rebuilding a large table from an S3 export in, say, Frankfurt or Cape Town has to be batched. Export to
+S3 has the same limit everywhere (100 TB in flight), and a new global table replica backfills up to 10 TB
+per region per day. Region-specific notes live under `quota` in `risks` in `regions.yaml`.
+
 ![Accounts](images/multiregion-accounts.png)
 
 ## Which second region (section 4)

@@ -435,6 +435,9 @@ def _account_risks(
             failover = rc.get("failover") or classes[ln.cls]["failover"]
             note = rc.get("note") or classes[ln.cls]["note"]
             st = _availability(cfg["availability"], ln.regional, secondary) if secondary else "unverified"
+            if secondary and (quota := rc.get("quota")):
+                text = quota["inside" if secondary in quota["regions"] else "outside"]
+                note = f"{note} {text.format(region=regions[secondary]['name'])}"
             if st == "missing":
                 failover = "missing"
                 note = f"Not offered in {regions[secondary]['name']}: re-architect onto another service there. " + note
