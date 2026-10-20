@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-20
+
 ### Changed
 - **Report formatting overhaul.** Executive summary rebuilt: a one-sentence bottom line, a lighter context
   line with both scores, an exit-facts strip, and findings and recommendations that each lead with a bold
