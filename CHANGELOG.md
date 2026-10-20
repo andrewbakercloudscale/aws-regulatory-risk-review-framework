@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-20
+
 ### Added
 - **Timing** (report section 5): the exit window against a regulator or board notice period you enter
   (Fits, At risk, Does not fit), and the AWS commitments still running.
@@ -18,6 +20,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
     inside the exit window. The demo scan carries Savings Plans and reservations.
 - IAM: `ce:GetSavingsPlansUtilizationDetails` and `ce:GetReservationUtilization` (read only; a refusal
   is a warning on the report, not a failed scan).
+
+### Fixed
+- The console no longer blanks a select (e.g. the data-centre facility) when a saved answer is one the
+  page does not offer, which made the report fail with a validation error.
 
 ## [0.4.0] - 2026-10-20
 
