@@ -162,9 +162,37 @@ def test_executive_summary_flags_concentration_and_default_answers():
     assert "concentrated" in x["bottom_line"] and "9 account(s) (90%) are broadly portable" in x["bottom_line"]
     assert any("big-prd" in a for a in x["actions"])
     assert any("default answers" in a for a in x["actions"])
-    assert x["confidence"] in {"Medium", "Low"} and x["exit"].startswith("About ")
+    assert (
+        x["confidence"] in {"Medium", "Low"}
+        and x["exit"].startswith("Exit window: about ")
+        and "of a year's AWS spend" in x["exit"]
+    )
 
 
 def test_executive_summary_without_spend():
     x = build_report(_scan([]))["summary"]["executive"]
     assert x["confidence"] == "Low" and not x["findings"]
+
+
+def test_growth_by_product_type():
+    costs = [
+        {"account_id": "1", "service": "Amazon Connect", "month": "2026-07", "amount": 1000},
+        {"account_id": "1", "service": "Amazon Connect", "month": "2026-09", "amount": 1500},
+        {"account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "month": "2026-07", "amount": 2000},
+        {"account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "month": "2026-09", "amount": 1500},
+    ]
+    r = build_report(_scan(costs, [{"id": "1", "name": "a-prod"}]))
+    g = r["growth"]
+    assert (g["first_month"], g["last_month"]) == ("2026-07", "2026-09")
+    assert g["total"]["pct"] == 0.0 and g["lockin"]["pct"] == 50.0
+    cats = {c["category"]: c for c in g["by_category"]}
+    assert cats["Business apps"]["change"] == 500 and cats["Compute"]["pct"] == -25.0
+    assert cats["Business apps"]["lockin_pct"] == 100.0
+    assert any("lock-in is growing faster than the estate" in f for f in r["summary"]["executive"]["findings"])
+    assert r["estimate"]["cost"]["pct_of_annual_spend"] > 0
+
+
+def test_growth_needs_two_months():
+    costs = [{"account_id": "1", "service": "Amazon Connect", "month": "2026-09", "amount": 100}]
+    g = build_report(_scan(costs, [{"id": "1", "name": "a-prod"}]))["growth"]
+    assert g["total"] is None and g["by_category"] == []

@@ -227,6 +227,10 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "total": round(total_cost),
             "low": round(total_cost * 0.75),
             "high": round(total_cost * 1.5),
+            # One-off exit cost against a year of the AWS bill being exited, in the same currency.
+            "pct_of_annual_spend": round(100 * total_cost / (monthly_spend * 12 * q.fx_per_usd), 1)
+            if monthly_spend > 0
+            else None,
         },
         waves=waves,
         assumptions=[

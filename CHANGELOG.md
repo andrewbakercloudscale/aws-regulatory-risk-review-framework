@@ -12,6 +12,13 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   per-account and a √spend blend are selectable (console *Score weighting*, CLI `--weighting`).
 
 ### Added
+- **Spend growth by product type** (section 2): first-to-last-month change per catalog category, with the
+  share of each on High/Critical services, total vs lock-in growth ("is lock-in growing faster than the
+  estate?"), and an annual rate when 6+ months are scanned. Also in the JSON as `growth`.
+- **Exit target asked when starting a scan** ("Where would you exit to?"); stored with the scan and used
+  for its estimate. New scans default to 12 months of history so growth is meaningful.
+- Key figures: **High/Critical accounts (N of M)**, **Bespoke (AWS-only) services** in use, **Spend growth**,
+  exit cost as **% of annual AWS spend**, and duration relabelled **Exit window (time to leave AWS)** in years.
 - **Written executive summary at the start of the report**: a bottom-line verdict, what we found, what
   leaving would take, numbered recommendations and a confidence rating with its reasons (default
   questionnaire answers, spend-only scan, partial coverage, demo data). Also in the JSON as

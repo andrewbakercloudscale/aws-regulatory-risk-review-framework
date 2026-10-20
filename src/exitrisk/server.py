@@ -49,11 +49,12 @@ class AccessCheckRequest(BaseModel):
 class ScanRequest(BaseModel):
     profile: str | None = None
     ou_id: str | None = Field(None, max_length=80)
-    months: int = Field(3, ge=1, le=12)
+    months: int = Field(12, ge=1, le=12)
     role_name: str | None = Field(None, max_length=64, pattern=r"^[\w+=,.@-]*$")
     inventory: bool = False
     regions: list[str] | None = None
     label: str = Field("", max_length=120)
+    target: str = Field("azure", pattern=r"^(azure|gcp|oci|sovereign|onprem)$")
 
 
 class SSOSessionRequest(BaseModel):

@@ -31,11 +31,12 @@ log = get_logger("scanner")
 class ScanParams:
     profile: str | None = None
     ou_id: str | None = None
-    months: int = 3
+    months: int = 12
     role_name: str | None = None
     inventory: bool = False
     regions: list[str] | None = None
     label: str = ""
+    target: str = "azure"  # exit target asked at scan time; seeds the estimate questionnaire
 
     def validate(self) -> None:
         if not 1 <= self.months <= 12:

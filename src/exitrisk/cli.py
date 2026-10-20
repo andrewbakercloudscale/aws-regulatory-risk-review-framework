@@ -86,9 +86,13 @@ def _report(args) -> int:
     from .filtering import AccountFilter
     from .scoring import build_report
 
-    q = Questionnaire(**json.loads(Path(args.questionnaire).read_text())) if args.questionnaire else Questionnaire()
+    scan = store.load_scan(args.scan_id)
+    if args.questionnaire:
+        q = Questionnaire(**json.loads(Path(args.questionnaire).read_text()))
+    else:  # no answers given: use the exit target chosen when the scan was started
+        q = Questionnaire(target=(scan.get("params") or {}).get("target") or "azure")
     report = build_report(
-        store.load_scan(args.scan_id),
+        scan,
         AccountFilter(include=args.include or "", exclude=args.exclude or "", mode=args.mode),
         q,
         weighting=args.weighting,

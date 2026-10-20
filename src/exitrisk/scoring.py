@@ -41,6 +41,56 @@ RATING_NAMES = [label for _, label in RATINGS]
 MATERIAL_TIER_SPEND = 1.0
 
 
+def _change(first: float, last: float, months_between: int) -> dict:
+    """Spend change from the first to the last complete month, with an annualised rate."""
+    pct = 100 * (last - first) / first if first > 0 else None
+    annual = 100 * ((last / first) ** (12 / months_between) - 1) if first > 0 and last > 0 and months_between else None
+    return {
+        "first": round(first, 2),
+        "last": round(last, 2),
+        "change": round(last - first, 2),
+        "pct": round(pct, 1) if pct is not None else None,
+        # Annualising a short window magnifies noise; cap so one odd month cannot read as 10,000%.
+        "annualised_pct": round(max(min(annual, 999.0), -100.0), 1) if annual is not None else None,
+    }
+
+
+def _growth(months: list[str], trend: dict, cat_trend: dict, cat_lockin: dict) -> dict:
+    """Spend growth over the scanned period, overall, for lock-in services and by product type."""
+    if len(months) < 2:
+        return {
+            "months": len(months),
+            "first_month": None,
+            "last_month": None,
+            "total": None,
+            "lockin": None,
+            "by_category": [],
+        }
+    a, b, span = months[0], months[-1], len(months) - 1
+    total = _change(sum(trend[a].values()), sum(trend[b].values()), span)
+    lockin = _change(trend[a][4] + trend[a][5], trend[b][4] + trend[b][5], span)
+    cats = []
+    for cat, by_month in cat_trend.items():
+        row = _change(by_month.get(a, 0.0), by_month.get(b, 0.0), span)
+        spend = sum(by_month.values())
+        row.update(
+            category=cat,
+            monthly=[round(by_month.get(m, 0.0), 2) for m in months],
+            lockin_pct=round(100 * cat_lockin.get(cat, 0.0) / spend, 1) if spend else 0.0,
+            share_of_growth=round(100 * row["change"] / total["change"], 1) if total["change"] else None,
+        )
+        cats.append(row)
+    cats.sort(key=lambda r: -r["last"])
+    return {
+        "months": len(months),
+        "first_month": a,
+        "last_month": b,
+        "total": total,
+        "lockin": lockin,
+        "by_category": cats,
+    }
+
+
 def _round(v: float | None) -> float | None:
     return round(v, 1) if v is not None else None
 
@@ -93,6 +143,8 @@ def build_report(
     # Aggregate spend: account -> service -> total; month -> tier -> total.
     per_account: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     trend: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+    cat_trend: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    cat_lockin: dict[str, float] = defaultdict(float)
     excluded_spend = 0.0
     unclassified: dict[str, float] = defaultdict(float)
     negative_lines = 0
@@ -112,6 +164,9 @@ def build_report(
         # count once for effort and lock-in, not once per line.
         per_account[r["account_id"]][info.service] += r["amount"]
         trend[r["month"]][info.tier] += r["amount"]
+        cat_trend[info.category][r["month"]] += r["amount"]
+        if info.tier >= 4:
+            cat_lockin[info.category] += r["amount"]
         if not info.classified:
             unclassified[r["service"]] += r["amount"]
 
@@ -265,6 +320,10 @@ def build_report(
         "unclassified_services": len(unclassified),
         "excluded_billing_monthly": round(excluded_spend / n_months, 2),
         "top_lockin_services": [s for s in services_out if s["tier"] >= 4][:5],
+        # "Bespoke" = AWS-only services (High/Critical tiers) with material spend in scope.
+        "bespoke_services": sum(
+            1 for s in services_out if s["tier"] >= 4 and s["monthly_spend"] >= MATERIAL_TIER_SPEND
+        ),
         "weighting": weighting,
         "weighting_label": WEIGHTINGS[weighting][0],
         "score_by_weighting": {k: (round(v, 1) if v is not None else None) for k, v in scores_by_weighting.items()},
@@ -278,6 +337,8 @@ def build_report(
         "high_risk_accounts": by_rating["High"]["accounts"] + by_rating["Critical"]["accounts"],
         "high_risk_accounts_spend_pct": round(by_rating["High"]["pct_spend"] + by_rating["Critical"]["pct_spend"], 1),
     }
+    growth = _growth(months_in_data, trend, cat_trend, cat_lockin)
+    summary["growth"] = {k: growth[k] for k in ("months", "first_month", "last_month", "total", "lockin")}
     estimate["empty"] = total_monthly <= 0
     summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
     summary["narrative"] = _narrative(summary, accounts_out, estimate, questionnaire)
@@ -311,6 +372,7 @@ def build_report(
         "accounts": accounts_out,
         "services": services_out,
         "trend": [{"month": m, "tier_spend": {t: round(trend[m][t], 2) for t in range(1, 6)}} for m in months_in_data],
+        "growth": growth,
         "estimate": estimate,
         "issues": issues,
         "issue_counts": {s: sum(1 for i in issues if i.get("severity") == s) for s in sev_order},
@@ -390,7 +452,8 @@ def _executive_summary(
 
     findings = [
         f"{s['high_risk_pct']:.0f}% of spend ({_money(s['high_risk_monthly'] * 12, 'USD')} a year) runs on High or "
-        "Critical services that exist only on AWS and must be re-engineered, not just moved.",
+        f"Critical services: {s['bespoke_services']} bespoke (AWS-only) service(s) that must be re-engineered, "
+        "not just moved.",
         f"{port} of {n} account(s) are Low or Moderate risk; {hi} are High or Critical and hold "
         f"{s['high_risk_accounts_spend_pct']:.0f}% of spend.",
     ]
@@ -403,13 +466,23 @@ def _executive_summary(
         )
     if lockin:
         findings.append(f"The largest lock-in exposures are {', '.join(lockin)}.")
+    g = s.get("growth") or {}
+    if g.get("total") and g["total"]["pct"] is not None and g["lockin"]["pct"] is not None:
+        t, lk = g["total"]["pct"], g["lockin"]["pct"]
+        pace = "faster than" if lk > t + 1 else "more slowly than" if lk < t - 1 else "in line with"
+        findings.append(
+            f"Spend changed {t:+.0f}% from {g['first_month']} to {g['last_month']}; High/Critical spend changed "
+            f"{lk:+.0f}%, so lock-in is growing {pace} the estate."
+        )
 
+    d, c = est["duration"], est["cost"]
+    pct_txt = f", {c['pct_of_annual_spend']:.0f}% of a year's AWS spend" if c.get("pct_of_annual_spend") else ""
     exit_line = (
-        f"About {est['duration']['calendar_months']:.0f} months "
-        f"(range {est['duration']['low_months']:.0f}-{est['duration']['high_months']:.0f}) and "
-        f"{_money(est['cost']['total'], cur)} ({_money(est['cost']['low'], cur)}-{_money(est['cost']['high'], cur)}) "
-        f"to move to {TARGET_LABELS[q.target]}: {est['effort']['person_months']:,.0f} person-months of engineering "
-        "plus parallel running."
+        f"Exit window: about {d['calendar_months']:.0f} months (~{d['calendar_months'] / 12:.1f} years; range "
+        f"{d['low_months']:.0f}-{d['high_months']:.0f} months) "
+        f"to move everything to {TARGET_LABELS[q.target]}. One-off cost: {_money(c['total'], cur)}{pct_txt} "
+        f"(range {_money(c['low'], cur)}-{_money(c['high'], cur)}), {est['effort']['person_months']:,.0f} "
+        "person-months of engineering plus parallel running."
     )
 
     actions = []

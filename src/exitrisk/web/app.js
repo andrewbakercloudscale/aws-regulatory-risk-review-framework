@@ -28,6 +28,7 @@
     if (abs >= 1e3) return `${sym}${(v / 1e3).toFixed(1)}k`;
     return `${sym}${v.toFixed(0)}`;
   }
+  const years = (m) => (m == null ? "–" : m < 24 ? `${Math.round(m)} months` : `${(m / 12).toFixed(1)} years`);
   const num = (v, d = 0) => (v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
   const pct = (v, d = 0) => (v == null ? "–" : `${Number(v).toFixed(d)}%`);
 
@@ -119,6 +120,7 @@
       ? scans.map((s) => `<option value="${esc(s.id)}">${esc(s.label || s.ou || "Scan")} · ${esc(s.id.slice(0, 13))}${s.mode === "demo" ? " · demo" : ""}${s.status !== "complete" ? " · " + esc(s.status) : ""}</option>`).join("")
       : `<option value="">No scans yet</option>`;
     if (selectId) sel.value = selectId;
+    state.scans = scans;
     return scans;
   }
 
@@ -207,12 +209,17 @@
     $("#kpiTiles").innerHTML = [
       tile("Annual spend in scope", money(s.annual_spend), `${money(s.monthly_spend)} / month, amortised`),
       tile("Spend on High/Critical services", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
-      tile("Portable accounts", s.accounts_rated ? `${num(s.portable_accounts)} of ${num(s.accounts_rated)}` : "–",
-        s.accounts_rated ? `${pct(100 * s.portable_accounts / s.accounts_rated)} Low/Moderate · ${num(s.high_risk_accounts)} High/Critical (${pct(s.high_risk_accounts_spend_pct)} of spend)` : "No accounts with spend"),
-      ...(e.empty ? [tile("Indicative exit cost", "–", "No spend in scope"), tile("Indicative duration", "–", "No spend in scope"), tile("Engineering effort", "–", "No spend in scope")] : [
-        tile("Indicative exit cost", money(e.cost.total, cur), `range ${money(e.cost.low, cur)} – ${money(e.cost.high, cur)}`),
-        tile("Indicative duration", `${num(e.duration.calendar_months)} months`, `range ${num(e.duration.low_months)} – ${num(e.duration.high_months)} months`),
-        tile("Engineering effort", `${num(e.effort.person_months)} person-months`, `capacity ${num(e.team.capacity_fte, 1)} FTE`),
+      tile("Accounts in scope", num(s.accounts_in_scope), `${num(s.accounts_with_spend)} with spend · ${num(s.accounts_excluded)} filtered out`),
+      tile("High/Critical accounts", s.accounts_rated ? `${num(s.high_risk_accounts)} of ${num(s.accounts_rated)}` : "–",
+        s.accounts_rated ? `${pct(s.high_risk_accounts_spend_pct)} of spend · ${num(s.portable_accounts)} portable (Low/Moderate)` : "No accounts with spend"),
+      tile("Bespoke (AWS-only) services", num(s.bespoke_services), s.top_lockin_services.length ? `largest: ${s.top_lockin_services.slice(0, 3).map((x) => x.display).join(", ")}` : "none in use"),
+      tile("Spend growth", s.growth?.total?.pct == null ? "–" : `${s.growth.total.pct > 0 ? "+" : ""}${num(s.growth.total.pct, 1)}%`,
+        s.growth?.total ? `${s.growth.first_month} → ${s.growth.last_month} · High/Critical ${s.growth.lockin.pct > 0 ? "+" : ""}${num(s.growth.lockin.pct, 1)}%` : "needs 2+ months of history"),
+      ...(e.empty ? [tile("Indicative exit cost", "–", "No spend in scope"), tile("Exit window (time to leave AWS)", "–", "No spend in scope"), tile("Engineering effort", "–", "No spend in scope")] : [
+        tile("Exit cost, % of annual AWS spend", e.cost.pct_of_annual_spend == null ? money(e.cost.total, cur) : `${num(e.cost.pct_of_annual_spend)}%`,
+          `${money(e.cost.total, cur)} one-off · range ${money(e.cost.low, cur)} – ${money(e.cost.high, cur)}`),
+        tile("Exit window (time to leave AWS)", years(e.duration.calendar_months), `${num(e.duration.calendar_months)} months · range ${years(e.duration.low_months)} – ${years(e.duration.high_months)}`),
+        tile("Engineering effort, person-months", num(e.effort.person_months), `team capacity ${num(e.team.capacity_fte, 1)} FTE`),
       ]),
     ].join("");
     const x = s.executive;
@@ -270,6 +277,7 @@
     $("#tierTable").innerHTML = `<tr><td></td><td class="num-cell muted">USD / month</td><td class="num-cell muted">Share</td><td class="num-cell muted">Services</td><td class="num-cell muted" title="Accounts spending at least $1/month on services in this tier">Accounts</td></tr>` +
       tiers.map((t) => `<tr><td><span class="swatch" style="background:${tierColor(t.tier)}"></span>${t.tier} · ${esc(t.label)}</td><td class="num-cell">${money(t.monthly_spend)}</td><td class="num-cell">${pct(t.pct, 1)}</td><td class="num-cell">${t.services}</td><td class="num-cell">${num(t.accounts)}</td></tr>`).join("");
 
+    renderGrowth(r);
     chart("chTrend", {
       type: "bar",
       data: {
@@ -285,6 +293,49 @@
         interaction: { mode: "index", intersect: false },
       },
     });
+  }
+
+  function renderGrowth(r) {
+    const g = r.growth;
+    const sgn = (v, d = 1) => v == null ? "–" : `${v > 0 ? "+" : ""}${num(v, d)}%`;
+    const usd = (v) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${money(Math.abs(v))}`;
+    if (!g || g.months < 2 || !g.total) {
+      $("#growthHead").textContent = "Growth needs at least two months of spend history. Run a scan with 12 months to see it.";
+      $("#growthCap").textContent = "";
+      $("#growthTable").innerHTML = "";
+      $("#growthNote").textContent = "";
+      chart("chGrowth", { type: "bar", data: { labels: [], datasets: [] } });
+      return;
+    }
+    const annual = g.months >= 6;
+    const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
+    $("#growthHead").innerHTML = `${esc(g.first_month)} to ${esc(g.last_month)}: total spend <span class="${cls(g.total.pct)}">${sgn(g.total.pct)}</span>` +
+      (annual ? ` (${sgn(g.total.annualised_pct)} a year)` : "") +
+      `; spend on High/Critical services <span class="${cls(g.lockin.pct)}">${sgn(g.lockin.pct)}</span>` + (annual ? ` (${sgn(g.lockin.annualised_pct)} a year)` : "") +
+      `. ${g.lockin.pct != null && g.total.pct != null ? (g.lockin.pct > g.total.pct + 1 ? "Lock-in is growing faster than the estate." : g.lockin.pct < g.total.pct - 1 ? "Lock-in is growing more slowly than the estate." : "Lock-in is growing in line with the estate.") : ""}`;
+    $("#growthCap").textContent = `Monthly spend in ${g.last_month} minus ${g.first_month}, by product type. Red bars mean growth, blue bars mean decline.`;
+    const rows = [...g.by_category].sort((a, b) => b.change - a.change);
+    chart("chGrowth", {
+      type: "bar",
+      data: {
+        labels: rows.map((c) => c.category),
+        datasets: [{ label: "Change in USD / month", data: rows.map((c) => c.change), backgroundColor: rows.map((c) => (c.change >= 0 ? tierColor(5) : tierColor(1))), borderRadius: 3, barPercentage: 0.75 }],
+      },
+      options: {
+        indexAxis: "y",
+        scales: { x: { ticks: { callback: (v) => usd(v) }, grid: { color: css("--grid") } }, y: { grid: { display: false } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => {
+          const x = rows[c.dataIndex];
+          return [` ${money(x.first)} → ${money(x.last)} a month`, ` ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`];
+        } } } },
+      },
+    });
+    $("#growthTable").innerHTML = `<thead><tr><th>Product type</th><th class="num-cell">${esc(g.first_month)}</th><th class="num-cell">${esc(g.last_month)}</th><th class="num-cell">Change</th>${annual ? `<th class="num-cell">Per year</th>` : ""}<th class="num-cell" title="Share of this product type's spend on High or Critical services">Lock-in</th></tr></thead><tbody>` +
+      g.by_category.map((c) => `<tr><td>${esc(c.category)}</td><td class="num-cell">${money(c.first)}</td><td class="num-cell">${money(c.last)}</td><td class="num-cell">${sgn(c.pct)}</td>${annual ? `<td class="num-cell">${sgn(c.annualised_pct)}</td>` : ""}<td class="num-cell">${pct(c.lockin_pct)}</td></tr>`).join("") +
+      `<tr class="total"><td><strong>Total</strong></td><td class="num-cell">${money(g.total.first)}</td><td class="num-cell">${money(g.total.last)}</td><td class="num-cell"><strong>${sgn(g.total.pct)}</strong></td>${annual ? `<td class="num-cell">${sgn(g.total.annualised_pct)}</td>` : ""}<td></td></tr></tbody>`;
+    $("#growthNote").textContent = annual
+      ? "Per year = the first-to-last-month change annualised. Amortised spend: Savings Plans and RIs are spread over the months they cover."
+      : `Only ${g.months} months of history, so no annual rate is shown: a short window makes it misleading. Scan 12 months for a reliable trend.`;
   }
 
   function renderBreadth(r) {
@@ -424,8 +475,8 @@
     $("#estEmpty").hidden = !e.empty;
     $("#estBody").hidden = !!e.empty;
     $("#estTiles").innerHTML = [
-      tile("Total cost (indicative)", money(e.cost.total, cur), `${money(e.cost.labour, cur)} engineering + ${money(e.cost.parallel_run, cur)} parallel run`),
-      tile("Calendar duration", `${num(e.duration.calendar_months)} months`, `bound by ${e.duration.constrained_by}`),
+      tile("Total exit cost (indicative)", money(e.cost.total, cur), `${e.cost.pct_of_annual_spend == null ? "" : `${num(e.cost.pct_of_annual_spend)}% of annual AWS spend · `}${money(e.cost.labour, cur)} engineering + ${money(e.cost.parallel_run, cur)} parallel run`),
+      tile("Exit window (time to leave AWS)", `${num(e.duration.calendar_months)} months`, `${years(e.duration.calendar_months)} · bound by ${e.duration.constrained_by}`),
       tile("Effort", `${num(e.effort.total_weeks)} eng-weeks`, `${num(e.effort.person_months)} person-months · ${e.effort.material_accounts} material accounts`),
     ].join("");
 
@@ -513,6 +564,8 @@
     $("#scanProgress").hidden = true;
     $("#btnStartScan").disabled = false;
     $("#sNameFilter").value = $("#fInclude").value;
+    $("#sTarget").innerHTML = Object.entries(state.options.target).map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+    $("#sTarget").value = $("#qForm").target.value || "azure";
     try {
       const { profiles } = await api("/api/profiles");
       $("#sProfile").innerHTML = profiles.length ? profiles.map((p) => `<option>${esc(p)}</option>`).join("") : `<option value="">(no profiles found - default credential chain)</option>`;
@@ -548,10 +601,13 @@
   async function startScan() {
     const f = $("#scanForm");
     const body = {
-      profile: f.profile.value || null, ou_id: f.ou_id.value || null, months: Number(f.months.value || 3),
+      profile: f.profile.value || null, ou_id: f.ou_id.value || null, months: Number(f.months.value || 12),
       inventory: f.inventory.checked, role_name: f.role_name.value || null,
       regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: f.label.value,
+      target: f.target.value || "azure",
     };
+    $("#qForm").target.value = body.target;
+    readQuestionnaire();
     $("#scanError").textContent = "";
     $("#btnStartScan").disabled = true;
     try {
@@ -816,7 +872,13 @@
     if (state.scanId) { $("#scanSelect").value = state.scanId; await loadReport(); }
     else document.body.dataset.ready = "1";
 
-    $("#scanSelect").addEventListener("change", (e) => { state.scanId = e.target.value; loadReport(); });
+    $("#scanSelect").addEventListener("change", (e) => {
+      state.scanId = e.target.value;
+      // Each scan remembers the exit target chosen when it was started.
+      const t = (state.scans || []).find((s) => s.id === state.scanId)?.target;
+      if (t) $("#qForm").target.value = t;
+      loadReport();
+    });
     $("#btnApply").addEventListener("click", loadReport);
     $("#fWeighting").addEventListener("change", loadReport);
     for (const id of ["#fInclude", "#fExclude"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") loadReport(); });

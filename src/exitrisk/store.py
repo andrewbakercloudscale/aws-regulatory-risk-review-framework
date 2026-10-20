@@ -71,6 +71,7 @@ def list_scans() -> list[dict]:
                 "profile": (s.get("params") or {}).get("profile"),
                 "accounts": len(s.get("accounts", [])),
                 "label": s.get("label", ""),
+                "target": (s.get("params") or {}).get("target"),
             }
         )
     return out

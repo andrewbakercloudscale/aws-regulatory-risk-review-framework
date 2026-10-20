@@ -141,6 +141,18 @@
           <div class="chart-box"><canvas id="chTrend" role="img" aria-label="Stacked bar chart of monthly spend by risk tier"></canvas></div>
         </figure>
       </div>
+      <h3 class="sub">Spend growth by product type</h3>
+      <p id="growthHead" class="growth-head"></p>
+      <div class="grid-2">
+        <figure class="card chart-card">
+          <figcaption><h3>Change in monthly spend</h3><p class="muted" id="growthCap"></p></figcaption>
+          <div class="chart-box"><canvas id="chGrowth" role="img" aria-label="Bar chart of the change in monthly spend for each product type"></canvas></div>
+        </figure>
+        <div class="card">
+          <table class="data compact" id="growthTable"></table>
+          <p class="muted small" id="growthNote"></p>
+        </div>
+      </div>
     </section>
 
     <!-- 3. Accounts -->
@@ -298,7 +310,10 @@
       <label>And/or account names containing<input id="sNameFilter" placeholder="e.g. prod, prd (comma = or)" maxlength="200"></label>
       <p class="muted small">The OU limits what is scanned. The name filter limits the report and can be changed any time in the bar at the top.</p>
     </fieldset>
-    <label>Months of spend history<input name="months" type="number" min="1" max="12" value="3"></label>
+    <label>Where would you exit to?<select name="target" id="sTarget"></select></label>
+    <p class="muted small">Sets the target platform for the cost and time estimate (section 5). You can change it there later.</p>
+    <label>Months of spend history<input name="months" type="number" min="1" max="12" value="12"></label>
+    <p class="muted small">12 months shows spend growth by product type; fewer months make growth figures noisy.</p>
     <label class="check"><input type="checkbox" name="inventory" id="sInventory"> Deep scan: count resources in each member account</label>
     <div id="invOpts" hidden>
       <label>Role to assume in member accounts<input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>

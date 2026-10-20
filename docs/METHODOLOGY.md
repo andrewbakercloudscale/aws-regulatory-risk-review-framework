@@ -89,6 +89,14 @@ services scores 10; entirely on tier-2, 30.
 feed the estimate (below), but they do not change the score — the score stays a pure, auditable
 function of the bill.
 
+**Bespoke services.** "Bespoke (AWS-only) services" counts distinct High or Critical (tier 4–5) services
+with at least $1/month of in-scope spend: the services with no direct equivalent outside AWS.
+
+**Spend growth.** Change in amortised monthly spend from the first to the last complete month scanned,
+overall, for High/Critical services, and per catalog category ("product type"). With 6+ months an
+annualised rate, (last/first)^(12/(months−1)) − 1, is also shown; shorter windows show the change only,
+because annualising two or three months magnifies noise.
+
 ## 4. Exit estimate
 
 ### Inputs from the questionnaire
@@ -143,7 +151,10 @@ target platform and its patterns on low-risk workloads.
 labour        = total effort × 5 days × day rate
 parallel run  = parallel-run months × monthly AWS spend × 50% × FX       (target ramps up as AWS ramps down)
 total         = labour + parallel run;   range −25% / +50%;   duration range −20% / +40%
+% of annual   = total / (monthly AWS spend × 12 × FX)                    one-off exit cost vs a year of the bill
 ```
+
+The calendar duration is reported as the **exit window**: how long it would take to leave AWS.
 
 The asymmetric ranges reflect that early estimates of migrations are far more often under than over.
 
