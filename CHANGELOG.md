@@ -6,6 +6,24 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- **Report formatting overhaul.** Executive summary rebuilt: a one-sentence bottom line, a lighter context
+  line with both scores, an exit-facts strip, and findings and recommendations that each lead with a bold
+  phrase. Months read "Oct 2025", ranges use one unit ("6.3–10.9 years"), money uses `$`, plurals are
+  real ("1 account", not "account(s)"). Tier donut sits beside its table; growth chart and table line up;
+  account ranking shows the top 15 (button for all; top 25 in the PDF) on one line per account; bubble
+  labels no longer overlap; effort is in person-months everywhere; the timeline axis reads in years or
+  months without collisions; catalog columns are balanced. PDF: key figures stay with the summary, and the
+  appendix no longer leaves a blank page.
+- Methodology appendix describes both headline scores.
+
+### Fixed
+- **Cost and time no longer headline the report while they rest on default answers.** Until the delivery
+  questions are answered or confirmed, the figures are marked *Provisional*, the bottom line says they are
+  not yet estimated, and an "Answer the questions" button jumps to section 5. JSON: `estimate.provisional`,
+  `summary.executive.provisional`; questionnaire field `confirmed`. `exitrisk pdf` now takes
+  `--questionnaire` too.
+
 ## [0.2.0] - 2026-10-20
 
 ### Changed

@@ -82,7 +82,7 @@ share the sign-in; it is never sent to the browser.
 ```bash
 exitrisk scan --profile mgmt --ou ou-ab12-cdef3456 --months 3          # spend-only scan
 exitrisk scan --profile mgmt --inventory --role ExitRiskReadOnly        # plus resource counts
-exitrisk pdf <scan-id> --include prod --out board-pack.pdf              # PDF without a browser
+exitrisk pdf <scan-id> --include prod --questionnaire answers.json --out board-pack.pdf  # PDF without a browser
 exitrisk report <scan-id> --include prod --questionnaire answers.json   # JSON for other tools
 exitrisk catalog                                                        # list service tiers
 ```

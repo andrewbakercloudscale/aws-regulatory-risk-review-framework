@@ -30,9 +30,21 @@
     if (abs >= 1e3) return `${sym}${(v / 1e3).toFixed(1)}k`;
     return `${sym}${v.toFixed(0)}`;
   }
-  const years = (m) => (m == null ? "–" : m < 24 ? `${Math.round(m)} months` : `${(m / 12).toFixed(1)} years`);
+  // Half-up to 0.1 year, the same as the Python report text (toFixed would give 9.35 -> 9.3).
+  const years = (m) => (m == null ? "–" : m < 24 ? `${Math.round(m)} months` : `${(Math.round(m / 1.2) / 10).toFixed(1)} years`);
+  // "6.3–10.9 years": one unit for both ends when they share it.
+  const yearsRange = (lo, hi) => { const a = years(lo), b = years(hi); return a.split(" ")[1] === b.split(" ")[1] ? `${a.split(" ")[0]}–${b}` : `${a}–${b}`; };
   const num = (v, d = 0) => (v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
   const pct = (v, d = 0) => (v == null ? "–" : `${Number(v).toFixed(d)}%`);
+  const plural = (n, word, many) => `${num(n)} ${Math.round(n) === 1 ? word : many || word + "s"}`;
+  // "2025-10" -> "Oct 2025" (or "Oct 25" for chart axes).
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function month(m, short) {
+    const [y, mo] = String(m || "").split("-").map(Number);
+    if (!y || !mo) return String(m ?? "–");
+    return `${MONTHS[mo - 1]} ${short ? String(y).slice(2) : y}`;
+  }
+  const ACCOUNT_ROWS = 15; // account ranking rows shown before "Show all"
 
   function toast(msg, ms = 3500) {
     const t = $("#toast");
@@ -107,6 +119,7 @@
     for (const el of f.elements) {
       if (!el.name) continue;
       if (el.type === "checkbox") q[el.name] = el.checked;
+      else if (el.name === "confirmed") q.confirmed = el.value === "true";
       else if (Q_NUM.includes(el.name)) q[el.name] = el.value === "" ? undefined : Number(el.value);
       else q[el.name] = el.name === "currency" ? el.value.toUpperCase() : el.value;
     }
@@ -173,8 +186,8 @@
       ["Scope", m.filter.description],
       ["Organizational unit", m.ou?.path || "–"],
       ["Accounts in scope", `${r.summary.accounts_in_scope} of ${r.summary.accounts_total}`],
-      ["Spend period", m.period?.start ? `${m.period.start} to ${m.period.end} (${m.months_in_data.length} months, amortised)` : "–"],
-      ["Scanned", m.scanned_at ? new Date(m.scanned_at).toLocaleString() : "–"],
+      ["Spend period", m.months_in_data?.length ? `${month(m.months_in_data[0])} – ${month(m.months_in_data.at(-1))} (${plural(m.months_in_data.length, "month")}, amortised)` : "–"],
+      ["Scanned", m.scanned_at ? new Date(m.scanned_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "–"],
       ["Management account", m.org?.management_account_id || m.identity?.account_id || "–"],
       ["Resource inventory", m.inventory ? "Included (deep scan)" : "Not run (spend only)"],
       ["Exit target assumed", m.target_label],
@@ -185,8 +198,8 @@
     $("#metaList").innerHTML = items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
   }
 
-  function tile(label, value, sub) {
-    return `<div class="tile"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(value)}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
+  function tile(label, value, sub, provisional) {
+    return `<div class="tile${provisional ? " is-provisional" : ""}"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(value)}${provisional ? ' <span class="prov-tag" title="Uses default answers: answer the questions in section 5">Provisional</span>' : ""}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
   }
 
   function ratingBadge(el, rating, text) {
@@ -216,19 +229,24 @@
         s.accounts_rated ? `${pct(s.high_risk_accounts_spend_pct)} of spend · ${num(s.portable_accounts)} portable (Low/Moderate)` : "No accounts with spend"),
       tile("Bespoke (AWS-only) services", num(s.bespoke_services), s.top_lockin_services.length ? `largest: ${s.top_lockin_services.slice(0, 3).map((x) => x.display).join(", ")}` : "none in use"),
       tile("Spend growth", s.growth?.total?.pct == null ? "–" : `${s.growth.total.pct > 0 ? "+" : ""}${num(s.growth.total.pct, 1)}%`,
-        s.growth?.total ? `${s.growth.first_month} → ${s.growth.last_month} · High/Critical ${s.growth.lockin.pct > 0 ? "+" : ""}${num(s.growth.lockin.pct, 1)}%` : "needs 2+ months of history"),
+        s.growth?.total ? `${month(s.growth.first_month)} → ${month(s.growth.last_month)} · High/Critical ${s.growth.lockin.pct > 0 ? "+" : ""}${num(s.growth.lockin.pct, 1)}%` : "needs 2+ months of history"),
       ...(e.empty ? [tile("Indicative exit cost", "–", "No spend in scope"), tile("Exit window (time to leave AWS)", "–", "No spend in scope"), tile("Engineering effort", "–", "No spend in scope")] : [
         tile("Exit cost, % of annual AWS spend", e.cost.pct_of_annual_spend == null ? money(e.cost.total, cur) : `${num(e.cost.pct_of_annual_spend)}%`,
-          `${money(e.cost.total, cur)} one-off · range ${money(e.cost.low, cur)} – ${money(e.cost.high, cur)}`),
-        tile("Exit window (time to leave AWS)", years(e.duration.calendar_months), `${num(e.duration.calendar_months)} months · range ${years(e.duration.low_months)} – ${years(e.duration.high_months)}`),
-        tile("Engineering effort, person-months", num(e.effort.person_months), `team capacity ${num(e.team.capacity_fte, 1)} FTE`),
+          `${money(e.cost.total, cur)} one-off · range ${money(e.cost.low, cur)}–${money(e.cost.high, cur)}`, e.provisional),
+        tile("Exit window (time to leave AWS)", years(e.duration.calendar_months), `${num(e.duration.calendar_months)} months · range ${yearsRange(e.duration.low_months, e.duration.high_months)}`, e.provisional),
+        tile("Engineering effort, person-months", num(e.effort.person_months), `team capacity ${num(e.team.capacity_fte, 1)} FTE`, e.provisional),
       ]),
     ].join("");
     const x = s.executive;
-    $("#briefBottom").textContent = x.bottom_line;
-    $("#briefFindings").innerHTML = x.findings.map((l) => `<li>${esc(l)}</li>`).join("");
-    $("#briefExit").textContent = x.exit || "–";
-    $("#briefActions").innerHTML = x.actions.map((l) => `<li>${esc(l)}</li>`).join("");
+    const lead = (i) => `<li><strong>${esc(i.lead)}</strong> ${esc(i.text)}</li>`;
+    $("#briefHeadline").textContent = x.headline || x.bottom_line;
+    $("#briefContext").textContent = x.context || "";
+    $("#briefProvisional").hidden = !x.provisional;
+    $("#briefFacts").innerHTML = (x.exit_facts || []).map((f) => `<div class="${f.provisional ? "is-provisional" : ""}"><dt>${esc(f.label)}${f.provisional ? ' <span class="prov-tag">Provisional</span>' : ""}</dt><dd>${esc(f.value)}</dd><dd class="note">${esc(f.note)}</dd></div>`).join("");
+    // With default answers the numbers describe a made-up organisation: the callout replaces them.
+    $("#briefFacts").hidden = !(x.exit_facts || []).length || !!x.provisional;
+    $("#briefFindings").innerHTML = (x.findings_rich || x.findings.map((t) => ({ lead: "", text: t }))).map(lead).join("");
+    $("#briefActions").innerHTML = (x.actions_rich || x.actions.map((t) => ({ lead: "", text: t }))).map(lead).join("");
     const confRating = { High: "Low", Medium: "High", Low: "Critical" }[x.confidence];
     ratingBadge($("#briefConf"), confRating, `Confidence: ${x.confidence}`);
     $("#briefConfWhy").textContent = x.confidence_reasons.join(" ");
@@ -271,27 +289,27 @@
       options: {
         cutout: "62%",
         plugins: {
-          legend: { position: "right" },
+          legend: { display: false }, // the table beside it is the legend
           tooltip: { callbacks: { label: (c) => ` ${money(c.raw)}/month · ${pct(tiers[c.dataIndex].pct, 1)}` } },
         },
       },
     });
-    $("#tierTable").innerHTML = `<tr><td></td><td class="num-cell muted">USD / month</td><td class="num-cell muted">Share</td><td class="num-cell muted">Services</td><td class="num-cell muted" title="Accounts spending at least $1/month on services in this tier">Accounts</td></tr>` +
-      tiers.map((t) => `<tr><td><span class="swatch" style="background:${tierColor(t.tier)}"></span>${t.tier} · ${esc(t.label)}</td><td class="num-cell">${money(t.monthly_spend)}</td><td class="num-cell">${pct(t.pct, 1)}</td><td class="num-cell">${t.services}</td><td class="num-cell">${num(t.accounts)}</td></tr>`).join("");
+    $("#tierTable").innerHTML = `<thead><tr><th>Tier</th><th class="num-cell">Per month</th><th class="num-cell">Share</th><th class="num-cell">Services</th><th class="num-cell" title="Accounts spending at least $1/month on services in this tier; an account can use several tiers">Accounts</th></tr></thead><tbody>` +
+      tiers.map((t) => `<tr><td class="nowrap"><span class="swatch" style="background:${tierColor(t.tier)}"></span>${t.tier} · ${esc(t.label)}</td><td class="num-cell">${money(t.monthly_spend)}</td><td class="num-cell">${pct(t.pct, 1)}</td><td class="num-cell">${t.services}</td><td class="num-cell">${num(t.accounts)}</td></tr>`).join("") + "</tbody>";
 
     renderGrowth(r);
     chart("chTrend", {
       type: "bar",
       data: {
-        labels: r.trend.map((m) => m.month),
+        labels: r.trend.map((m) => month(m.month, true)),
         datasets: [1, 2, 3, 4, 5].map((t) => ({
           label: `${t} · ${tiers[t - 1].label}`, data: r.trend.map((m) => m.tier_spend[t]),
           backgroundColor: tierColor(t), borderColor: css("--surface"), borderWidth: { top: 2 }, borderRadius: 3, borderSkipped: "bottom", maxBarThickness: 46,
         })),
       },
       options: {
-        scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: (v) => money(v) }, border: { display: false } } },
-        plugins: { legend: { position: "bottom" }, tooltip: { mode: "index", callbacks: { label: (c) => ` ${c.dataset.label}: ${money(c.raw)}` } } },
+        scales: { x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 8 } }, y: { stacked: true, ticks: { callback: (v) => money(v) }, border: { display: false } } },
+        plugins: { legend: { position: "bottom" }, tooltip: { mode: "index", callbacks: { title: (items) => month(r.trend[items[0].dataIndex].month), label: (c) => ` ${c.dataset.label}: ${money(c.raw)}` } } },
         interaction: { mode: "index", intersect: false },
       },
     });
@@ -311,12 +329,14 @@
     }
     const annual = g.months >= 6;
     const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
-    $("#growthHead").innerHTML = `${esc(g.first_month)} to ${esc(g.last_month)}: total spend <span class="${cls(g.total.pct)}">${sgn(g.total.pct)}</span>` +
+    $("#growthHead").innerHTML = `${esc(month(g.first_month))} to ${esc(month(g.last_month))}: total spend <span class="${cls(g.total.pct)}">${sgn(g.total.pct)}</span>` +
       (annual ? ` (${sgn(g.total.annualised_pct)} a year)` : "") +
       `; spend on High/Critical services <span class="${cls(g.lockin.pct)}">${sgn(g.lockin.pct)}</span>` + (annual ? ` (${sgn(g.lockin.annualised_pct)} a year)` : "") +
       `. ${g.lockin.pct != null && g.total.pct != null ? (g.lockin.pct > g.total.pct + 1 ? "Lock-in is growing faster than the estate." : g.lockin.pct < g.total.pct - 1 ? "Lock-in is growing more slowly than the estate." : "Lock-in is growing in line with the estate.") : ""}`;
-    $("#growthCap").textContent = `Monthly spend in ${g.last_month} minus ${g.first_month}, by product type. Red bars mean growth, blue bars mean decline.`;
+    $("#growthCap").textContent = `Monthly spend in ${month(g.last_month)} minus ${month(g.first_month)}, by product type. Red = growth, blue = decline.`;
     const rows = [...g.by_category].sort((a, b) => b.change - a.change);
+    // Match the table beside it so the two cards line up.
+    $("#chGrowth").parentElement.style.height = `${Math.max(300, 34 * rows.length + 70)}px`;
     chart("chGrowth", {
       type: "bar",
       data: {
@@ -325,14 +345,14 @@
       },
       options: {
         indexAxis: "y",
-        scales: { x: { ticks: { callback: (v) => usd(v) }, grid: { color: css("--grid") } }, y: { grid: { display: false } } },
+        scales: { x: { ticks: { callback: (v) => usd(v), maxRotation: 0 }, grid: { color: css("--grid") } }, y: { grid: { display: false } } },
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => {
           const x = rows[c.dataIndex];
           return [` ${money(x.first)} → ${money(x.last)} a month`, ` ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`];
         } } } },
       },
     });
-    $("#growthTable").innerHTML = `<thead><tr><th>Product type</th><th class="num-cell">${esc(g.first_month)}</th><th class="num-cell">${esc(g.last_month)}</th><th class="num-cell">Change</th>${annual ? `<th class="num-cell">Per year</th>` : ""}<th class="num-cell" title="Share of this product type's spend on High or Critical services">Lock-in</th></tr></thead><tbody>` +
+    $("#growthTable").innerHTML = `<thead><tr><th>Product type</th><th class="num-cell">${esc(month(g.first_month))}</th><th class="num-cell">${esc(month(g.last_month))}</th><th class="num-cell">Change</th>${annual ? `<th class="num-cell">Per year</th>` : ""}<th class="num-cell" title="Share of this product type's spend on High or Critical services">Lock-in</th></tr></thead><tbody>` +
       g.by_category.map((c) => `<tr><td>${esc(c.category)}</td><td class="num-cell">${money(c.first)}</td><td class="num-cell">${money(c.last)}</td><td class="num-cell">${sgn(c.pct)}</td>${annual ? `<td class="num-cell">${sgn(c.annualised_pct)}</td>` : ""}<td class="num-cell">${pct(c.lockin_pct)}</td></tr>`).join("") +
       `<tr class="total"><td><strong>Total</strong></td><td class="num-cell">${money(g.total.first)}</td><td class="num-cell">${money(g.total.last)}</td><td class="num-cell"><strong>${sgn(g.total.pct)}</strong></td>${annual ? `<td class="num-cell">${sgn(g.total.annualised_pct)}</td>` : ""}<td></td></tr></tbody>`;
     $("#growthNote").textContent = annual
@@ -353,13 +373,13 @@
         scales: { x: { stacked: true, max: 100, ticks: { callback: (v) => `${v}%` }, grid: { color: css("--grid") } }, y: { stacked: true, grid: { display: false } } },
         plugins: { legend: { position: "bottom" }, tooltip: { callbacks: { label: (c) => {
           const b = c.dataset.raw;
-          return c.dataIndex === 0 ? ` ${b.rating}: ${b.accounts} account(s) · ${pct(b.pct_accounts, 1)}` : ` ${b.rating}: ${money(b.monthly_spend)}/month · ${pct(b.pct_spend, 1)}`;
+          return c.dataIndex === 0 ? ` ${b.rating}: ${plural(b.accounts, "account")} · ${pct(b.pct_accounts, 1)}` : ` ${b.rating}: ${money(b.monthly_spend)}/month · ${pct(b.pct_spend, 1)}`;
         } } } },
       },
     });
-    $("#ratingTable").innerHTML = `<thead><tr><th>Rating</th><th class="num-cell">Accounts</th><th class="num-cell">Share</th><th class="num-cell">USD / month</th><th class="num-cell">Spend share</th></tr></thead><tbody>` +
+    $("#ratingTable").innerHTML = `<thead><tr><th>Rating</th><th class="num-cell">Accounts</th><th class="num-cell">Share</th><th class="num-cell">Per month</th><th class="num-cell">Spend share</th></tr></thead><tbody>` +
       rows.map((b) => `<tr><td><span class="swatch" style="background:${tierColor(RATING_TIER[b.rating])}"></span>${esc(b.rating)}</td><td class="num-cell">${num(b.accounts)}</td><td class="num-cell">${pct(b.pct_accounts, 1)}</td><td class="num-cell">${money(b.monthly_spend)}</td><td class="num-cell">${pct(b.pct_spend, 1)}</td></tr>`).join("") +
-      `<tr class="total"><td><strong>Portable</strong> (Low + Moderate)</td><td class="num-cell"><strong>${num(s.portable_accounts)}</strong></td><td class="num-cell">${s.accounts_rated ? pct(100 * s.portable_accounts / s.accounts_rated, 1) : "–"}</td><td></td><td></td></tr></tbody>`;
+      `<tr class="total"><td class="nowrap"><strong>Portable</strong> (Low + Moderate)</td><td class="num-cell"><strong>${num(s.portable_accounts)}</strong></td><td class="num-cell">${s.accounts_rated ? pct(100 * s.portable_accounts / s.accounts_rated, 1) : "–"}</td><td></td><td></td></tr></tbody>`;
     $("#weightingNote").textContent = `OU score weighting: ${s.weighting_label}. ` + ({
       spend: "Each account counts in proportion to its spend, so a small high-risk account adds little.",
       equal: "Every account with spend counts the same, whatever its size.",
@@ -384,7 +404,7 @@
       options: {
         layout: { padding: 12 },
         scales: {
-          x: { type: "logarithmic", title: { display: true, text: "Monthly spend (USD, log scale)" }, ticks: { callback: (v) => ([1, 10, 100, 1e3, 1e4, 1e5, 1e6].includes(v) || /^[125]/.test(String(v))) ? money(v) : "" }, grid: { color: css("--grid") } },
+          x: { type: "logarithmic", title: { display: true, text: "Monthly spend (USD, log scale)" }, ticks: { maxRotation: 0, autoSkip: false, callback: (v) => ([1, 10, 100, 1e3, 1e4, 1e5, 1e6].includes(v) ? money(v) : "") }, grid: { color: (c) => ([1, 10, 100, 1e3, 1e4, 1e5, 1e6].includes(c.tick?.value) ? css("--grid") : "transparent") } },
           y: { min: 0, max: 100, title: { display: true, text: "Inherent exit-risk score" }, grid: { color: css("--grid") } },
         },
         plugins: {
@@ -408,12 +428,20 @@
           ctx.save();
           ctx.font = `600 11px ${css("--font")}`;
           ctx.fillStyle = css("--ink");
-          meta.data.forEach((pt, i) => {
-            const a = accts[i];
-            if (!top.includes(a.id)) return;
+          ctx.strokeStyle = css("--surface");
+          ctx.lineWidth = 3;
+          const placed = []; // label boxes already drawn: nudge new ones down until they do not overlap
+          meta.data.map((pt, i) => ({ pt, a: accts[i] })).filter((o) => top.includes(o.a.id)).sort((p, q) => p.pt.y - q.pt.y).forEach(({ pt, a }) => {
             const rad = pt.options.radius || 6;
-            ctx.textAlign = pt.x > ch.chartArea.right - 140 ? "right" : "left";
-            ctx.fillText(a.name, pt.x + (ctx.textAlign === "left" ? rad + 4 : -rad - 4), pt.y + 4);
+            const w = ctx.measureText(a.name).width;
+            const right = pt.x > ch.chartArea.right - 160;
+            const x0 = right ? pt.x - rad - 6 - w : pt.x + rad + 6;
+            let y = pt.y + 4;
+            while (placed.some((b) => x0 < b.x + b.w && x0 + w > b.x && Math.abs(y - b.y) < 14)) y += 14;
+            placed.push({ x: x0, y, w });
+            ctx.textAlign = "left";
+            ctx.strokeText(a.name, x0, y);
+            ctx.fillText(a.name, x0, y);
           });
           ctx.restore();
         },
@@ -434,19 +462,31 @@
       }],
     });
 
-    const rows = r.accounts.map((a) => `<tr>
-      <td class="num-cell">${a.rank}</td>
-      <td><strong>${esc(a.name)}</strong><div class="hint">${esc(a.id)} · ${esc(a.ou_path)}</div></td>
+    renderAccountTable(r, maxC);
+  }
+
+  function renderAccountTable(r, maxC) {
+    const all = r.accounts;
+    const limit = state.showAllAccounts ? all.length : PRINT ? 25 : ACCOUNT_ROWS;
+    const shown = all.slice(0, limit);
+    // Only show the OU path when accounts sit in different OUs; otherwise it repeats on every row.
+    const multiOu = new Set(all.map((a) => a.ou_path)).size > 1;
+    const rows = shown.map((a) => `<tr>
+      <td class="num-cell muted">${a.rank}</td>
+      <td class="acct"><strong>${esc(a.name)}</strong><div class="hint">${esc(a.id)}${multiOu ? ` · ${esc(a.ou_path)}` : ""}</div></td>
       <td class="num-cell">${money(a.monthly_spend)}</td>
       <td class="num-cell">${a.score == null ? "–" : Math.round(a.score)}</td>
       <td>${a.score == null ? "–" : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)}</span>`}</td>
-      <td class="num-cell">${pct(a.weight * 100, 1)}</td>
       <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.contribution / maxC).toFixed(1)}%"></i></div><span class="num-cell">${a.contribution.toFixed(1)}</span></div></td>
       <td class="num-cell">${pct(a.high_risk_pct)}</td>
       <td><div class="chips">${a.top_lockin.map((s) => `<span class="chip">${esc(s.service)}</span>`).join("") || '<span class="hint">none</span>'}</div></td>
-      <td class="num-cell">${num(a.effort_weeks)}</td>
+      <td class="num-cell">${num(a.effort_weeks / 4.33, 1)}</td>
     </tr>`).join("");
-    $("#accountTable").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Account</th><th class="num-cell">USD / month</th><th class="num-cell">Risk</th><th>Rating</th><th class="num-cell">Weight</th><th>Contribution (pts)</th><th class="num-cell">High/Crit %</th><th>Main lock-in</th><th class="num-cell">Effort (eng-wks)</th></tr></thead><tbody>${rows}</tbody>`;
+    $("#accountTable").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Account</th><th class="num-cell">Per month</th><th class="num-cell" title="Inherent exit-risk score, 0-100">Risk</th><th>Rating</th><th title="Points this account adds to the OU score under the selected weighting">Contribution (pts)</th><th class="num-cell" title="Share of the account's spend on High or Critical services">High/Critical</th><th>Main lock-in</th><th class="num-cell" title="Estimated engineering effort to move this account">Person-months</th></tr></thead><tbody>${rows}</tbody>`;
+    const more = all.length - shown.length;
+    $("#acctMoreNote").textContent = more > 0 ? `Top ${shown.length} of ${plural(all.length, "account")} by contribution.${PRINT ? " The JSON export lists every account." : ""}` : `${plural(all.length, "account")}.`;
+    $("#btnAcctMore").hidden = all.length <= ACCOUNT_ROWS || PRINT;
+    $("#btnAcctMore").textContent = state.showAllAccounts ? `Show top ${ACCOUNT_ROWS} only` : `Show all ${num(all.length)} accounts`;
   }
 
   function renderServices(r) {
@@ -462,12 +502,13 @@
         scales: { x: { ticks: { callback: (v) => money(v) }, grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } },
         plugins: {
           legend: { display: false },
-          tooltip: { callbacks: { label: (c) => ` ${money(c.raw)}/month · Tier ${top[c.dataIndex].tier} ${top[c.dataIndex].tier_label} · ${top[c.dataIndex].accounts} account(s)` } },
+          tooltip: { callbacks: { label: (c) => ` ${money(c.raw)}/month · Tier ${top[c.dataIndex].tier} ${top[c.dataIndex].tier_label} · ${plural(top[c.dataIndex].accounts, "account")}` } },
         },
       },
     });
     const lock = r.services.filter((s) => s.tier >= 4);
-    $("#lockinTable").innerHTML = `<thead><tr><th>Service</th><th>Tier</th><th class="num-cell">USD / month</th><th class="num-cell">Share</th><th class="num-cell">Accounts</th></tr></thead><tbody>` +
+    $("#chServices").parentElement.style.height = `${Math.min(760, Math.max(420, 54 * lock.length + 40))}px`;
+    $("#lockinTable").innerHTML = `<thead><tr><th>Service</th><th>Tier</th><th class="num-cell">Per month</th><th class="num-cell">Share</th><th class="num-cell">Accounts</th></tr></thead><tbody>` +
       (lock.map((s) => `<tr><td><strong>${esc(s.display)}</strong><div class="hint">${esc(s.category)}</div></td><td><span class="tier-pill" style="--dot:${tierColor(s.tier)}">${s.tier} · ${esc(s.tier_label)}</span></td><td class="num-cell">${money(s.monthly_spend)}</td><td class="num-cell">${pct(s.pct, 1)}</td><td class="num-cell">${s.accounts}</td></tr>`).join("")
         || `<tr><td colspan="5" class="hint">No High or Critical services in scope.</td></tr>`) + "</tbody>";
   }
@@ -476,29 +517,37 @@
     const e = r.estimate, cur = e.cost.currency;
     $("#estEmpty").hidden = !e.empty;
     $("#estBody").hidden = !!e.empty;
+    const prov = e.provisional;
+    $("#qStatus").innerHTML = prov
+      ? `<span class="prov-tag">Provisional</span> Using default answers. Change any answer, or confirm these, to estimate for your organisation.`
+      : `<span class="ok-tag">✓ Your answers</span> The estimate uses the answers below.`;
     $("#estTiles").innerHTML = [
-      tile("Total exit cost (indicative)", money(e.cost.total, cur), `${e.cost.pct_of_annual_spend == null ? "" : `${num(e.cost.pct_of_annual_spend)}% of annual AWS spend · `}${money(e.cost.labour, cur)} engineering + ${money(e.cost.parallel_run, cur)} parallel run`),
-      tile("Exit window (time to leave AWS)", `${num(e.duration.calendar_months)} months`, `${years(e.duration.calendar_months)} · bound by ${e.duration.constrained_by}`),
-      tile("Effort", `${num(e.effort.total_weeks)} eng-weeks`, `${num(e.effort.person_months)} person-months · ${e.effort.material_accounts} material accounts`),
+      tile("Total exit cost (indicative)", money(e.cost.total, cur), `${e.cost.pct_of_annual_spend == null ? "" : `${num(e.cost.pct_of_annual_spend)}% of annual AWS spend · `}${money(e.cost.labour, cur)} engineering + ${money(e.cost.parallel_run, cur)} parallel run`, prov),
+      tile("Exit window (time to leave AWS)", years(e.duration.calendar_months), `${num(e.duration.calendar_months)} months · bound by ${e.duration.constrained_by}`, prov),
+      tile("Engineering effort, person-months", num(e.effort.person_months), `${num(e.effort.total_weeks)} engineer-weeks · ${plural(e.effort.material_accounts, "material account")}`, prov),
     ].join("");
 
+    const WPM = 4.33; // weeks per month
     const total = Math.max(...e.waves.map((w) => w.start + w.weeks), 1);
+    const totalMonths = total / WPM;
     const waveColor = (w) => (w.tiers.length ? tierColor(Math.max(...w.tiers)) : css("--ink-2"));
+    const stepM = [1, 3, 6, 12, 24].find((st) => totalMonths / st <= 6) || 36; // at most ~6 ticks, so labels never collide
     const ticks = [];
-    const step = total > 120 ? 26 : total > 60 ? 13 : 4;
-    for (let wk = 0; wk <= total; wk += step) ticks.push(wk);
-    $("#gantt").innerHTML = e.waves.map((w) => `<div class="g-row"><div>${esc(w.name)}<div class="hint">${num(w.weeks)} weeks${w.effort_weeks ? ` · ${num(w.effort_weeks)} eng-wks` : ""}</div></div>
-      <div class="g-track" title="weeks ${num(w.start)}–${num(w.start + w.weeks)}"><div class="g-bar" style="left:${(100 * w.start / total).toFixed(2)}%;width:${Math.max(0.8, 100 * w.weeks / total).toFixed(2)}%;background:${waveColor(w)}"></div></div></div>`).join("") +
-      `<div class="g-axis"><div></div><div class="g-ticks">${ticks.map((t) => `<span style="left:${(100 * t / total).toFixed(2)}%">${t === 0 ? "wk 0" : `${Math.round(t / 4.33)} mo`}</span>`).join("")}</div></div>`;
+    for (let mo = 0; mo <= totalMonths + 0.01; mo += stepM) ticks.push(mo);
+    const dur = (wk) => (wk < 9 ? plural(Math.round(wk), "week") : plural(Math.round(wk / WPM), "month"));
+    const tickLabel = (mo) => (mo === 0 ? "Start" : stepM >= 12 ? `Year ${mo / 12}` : `Month ${mo}`);
+    $("#gantt").innerHTML = e.waves.map((w) => `<div class="g-row"><div>${esc(w.name)}<div class="hint">${dur(w.weeks)}${w.effort_weeks ? ` · ${num(w.effort_weeks / WPM)} person-months` : ""}</div></div>
+      <div class="g-track" title="months ${num(w.start / WPM)}–${num((w.start + w.weeks) / WPM)}"><div class="g-bar" style="left:${(100 * w.start / total).toFixed(2)}%;width:${Math.max(0.8, 100 * w.weeks / total).toFixed(2)}%;background:${waveColor(w)}"></div></div></div>`).join("") +
+      `<div class="g-axis"><div></div><div class="g-ticks">${ticks.map((t, i) => `<span class="${i === 0 ? "first" : ""}" style="left:${(100 * t * WPM / total).toFixed(2)}%">${tickLabel(t)}</span>`).join("")}</div></div>`;
 
     const parts = [["Landing zone", e.effort.landing_zone_weeks], ["Tier 1–2 workloads", e.effort.by_tier[1] + e.effort.by_tier[2]], ["Tier 3 workloads", e.effort.by_tier[3]],
       ["Tier 4–5 workloads", e.effort.by_tier[4] + e.effort.by_tier[5]], ["Account overhead", e.effort.account_weeks * e.factors.combined], ["Programme mgmt", e.effort.pmo_weeks], ["Contingency", e.effort.contingency_weeks]];
     const pc = [css("--ink-2"), tierColor(1), tierColor(3), tierColor(5), css("--t2"), css("--muted"), css("--axis")];
     chart("chEffort", {
       type: "bar",
-      data: { labels: parts.map((p) => p[0]), datasets: [{ label: "Engineer-weeks", data: parts.map((p) => Math.round(p[1])), backgroundColor: pc, borderRadius: 4, borderSkipped: "start", barPercentage: 0.7 }] },
+      data: { labels: parts.map((p) => p[0]), datasets: [{ label: "Person-months", data: parts.map((p) => Math.round(p[1] / WPM)), backgroundColor: pc, borderRadius: 4, borderSkipped: "start", barPercentage: 0.7 }] },
       options: { indexAxis: "y", scales: { x: { grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${num(c.raw)} engineer-weeks` } } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${num(c.raw)} person-months` } } } },
     });
 
     const q = e.inputs, o = state.options;
@@ -516,9 +565,9 @@
     $("#issueTable").innerHTML = r.issues.length
       ? `<thead><tr><th>Severity</th><th>Area</th><th>Account</th><th>Issue</th></tr></thead><tbody>` + r.issues.map((i) => `<tr>
           <td><span class="sev" style="--dot:${css(SEV_COLOR[i.severity] || "--muted")}">${esc(i.severity)}</span></td>
-          <td>${esc(i.category)}${i.region ? `<div class="hint">${esc(i.region)}</div>` : ""}</td>
+          <td class="cap">${esc(i.category)}${i.region ? `<div class="hint">${esc(i.region)}</div>` : ""}</td>
           <td>${esc(names[i.account_id] || i.account_id || "–")}</td>
-          <td>${esc(i.message)}${i.error_code ? ` <span class="chip">${esc(i.error_code)}</span>` : ""}${i.hint ? `<div class="hint">→ ${esc(i.hint)}</div>` : ""}</td></tr>`).join("") + "</tbody>"
+          <td>${esc(String(i.message || "").replace(/^./, (ch) => ch.toUpperCase()))}${i.error_code ? ` <span class="chip">${esc(i.error_code)}</span>` : ""}${i.hint ? `<div class="hint">→ ${esc(i.hint)}</div>` : ""}</td></tr>`).join("") + "</tbody>"
       : `<tbody><tr><td class="hint">No issues recorded. Every API call in the scan succeeded.</td></tr></tbody>`;
   }
 
@@ -542,8 +591,8 @@
       const list = cat.services.filter((s) => s.tier === t && (showAll || used.has(s.service) || s.aliases.some((a) => used.has(a))))
         .sort((a, b) => (used.get(b.service)?.monthly_spend || 0) - (used.get(a.service)?.monthly_spend || 0) || a.display.localeCompare(b.display));
       if (!list.length) continue;
-      html += `<div class="cat-group"><h3><span class="tier-pill" style="--dot:${tierColor(t)}">Tier ${t} · ${esc(cat.tiers[t].label)}</span> <span class="muted small">${list.length} service(s)</span></h3>
-        <div class="table-wrap"><table class="data catalog"><thead><tr><th>Service</th><th>Why this tier</th><th>Recommended migration path</th><th>Equivalents</th><th>Typical duration</th></tr></thead><tbody>` +
+      html += `<div class="cat-group"><h3><span class="tier-pill" style="--dot:${tierColor(t)}">Tier ${t} · ${esc(cat.tiers[t].label)}</span> <span class="muted small">${plural(list.length, "service")}</span></h3>
+        <div class="table-wrap"><table class="data catalog"><colgroup><col style="width:15%"><col style="width:27%"><col style="width:28%"><col style="width:20%"><col style="width:10%"></colgroup><thead><tr><th>Service</th><th>Why this tier</th><th>Recommended migration path</th><th>Equivalents</th><th>Typical duration</th></tr></thead><tbody>` +
         list.map((s) => {
           const u = used.get(s.service) || s.aliases.map((a) => used.get(a)).find(Boolean);
           return `<tr><td>${esc(s.display)}<div class="hint">${esc(s.category)}</div>${u ? `<div class="hint">${money(u.monthly_spend)}/mo in scope</div>` : ""}</td>
@@ -924,8 +973,19 @@
     $("#btnApply").addEventListener("click", loadReport);
     $("#fWeighting").addEventListener("change", loadReport);
     for (const id of ["#fInclude", "#fExclude"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") loadReport(); });
-    $("#btnRecalc").addEventListener("click", loadReport);
-    $("#qForm").addEventListener("change", loadReport);
+    // Any answer, or "these answers are right", makes the estimate the organisation's own.
+    const confirmAnswers = () => { $("#qForm").confirmed.value = "true"; loadReport(); };
+    $("#btnRecalc").addEventListener("click", confirmAnswers);
+    $("#qForm").addEventListener("change", confirmAnswers);
+    $("#btnAnswerQs").addEventListener("click", (ev) => {
+      ev.preventDefault();
+      $("#sec-estimate").scrollIntoView({ behavior: "smooth", block: "start" });
+      setTimeout(() => $("#qForm").cicd.focus({ preventScroll: true }), 400);
+    });
+    $("#btnAcctMore").addEventListener("click", () => {
+      state.showAllAccounts = !state.showAllAccounts;
+      renderAccountTable(state.report, Math.max(...state.report.accounts.map((a) => a.contribution), 0.01));
+    });
     $("#btnDemo").addEventListener("click", async () => {
       try { const { id } = await api("/api/scans/demo", { method: "POST" }); await refreshScans(id); state.scanId = id; await loadReport(); toast("Loaded synthetic demo organisation"); }
       catch (e) { toast(e.message); }

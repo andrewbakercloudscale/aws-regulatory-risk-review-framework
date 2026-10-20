@@ -1,6 +1,7 @@
 import pytest
 
 from exitrisk.demo import build_demo_scan
+from exitrisk.estimate import Questionnaire
 from exitrisk.filtering import AccountFilter
 from exitrisk.scoring import build_report, rating
 
@@ -159,14 +160,27 @@ def test_executive_summary_flags_concentration_and_default_answers():
     ]
     accounts = [{"id": "big", "name": "big-prd"}] + [{"id": str(i), "name": f"app{i}-prd"} for i in range(9)]
     x = build_report(_scan(costs, accounts))["summary"]["executive"]
-    assert "concentrated" in x["bottom_line"] and "9 account(s) (90%) are broadly portable" in x["bottom_line"]
+    assert "concentrated" in x["context"] and "1 account (" in x["context"] and "carries most of it" in x["context"]
+    assert "9 of 10 accounts (90%) are broadly portable" in x["context"]
     assert any("big-prd" in a for a in x["actions"])
-    assert any("default answers" in a for a in x["actions"])
-    assert (
-        x["confidence"] in {"Medium", "Low"}
-        and x["exit"].startswith("Exit window: about ")
-        and "of a year's AWS spend" in x["exit"]
-    )
+    assert "default answers" in x["actions"][0]  # answering the questions comes first
+    assert x["confidence"] in {"Medium", "Low"} and x["exit"].startswith("Exit window: about ")
+    assert "of a year's AWS spend" in x["exit"] and all("account(s)" not in f for f in x["findings"])
+
+
+def test_default_answers_keep_cost_and_time_out_of_the_headline():
+    costs = [{"account_id": "1", "service": "Amazon Connect", "month": "2026-09", "amount": 50000}]
+    scan = _scan(costs, [{"id": "1", "name": "a-prd"}])
+    r = build_report(scan)
+    x = r["summary"]["executive"]
+    assert r["estimate"]["provisional"] and x["provisional"]
+    assert "$" not in x["headline"] and "answer the delivery questions" in x["headline"]
+    assert all(f["provisional"] for f in x["exit_facts"][:3])
+    r = build_report(scan, questionnaire=Questionnaire(confirmed=True))
+    x = r["summary"]["executive"]
+    assert not r["estimate"]["provisional"] and not x["provisional"]
+    assert "years" in x["headline"] or "months" in x["headline"]
+    assert "$" in x["headline"] and "default" not in x["actions"][0]
 
 
 def test_executive_summary_without_spend():

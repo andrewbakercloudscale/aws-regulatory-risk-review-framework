@@ -84,6 +84,9 @@ class Questionnaire(BaseModel):
     parallel_run_months: int = Field(6, ge=0, le=36)
     regulated: bool = True
     materiality: float = Field(25, ge=0, le=1_000_000)
+    # True once someone has answered (or confirmed) these questions. Until then the cost and time
+    # figures rest on defaults, and the report labels them provisional instead of headlining them.
+    confirmed: bool = False
 
 
 def size_multiplier(monthly_spend: float, count: int | None = None, typical: int | None = None) -> float:
@@ -159,9 +162,9 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
     waves = [{"name": "Mobilise & target landing zone", "start": 0.0, "weeks": round(mobilise, 1), "tiers": []}]
     cursor = mobilise
     for key, name, tiers in (
-        ("w1", "Wave 1 - portable (tiers 1-2)", [1, 2]),
-        ("w2", "Wave 2 - moderate (tier 3)", [3]),
-        ("w3", "Wave 3 - high & critical (tiers 4-5)", [4, 5]),
+        ("w1", "Wave 1: portable (tiers 1–2)", [1, 2]),
+        ("w2", "Wave 2: moderate (tier 3)", [3]),
+        ("w3", "Wave 3: high & critical (tiers 4–5)", [4, 5]),
     ):
         if wave_effort[key] <= 0:
             continue
@@ -234,18 +237,18 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
         },
         waves=waves,
         assumptions=[
-            "Service effort: catalog engineer-weeks per workload x sqrt(monthly spend / "
-            f"{REFERENCE_MONTHLY_SPEND:,.0f} USD), clamped {SIZE_MULT_MIN}-{SIZE_MULT_MAX}x; "
+            "Service effort: catalog engineer-weeks per workload × √(monthly spend / "
+            f"{REFERENCE_MONTHLY_SPEND:,.0f} USD), clamped {SIZE_MULT_MIN}–{SIZE_MULT_MAX}×; "
             "resource counts from the deep scan raise it where higher.",
             f"Services under {q.materiality:,.0f} USD/month are scored but not estimated (immaterial).",
             f"{ACCOUNT_OVERHEAD_WEEKS:g} engineer-week per material account for network, IAM and decommissioning.",
-            f"Target landing zone: {lz_base:.0f} weeks ({LANDING_ZONE_MIN_WEEKS:g} + 12 x sqrt(spend / "
+            f"Target landing zone: {lz_base:.0f} weeks ({LANDING_ZONE_MIN_WEEKS:g} + 12 × √(spend / "
             f"{LANDING_ZONE_REFERENCE_SPEND:,.0f} USD), max {LANDING_ZONE_MAX_WEEKS:g}) + "
             f"{LANDING_ZONE_PER_ACCOUNT:g} per material account.",
-            f"Delivery factor {factor:.2f} = CI/CD {CICD_FACTORS[q.cicd]} x IaC {IAC_FACTORS[q.iac]} x target "
-            f"{TARGET_FACTORS[q.target]}" + (f" x regulated {REGULATED_FACTOR}" if q.regulated else "") + ".",
+            f"Delivery factor {factor:.2f} = CI/CD {CICD_FACTORS[q.cicd]} × IaC {IAC_FACTORS[q.iac]} × target "
+            f"{TARGET_FACTORS[q.target]}" + (f" × regulated {REGULATED_FACTOR}" if q.regulated else "") + ".",
             f"Programme management and assurance {PMO_PCT:.0%}; contingency {q.contingency_pct}%.",
-            f"Engineers are {PRODUCTIVE_PCT:.0%} productive on migration work; duration is the longer of effort / "
+            f"Engineers are {PRODUCTIVE_PCT:.0%} productive on migration work; duration is the longer of effort ÷ "
             "capacity and the critical path of the hardest tier present, plus decommissioning.",
             f"Parallel running: {q.parallel_run_months} months at {PARALLEL_RUN_OVERLAP:.0%} of current AWS spend "
             "(target ramps up as AWS ramps down)"
@@ -253,6 +256,6 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "Excluded: target-cloud run cost after exit, licence changes, early-termination of AWS commitments "
             "(EDP, Savings Plans, RIs), and data-transfer-out fees (AWS waives egress for customers leaving AWS on "
             "request to AWS Support, since March 2024).",
-            "Range shown is -25% / +50% on cost and -20% / +40% on duration (early-stage estimation cone).",
+            "Range shown is −25% / +50% on cost and −20% / +40% on duration (early-stage estimation cone).",
         ],
     ).to_dict()

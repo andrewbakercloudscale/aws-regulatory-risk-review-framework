@@ -95,14 +95,21 @@
       <h2><span class="num">1</span>Executive summary</h2>
       <div class="card brief" id="brief">
         <p class="brief-eyebrow">Bottom line</p>
-        <p class="brief-bottom" id="briefBottom"></p>
+        <p class="brief-headline" id="briefHeadline"></p>
+        <p class="brief-context" id="briefContext"></p>
+        <div class="provisional" id="briefProvisional" hidden>
+          <div><strong>Cost and time are provisional.</strong> They use default answers, not your organisation's.
+            Answer the delivery questions (CI/CD, Terraform, team size, day rate) to estimate them for you.</div>
+          <a href="#sec-estimate" class="btn primary no-print" id="btnAnswerQs">Answer the questions</a>
+        </div>
+        <dl class="exit-facts" id="briefFacts"></dl>
         <div class="brief-cols">
-          <div><h3>What we found</h3><ul id="briefFindings"></ul></div>
-          <div><h3>What leaving would take</h3><p id="briefExit"></p></div>
-          <div><h3>What we recommend</h3><ol id="briefActions"></ol></div>
+          <div><h3>What we found</h3><ul class="leads" id="briefFindings"></ul></div>
+          <div><h3>What we recommend</h3><ol class="leads" id="briefActions"></ol></div>
         </div>
         <p class="brief-conf"><span class="badge" id="briefConf"></span> <span id="briefConfWhy" class="muted"></span></p>
       </div>
+      <div class="keep-together">
       <h3 class="sub">Key figures</h3>
       <div class="hero-row">
         <div class="hero card">
@@ -125,6 +132,7 @@
         </div>
         <div class="tiles" id="kpiTiles"></div>
       </div>
+      </div>
     </section>
 
     <!-- 2. Risk profile -->
@@ -133,12 +141,14 @@
       <div class="grid-2">
         <figure class="card chart-card">
           <figcaption><h3>Monthly spend by exit-risk tier</h3><p class="muted">Share of in-scope spend by how hard it is to move.</p></figcaption>
-          <div class="chart-box short"><canvas id="chTiers" role="img" aria-label="Donut chart of spend by risk tier"></canvas></div>
-          <table class="mini-table" id="tierTable"></table>
+          <div class="tier-split">
+            <div class="chart-box donut"><canvas id="chTiers" role="img" aria-label="Donut chart of spend by risk tier"></canvas></div>
+            <table class="data compact" id="tierTable"></table>
+          </div>
         </figure>
         <figure class="card chart-card">
           <figcaption><h3>Spend trend by tier</h3><p class="muted">Is lock-in growing? Monthly amortised spend.</p></figcaption>
-          <div class="chart-box"><canvas id="chTrend" role="img" aria-label="Stacked bar chart of monthly spend by risk tier"></canvas></div>
+          <div class="chart-box short"><canvas id="chTrend" role="img" aria-label="Stacked bar chart of monthly spend by risk tier"></canvas></div>
         </figure>
       </div>
       <h3 class="sub">Spend growth by product type</h3>
@@ -149,6 +159,7 @@
           <div class="chart-box"><canvas id="chGrowth" role="img" aria-label="Bar chart of the change in monthly spend for each product type"></canvas></div>
         </figure>
         <div class="card">
+          <h3>Monthly spend by product type</h3>
           <table class="data compact" id="growthTable"></table>
           <p class="muted small" id="growthNote"></p>
         </div>
@@ -174,8 +185,9 @@
         <div class="chart-box tall"><canvas id="chAccounts" role="img" aria-label="Bubble chart of account risk score against monthly spend"></canvas></div>
       </figure>
       <div class="card">
-        <h3>Account ranking <span class="muted small">by weighted contribution</span></h3>
-        <div class="table-wrap"><table class="data" id="accountTable"></table></div>
+        <h3>Account ranking <span class="muted small">by contribution to the score</span></h3>
+        <div class="table-wrap"><table class="data accounts" id="accountTable"></table></div>
+        <p class="table-more"><span id="acctMoreNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnAcctMore" hidden></button></p>
       </div>
     </section>
 
@@ -201,6 +213,8 @@
         <form class="card questionnaire" id="qForm" autocomplete="off">
           <h3>About your organisation</h3>
           <p class="muted small">These answers drive the estimate. They are saved in this browser only.</p>
+          <p class="q-status" id="qStatus"></p>
+          <input type="hidden" name="confirmed" value="false">
           <label>Do teams use a standard CI/CD pipeline to create assets?
             <select name="cicd"></select></label>
           <label>Do you use Terraform, and is it up to date?
@@ -224,7 +238,7 @@
             <label>Materiality (USD/month)<input name="materiality" type="number" min="0" step="5"></label>
           </div>
           <label class="check"><input name="regulated" type="checkbox"> Regulated entity (exit plan evidence, regulator notification, assurance testing)</label>
-          <button type="button" id="btnRecalc" class="btn primary no-print">Recalculate</button>
+          <button type="button" id="btnRecalc" class="btn primary no-print">These answers are right: recalculate</button>
         </form>
         <div class="est-results">
           <div id="estEmpty" class="card hint" hidden>No spend is in scope, so there is nothing to estimate. Change the account filter or run a scan that covers more accounts.</div>
@@ -235,7 +249,7 @@
             <div id="gantt" class="gantt"></div>
           </div>
           <figure class="card chart-card">
-            <figcaption><h3>Where the effort goes</h3><p class="muted">Engineer-weeks after delivery-maturity adjustment.</p></figcaption>
+            <figcaption><h3>Where the effort goes</h3><p class="muted">Person-months, after the delivery-maturity adjustment.</p></figcaption>
             <div class="chart-box short"><canvas id="chEffort" role="img" aria-label="Bar chart of effort by component"></canvas></div>
           </figure>
           </div>
@@ -276,9 +290,11 @@
         <h3>Data sources</h3>
         <p>Spend comes from AWS Cost Explorer in the management (payer) account: amortised cost per account per service per month, excluding tax, credits, refunds and support. Marketplace purchases are grouped as one third-party line. Accounts and OU structure come from AWS Organizations. The optional deep scan counts resources (Lambda functions, DynamoDB tables, state machines, stacks and more) in each member account through a read-only role. All API calls are read-only.</p>
         <h3>Scoring</h3>
-        <p>Each service's tier maps to a score: Portable 10, Low 30, Moderate 50, High 75, Critical 95. An account's <strong>inherent risk</strong> is the spend-weighted average of its services' scores. Its <strong>weight</strong> is its share of in-scope spend, and its <strong>contribution</strong> is inherent risk × weight. The <strong>OU score</strong> is the sum of contributions — the spend-weighted risk of the whole estate — so a small account full of proprietary services scores high on its own yet moves the OU score very little.</p>
+        <p>Each service's tier maps to a score: Portable 10, Low 30, Moderate 50, High 75, Critical 95. An account's <strong>inherent risk</strong> is the spend-weighted average of its services' scores.</p>
+        <p>The report gives <strong>two OU scores</strong>. <strong>By spend</strong> weights each account by its share of in-scope spend, so a small account full of proprietary services scores high on its own yet moves the score very little. <strong>By number of accounts</strong> counts every account with spend equally, so one large account (for example a contact centre on Connect) cannot dominate it. A gap between the two shows whether risk is concentrated in a few big accounts or spread across many. An account's <strong>contribution</strong> is its inherent risk × its weight under the weighting chosen in the bar at the top (by spend unless changed).</p>
         <p>Ratings: Low &lt; 25 ≤ Moderate &lt; 40 ≤ Elevated &lt; 55 ≤ High &lt; 70 ≤ Critical.</p>
         <h3>Estimate</h3>
+        <p>The cost and time figures depend on the delivery questions in section 5. Until they are answered, the report marks the figures provisional and keeps them out of the bottom line.</p>
         <p>Effort is built bottom-up: each material service in each account contributes the catalog's engineer-weeks for one workload, scaled by the square root of its spend relative to US$1,000/month (and by its resource count where the deep scan ran). Account overhead, a target landing zone, programme management and contingency are added, and the total is adjusted for delivery maturity from the questionnaire. Duration is the longer of effort ÷ available capacity and the critical path of the hardest tier present.</p>
         <h3>Limitations</h3>
         <ul>

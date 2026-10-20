@@ -101,6 +101,12 @@ because annualising two or three months magnifies noise.
 
 ### Inputs from the questionnaire
 
+Until someone answers (or confirms) these questions, the estimate runs on defaults and describes a
+made-up organisation. The report then marks cost, exit window and effort **Provisional**, keeps them out
+of the bottom line, and makes "answer the delivery questions" the first recommendation. Changing any
+answer in section 5, or pressing *These answers are right*, makes the figures the organisation's own;
+on the command line, `--questionnaire answers.json` does the same.
+
 | Question | Options → delivery factor |
 |---|---|
 | Standard CI/CD pipeline used to create assets? | One standard 0.85 · Several, partially standard 1.0 · Mostly manual 1.3 |

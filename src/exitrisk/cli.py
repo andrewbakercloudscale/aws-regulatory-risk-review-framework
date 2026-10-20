@@ -88,7 +88,7 @@ def _report(args) -> int:
 
     scan = store.load_scan(args.scan_id)
     if args.questionnaire:
-        q = Questionnaire(**json.loads(Path(args.questionnaire).read_text()))
+        q = Questionnaire(**{"confirmed": True, **json.loads(Path(args.questionnaire).read_text())})
     else:  # no answers given: use the exit target chosen when the scan was started
         q = Questionnaire(target=(scan.get("params") or {}).get("target") or "azure")
     report = build_report(
@@ -138,6 +138,9 @@ def _pdf(args) -> int:
                 "exclude": args.exclude,
                 "mode": args.mode,
                 "weighting": args.weighting,
+                "q": json.dumps({"confirmed": True, **json.loads(Path(args.questionnaire).read_text())})
+                if args.questionnaire
+                else None,
                 "print": "1",
             }.items()
             if v
@@ -214,9 +217,11 @@ def main(argv: list[str] | None = None) -> int:
             help="how accounts are weighted in the OU score: spend (default), equal = by number of accounts, "
             "balanced = square root of spend",
         )
-        if name == "report":
-            p.add_argument("--questionnaire", help="JSON file with questionnaire answers")
-        else:
+        p.add_argument(
+            "--questionnaire",
+            help="JSON file with the delivery answers (section 5); without it cost and time are marked provisional",
+        )
+        if name == "pdf":
             p.add_argument("--port", type=int, default=8741)
         p.set_defaults(fn=fn)
     sub.choices["pdf"].set_defaults(out="exit-risk-report.pdf")

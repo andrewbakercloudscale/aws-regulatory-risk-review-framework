@@ -176,7 +176,7 @@ def build_report(
                 "warning",
                 "catalog",
                 f"'{svc}' is not in the service catalog; scored as Moderate "
-                f"(tier 3). {amt / n_months:,.0f}/month in scope.",
+                f"(tier 3). {_money(amt / n_months) if amt / n_months >= 1 else 'Under $1'}/month in scope.",
                 "Add it to src/exitrisk/data/service_catalog.yaml (see CONTRIBUTING.md).",
                 service=svc,
             ).to_dict()
@@ -186,7 +186,7 @@ def build_report(
             Issue(
                 "info",
                 "cost",
-                f"{negative_lines} negative cost line(s) (credits/refunds not caught "
+                f"{_plural(negative_lines, 'negative cost line')} (credits/refunds not caught "
                 "by the record-type filter) were ignored",
             ).to_dict()
         )
@@ -340,6 +340,7 @@ def build_report(
     growth = _growth(months_in_data, trend, cat_trend, cat_lockin)
     summary["growth"] = {k: growth[k] for k in ("months", "first_month", "last_month", "total", "lockin")}
     estimate["empty"] = total_monthly <= 0
+    estimate["provisional"] = not questionnaire.confirmed
     summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
     summary["narrative"] = _narrative(summary, accounts_out, estimate, questionnaire)
     summary["executive"] = _executive_summary(summary, accounts_out, estimate, questionnaire, scan, bool(inventory))
@@ -390,29 +391,71 @@ def _coverage_notes(scan: dict, summary: dict, all_accounts: list, account_filte
         names = ", ".join(a["name"] for a in all_accounts[:5]) + (" ..." if len(all_accounts) > 5 else "")
         notes.append(
             f"No account matches the filter ({account_filter.to_dict()['description']}). "
-            f"The scan holds {len(all_accounts)} account(s): {names}. Clear or change the filter."
+            f"The scan holds {_plural(len(all_accounts), 'account')}: {names}. Clear or change the filter."
         )
     return notes
 
 
-def _money(v: float, cur: str) -> str:
+def _money(v: float, cur: str = "USD") -> str:
+    sym = "$" if cur == "USD" else f"{cur} "
     if v >= 1e6:
-        return f"{cur} {v / 1e6:,.1f}m"
+        return f"{sym}{v / 1e6:,.1f}m"
     if v >= 1e3:
-        return f"{cur} {v / 1e3:,.0f}k"
-    return f"{cur} {v:,.0f}"
+        return f"{sym}{v / 1e3:,.0f}k"
+    return f"{sym}{v:,.0f}"
+
+
+def _plural(n: float, word: str, plural: str | None = None) -> str:
+    return f"{n:,.0f} {word if round(n) == 1 else plural or word + 's'}"
+
+
+def _join(items: list[str]) -> str:
+    """'A', 'A and B', 'A, B and C'."""
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1] if items else ""
+
+
+def _month(m: str) -> str:
+    """'2025-10' -> 'Oct 2025'."""
+    try:
+        return datetime.strptime(m, "%Y-%m").strftime("%b %Y")
+    except (TypeError, ValueError):
+        return str(m)
+
+
+def _span(months: float) -> str:
+    # Half-up rounding, matching the console (Python's format rounds 6.25 to 6.2).
+    return (
+        f"{math.floor(months + 0.5):.0f} months" if months < 24 else f"{math.floor(months / 1.2 + 0.5) / 10:.1f} years"
+    )
+
+
+def _span_range(lo: float, hi: float) -> str:
+    a, b = _span(lo), _span(hi)
+    return f"{a.split()[0]}–{b}" if a.split()[1] == b.split()[1] else f"{a}–{b}"
 
 
 def _executive_summary(
     summary: dict, accounts: list[dict], est: dict, q: Questionnaire, scan: dict, deep_scan: bool
 ) -> dict:
-    """The one-page brief that opens the report: bottom line, findings, the exit, actions, confidence."""
+    """The one-page brief that opens the report: bottom line, findings, the exit, actions, confidence.
+
+    Findings and actions come in two forms: ``*_rich`` ({lead, text}) for the console, where the lead
+    is set in bold, and plain strings for JSON and CLI readers.
+    """
     if summary["score"] is None:
         return {
+            "headline": "No in-scope spend was found, so this report cannot rate exit risk.",
+            "context": "",
             "bottom_line": "No in-scope spend was found, so this report cannot rate exit risk.",
             "findings": [],
+            "findings_rich": [],
             "exit": "",
+            "exit_facts": [],
             "actions": ["Widen the account filter or scan an OU that has spend, then re-run the report."],
+            "actions_rich": [
+                {"lead": "Widen the scope.", "text": "Change the account filter or scan an OU that has spend."}
+            ],
             "confidence": "Low",
             "confidence_reasons": ["No spend in scope."],
         }
@@ -420,91 +463,160 @@ def _executive_summary(
     by_spend, by_acc = s["score_by_spend"], s["score_by_accounts"]
     n, port, hi = s["accounts_rated"], s["portable_accounts"], s["high_risk_accounts"]
     lockin = [x["display"] for x in s["top_lockin_services"][:3]]
-    lockin_txt = ", ".join(lockin) if lockin else "no single service"
+    d, c = est["duration"], est["cost"]
+    empty = est.get("empty")
+    defaults = not q.confirmed
+
+    # Headline: rating, what kind of exit it is, and what it would take - one sentence.
+    if by_spend >= 55:
+        kind = "leaving AWS would be a re-engineering programme, not a migration"
+    elif by_spend >= 40:
+        kind = "an exit is feasible but needs significant re-engineering"
+    else:
+        kind = "an exit is feasible, and most workloads would move with modest change"
+    pct_annual = f" ({c['pct_of_annual_spend']:.0f}% of a year's AWS spend)" if c.get("pct_of_annual_spend") else ""
+    # Cost and time only reach the headline once the delivery questions are answered: with default
+    # answers they describe a made-up organisation, not this one.
+    take = (
+        "" if empty or defaults else f": about {_span(d['calendar_months'])} and {_money(c['total'], cur)}{pct_annual}"
+    )
+    headline = f"Exit risk is {s['rating_by_spend']}. {kind[0].upper() + kind[1:]}{take}."
+    if defaults and not empty:
+        headline += (
+            " Cost and time are not yet estimated for your organisation: answer the delivery questions in section 5."
+        )
+
     gap = by_spend - by_acc
+    scores = f"Scores {by_spend:.0f}/100 by spend and {by_acc:.0f}/100 by number of accounts."
     if gap >= 5:
         shape = (
-            f"concentrated: {hi} of {n} account(s) carry most of it, on {lockin_txt}, while "
-            f"{port} account(s) ({100 * port / n:.0f}%) are broadly portable"
+            f"Risk is concentrated: {_plural(hi, 'account')} ({s['high_risk_accounts_spend_pct']:.0f}% of spend)"
+            + (f", mostly on {_join(lockin)}," if lockin else "")
+            + f" {'carries' if hi == 1 else 'carry'} most of it, while {port} of {n} accounts "
+            + f"({100 * port / n:.0f}%) are broadly portable."
         )
     elif gap <= -5:
         shape = (
-            "widespread: it sits across many smaller accounts rather than a few large ones, "
-            "so the spend view understates how many workloads need re-engineering"
+            "Risk is widespread: it sits across many smaller accounts, so the spend view understates how many "
+            "workloads need re-engineering."
         )
     else:
-        shape = f"spread in line with spend; {port} of {n} account(s) are broadly portable"
-    months = est["duration"]["calendar_months"]
-    if by_spend >= 55:
-        verdict = "Leaving AWS would be a re-engineering programme, not a migration"
-    elif by_spend >= 40:
-        verdict = "An exit is feasible but needs significant re-engineering of the lock-in workloads"
-    else:
-        verdict = "An exit is technically feasible: most workloads would move with modest change"
-    if months >= 24:
-        verdict += f"; at this estate's size it is still a multi-year undertaking (~{months / 12:.0f} years)."
-    else:
-        verdict += "."
-    bottom = (
-        f"Exit risk is {s['rating_by_spend']} ({by_spend:.0f}/100 by spend, {by_acc:.0f}/100 by number of "
-        f"accounts) and {shape}. {verdict}"
-    )
+        shape = (
+            f"Risk is spread in line with spend; {port} of {n} accounts ({100 * port / n:.0f}%) are broadly portable."
+        )
+    context = f"{scores} {shape}"
 
     findings = [
-        f"{s['high_risk_pct']:.0f}% of spend ({_money(s['high_risk_monthly'] * 12, 'USD')} a year) runs on High or "
-        f"Critical services: {s['bespoke_services']} bespoke (AWS-only) service(s) that must be re-engineered, "
-        "not just moved.",
-        f"{port} of {n} account(s) are Low or Moderate risk; {hi} are High or Critical and hold "
-        f"{s['high_risk_accounts_spend_pct']:.0f}% of spend.",
+        {
+            "lead": f"{s['high_risk_pct']:.0f}% of spend ({_money(s['high_risk_monthly'] * 12)} a year)",
+            "text": f"runs on {_plural(s['bespoke_services'], 'bespoke, AWS-only service')} that must be "
+            "re-engineered, not just moved" + (f"; the largest are {_join(lockin)}." if lockin else "."),
+        },
+        {
+            "lead": f"{port} of {n} accounts are portable",
+            "text": f"(Low or Moderate risk). The {_plural(hi, 'High or Critical account')} hold "
+            f"{s['high_risk_accounts_spend_pct']:.0f}% of spend.",
+        },
     ]
     top = [a for a in accounts if a["contribution"] > 0][:3]
     if len(top) > 1 and s["score"]:
         share = sum(a["contribution"] for a in top) / s["score"] * 100
         findings.append(
-            f"{len(top)} accounts set the pace of any exit: {', '.join(a['name'] for a in top)} "
-            f"({share:.0f}% of the weighted risk)."
+            {
+                "lead": f"{len(top)} accounts set the pace:",
+                "text": f"{_join([a['name'] for a in top])} carry {share:.0f}% of the weighted risk.",
+            }
         )
-    if lockin:
-        findings.append(f"The largest lock-in exposures are {', '.join(lockin)}.")
     g = s.get("growth") or {}
     if g.get("total") and g["total"]["pct"] is not None and g["lockin"]["pct"] is not None:
         t, lk = g["total"]["pct"], g["lockin"]["pct"]
         pace = "faster than" if lk > t + 1 else "more slowly than" if lk < t - 1 else "in line with"
+        verb = lambda v: f"grew {v:.0f}%" if v >= 0 else f"fell {-v:.0f}%"  # noqa: E731
         findings.append(
-            f"Spend changed {t:+.0f}% from {g['first_month']} to {g['last_month']}; High/Critical spend changed "
-            f"{lk:+.0f}%, so lock-in is growing {pace} the estate."
+            {
+                "lead": f"Spend {verb(t)}",
+                "text": f"from {_month(g['first_month'])} to {_month(g['last_month'])}; High/Critical spend "
+                f"{verb(lk)}, so lock-in is growing {pace} the estate.",
+            }
         )
 
-    d, c = est["duration"], est["cost"]
-    pct_txt = f", {c['pct_of_annual_spend']:.0f}% of a year's AWS spend" if c.get("pct_of_annual_spend") else ""
+    target = TARGET_LABELS[q.target]
+    exit_facts = (
+        []
+        if empty
+        else [
+            {
+                "label": "Exit window",
+                "value": _span(d["calendar_months"]),
+                "note": f"range {_span_range(d['low_months'], d['high_months'])}",
+            },
+            {
+                "label": "One-off cost",
+                "value": _money(c["total"], cur),
+                "note": (
+                    f"{c['pct_of_annual_spend']:.0f}% of a year's AWS spend; " if c.get("pct_of_annual_spend") else ""
+                )
+                + f"range {_money(c['low'], cur)}–{_money(c['high'], cur)}",
+            },
+            {
+                "label": "Engineering",
+                "value": _plural(est["effort"]["person_months"], "person-month"),
+                "note": "plus parallel running",
+            },
+            {"label": "Target", "value": target, "note": "assumed exit destination"},
+        ]
+    )
+    for f in exit_facts[:3]:
+        f["provisional"] = defaults
     exit_line = (
-        f"Exit window: about {d['calendar_months']:.0f} months (~{d['calendar_months'] / 12:.1f} years; range "
-        f"{d['low_months']:.0f}-{d['high_months']:.0f} months) "
-        f"to move everything to {TARGET_LABELS[q.target]}. One-off cost: {_money(c['total'], cur)}{pct_txt} "
-        f"(range {_money(c['low'], cur)}-{_money(c['high'], cur)}), {est['effort']['person_months']:,.0f} "
-        "person-months of engineering plus parallel running."
+        ""
+        if empty
+        else (
+            f"Exit window: about {d['calendar_months']:.0f} months (~{d['calendar_months'] / 12:.1f} years; range "
+            f"{d['low_months']:.0f}–{d['high_months']:.0f} months) to move everything to {target}. One-off cost: "
+            f"{_money(c['total'], cur)}"
+            + (f", {c['pct_of_annual_spend']:.0f}% of a year's AWS spend" if c.get("pct_of_annual_spend") else "")
+            + f" (range {_money(c['low'], cur)}–{_money(c['high'], cur)}), "
+            f"{est['effort']['person_months']:,.0f} person-months of engineering plus parallel running."
+        )
     )
 
     actions = []
     if top and (hi or gap >= 5):
         actions.append(
-            f"Write and test exit plans for {', '.join(a['name'] for a in top)} first; they drive most of the cost "
-            "and the timeline."
+            {
+                "lead": "Plan the hardest accounts first.",
+                "text": f"Write and test exit plans for {_join([a['name'] for a in top])}; they drive most of the "
+                "cost and the timeline.",
+            }
         )
     if lockin:
         actions.append(
-            f"Make portability a design criterion for new work on {lockin_txt}: prefer the open-standard "
-            "alternative named in Appendix A unless the business case says otherwise."
+            {
+                "lead": "Make portability a design criterion",
+                "text": f"for new work on {_join(lockin)}: prefer the open-standard alternative in Appendix A "
+                "unless the business case says otherwise.",
+            }
         )
-    defaults = q == Questionnaire(target=q.target, currency=q.currency, fx_per_usd=q.fx_per_usd)
     if defaults:
-        actions.append(
-            "Answer the delivery questions in section 5 (CI/CD, Terraform, team size, day rate): the estimate "
-            "above still uses default answers."
+        actions.insert(
+            0,
+            {
+                "lead": "Answer the delivery questions in section 5",
+                "text": "(CI/CD, Terraform, team size, day rate). Until then the cost and time figures use default "
+                "answers, not your organisation's.",
+            },
         )
     if not deep_scan:
-        actions.append("Grant the read-only deep-scan role so the estimate uses resource counts, not spend alone.")
-    actions.append("Re-run this review quarterly and track the score; a rising score means new lock-in.")
+        actions.append(
+            {
+                "lead": "Grant the read-only deep-scan role",
+                "text": "so the estimate uses resource counts, not spend alone.",
+            }
+        )
+    actions.append(
+        {"lead": "Re-run this review quarterly", "text": "and track both scores; a rising score means new lock-in."}
+    )
 
     reasons, level = [], 3
     if scan.get("mode") == "demo":
@@ -514,20 +626,27 @@ def _executive_summary(
         reasons.append("Partial coverage of the estate (see the note at the top).")
         level = min(level, 2)
     if defaults:
-        reasons.append("Estimate uses default delivery answers.")
+        reasons.append("Cost and time use default delivery answers, not yours.")
         level = min(level, 2)
     if not deep_scan:
         reasons.append("Spend data only; no resource counts.")
         level = min(level, 2)
     if s["unclassified_services"]:
-        reasons.append(f"{s['unclassified_services']} service(s) not in the catalog, scored as Moderate.")
+        reasons.append(f"{_plural(s['unclassified_services'], 'service')} not in the catalog, scored as Moderate.")
     if not reasons:
         reasons.append("Full scan, answered questionnaire, every service classified.")
+    plain = lambda x: f"{x['lead']} {x['text']}"  # noqa: E731
     return {
-        "bottom_line": bottom,
-        "findings": findings,
+        "headline": headline,
+        "context": context,
+        "bottom_line": f"{headline} {context}",
+        "findings": [plain(f) for f in findings],
+        "findings_rich": findings,
         "exit": exit_line,
-        "actions": actions[:5],
+        "exit_facts": exit_facts,
+        "provisional": defaults and not empty,
+        "actions": [plain(a) for a in actions[:5]],
+        "actions_rich": actions[:5],
         "confidence": {1: "Low", 2: "Medium", 3: "High"}[level],
         "confidence_reasons": reasons,
     }
@@ -540,33 +659,33 @@ def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire)
     lines = [
         f"The in-scope estate scores {int(summary['score_by_spend'] + 0.5)}/100 ({summary['rating_by_spend']}) "
         f"for exit difficulty weighted by spend, and {int(summary['score_by_accounts'] + 0.5)}/100 "
-        f"({summary['rating_by_accounts']}) counting every account equally, across {summary['accounts_with_spend']} "
-        f"account(s) spending {_money(summary['annual_spend'], 'USD')} a year.",
-        f"{summary['high_risk_pct']:.0f}% of spend ({_money(summary['high_risk_monthly'] * 12, 'USD')}/yr) runs on "
+        f"({summary['rating_by_accounts']}) counting every account equally, across {summary['accounts_with_spend']:,} "
+        f"accounts spending {_money(summary['annual_spend'])} a year.",
+        f"{summary['high_risk_pct']:.0f}% of spend ({_money(summary['high_risk_monthly'] * 12)} a year) runs on "
         "High or Critical services that have no direct equivalent outside AWS and need re-engineering.",
     ]
     n, port, hi = summary["accounts_rated"], summary["portable_accounts"], summary["high_risk_accounts"]
     if n:
         lines.append(
-            f"{port} of {n} account(s) ({100 * port / n:.0f}%) are Low or Moderate risk and broadly portable; "
+            f"{port} of {n} accounts ({100 * port / n:.0f}%) are Low or Moderate risk and broadly portable; "
             f"{hi} ({100 * hi / n:.0f}%) are High or Critical, holding {summary['high_risk_accounts_spend_pct']:.0f}% "
             "of spend."
         )
     if summary["top_lockin_services"]:
-        names = ", ".join(s["display"] for s in summary["top_lockin_services"][:3])
+        names = _join([s["display"] for s in summary["top_lockin_services"][:3]])
         lines.append(f"The largest lock-in exposures are {names}.")
     top = [a for a in accounts if a["contribution"] > 0][:3]
     if len([a for a in accounts if a["contribution"] > 0]) > 1:
         share = sum(a["contribution"] for a in top) / summary["score"] * 100 if summary["score"] else 0
         lines.append(
-            f"{len(top)} account(s) - {', '.join(a['name'] for a in top)} - carry {share:.0f}% of the "
+            f"{len(top)} accounts ({_join([a['name'] for a in top])}) carry {share:.0f}% of the "
             "weighted risk; they set the pace of any exit."
         )
     lines.append(
         f"A full exit to {TARGET_LABELS[q.target]} is estimated at {est['effort']['person_months']:,.0f} "
         f"person-months over ~{est['duration']['calendar_months']:.0f} months "
-        f"({est['duration']['low_months']:.0f}-{est['duration']['high_months']:.0f}), costing about "
-        f"{_money(est['cost']['total'], cur)} ({_money(est['cost']['low'], cur)}-{_money(est['cost']['high'], cur)}) "
+        f"({est['duration']['low_months']:.0f}–{est['duration']['high_months']:.0f}), costing about "
+        f"{_money(est['cost']['total'], cur)} ({_money(est['cost']['low'], cur)}–{_money(est['cost']['high'], cur)}) "
         "in engineering and parallel running."
     )
     return lines
