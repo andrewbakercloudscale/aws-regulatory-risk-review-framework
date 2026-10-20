@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-20
+
 ### Added
 - **Specifics behind the numbers.** The bespoke-services finding names each of the largest services with
   its annual spend and account count; the growth finding names the biggest rises. Growth by product type
