@@ -243,6 +243,10 @@
           </div>
           <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1"></label>
           <label>Target platform<select name="target"></select></label>
+          <div id="dcFields" class="dc-fields" hidden>
+            <label>Where will the hardware go?<select name="dc_facility"></select></label>
+            <label class="check"><input name="dc_dr_site" type="checkbox"> Buy a second site for disaster recovery</label>
+          </div>
           <div class="pair">
             <label>Blended day rate<input name="day_rate" type="number" min="0" step="50"></label>
             <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}"></label>

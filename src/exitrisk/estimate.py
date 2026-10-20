@@ -17,14 +17,34 @@ from pydantic import BaseModel, Field
 
 CICD_FACTORS = {"standard": 0.85, "partial": 1.0, "manual": 1.3}
 IAC_FACTORS = {"terraform_current": 0.8, "terraform_drift": 1.1, "cloudformation": 1.25, "none": 1.5}
-TARGET_FACTORS = {"azure": 1.0, "gcp": 1.0, "oci": 1.1, "sovereign": 1.2, "onprem": 1.35}
+# Every managed service AWS ran becomes something you run: the further from a hyperscaler, the more work.
+TARGET_FACTORS = {"azure": 1.0, "gcp": 1.0, "oci": 1.1, "sovereign": 1.2, "onprem": 1.35, "datacenter": 1.5}
 TARGET_LABELS = {
     "azure": "Microsoft Azure",
     "gcp": "Google Cloud",
     "oci": "Oracle Cloud",
     "sovereign": "Sovereign / local cloud",
-    "onprem": "On-premises (Kubernetes / VMs)",
+    "onprem": "On-premises platform you already run (Kubernetes / VMs)",
+    "datacenter": "Physical data centre (your own hardware)",
 }
+# How a target reads mid-sentence: "a full exit to your own data centre".
+TARGET_PHRASES = {**TARGET_LABELS, "onprem": "an on-premises platform", "datacenter": "your own data centre"}
+TARGET_PATTERN = "^(" + "|".join(TARGET_LABELS) + ")$"
+
+# Physical data centre: the facility and hardware must exist before workloads can move.
+DC_FACILITY_LABELS = {
+    "existing": "Space and power in a data centre you already run",
+    "colocation": "Colocation: rent space and power, buy the hardware",
+    "build": "Build a new data centre",
+}
+# Weeks before the first production workload can land: contracts, procurement, racking, network.
+DC_LEAD_WEEKS = {"existing": 16, "colocation": 26, "build": 104}
+# One-off hardware (servers, storage, network) for production capacity with headroom, as months of
+# the AWS bill being exited; a disaster-recovery site adds a share of that again.
+DC_HARDWARE_MONTHS = 9
+DC_DR_HARDWARE_SHARE = 0.6
+# One-off facility cost as months of the AWS bill: cage build-out and connectivity, or a new building.
+DC_FACILITY_MONTHS = {"existing": 0, "colocation": 2, "build": 12}
 CICD_LABELS = {
     "standard": "One standard CI/CD pipeline",
     "partial": "Several, partially standard pipelines",
@@ -78,7 +98,10 @@ class Questionnaire(BaseModel):
     cloud_team_size: int = Field(10, ge=1, le=2000)
     cloud_team_allocation_pct: int = Field(50, ge=5, le=100)
     app_engineers_fte: float = Field(10, ge=0, le=5000)
-    target: str = Field("azure", pattern="^(azure|gcp|oci|sovereign|onprem)$")
+    target: str = Field("azure", pattern=TARGET_PATTERN)
+    # Only used when target is "datacenter".
+    dc_facility: str = Field("colocation", pattern="^(existing|colocation|build)$")
+    dc_dr_site: bool = True
     day_rate: float = Field(750, ge=0, le=100000)
     currency: str = Field("USD", pattern="^[A-Z]{3}$")
     # AWS bills in USD; the labour rate is in ``currency``. Units of ``currency`` per 1 USD.
@@ -161,12 +184,48 @@ class Estimate:
     team: dict
     duration: dict
     cost: dict
+    datacenter: dict | None
     waves: list
     assumptions: list
     ranges: dict
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def _datacenter(q: Questionnaire, monthly_spend: float) -> dict:
+    """One-off hardware and facility cost, and lead time, of exiting to your own data centre (else zeros)."""
+    if q.target != "datacenter":
+        return {"lead_weeks": 0, "hardware": 0.0, "facility": 0.0, "assumptions": []}
+    sites = 2 if q.dc_dr_site else 1
+    hardware_months = DC_HARDWARE_MONTHS * (1 + (DC_DR_HARDWARE_SHARE if q.dc_dr_site else 0))
+    # An existing estate is assumed to have its DR site already; a new facility needs one per site.
+    facility_months = DC_FACILITY_MONTHS[q.dc_facility] * (sites if q.dc_facility != "existing" else 1)
+    fx_spend = monthly_spend * q.fx_per_usd
+    lead = DC_LEAD_WEEKS[q.dc_facility]
+    return {
+        "facility_type": q.dc_facility,
+        "facility_label": DC_FACILITY_LABELS[q.dc_facility],
+        "dr_site": q.dc_dr_site,
+        "lead_weeks": lead,
+        "hardware": hardware_months * fx_spend,
+        "facility": facility_months * fx_spend,
+        "assumptions": [
+            f"Physical data centre ({DC_FACILITY_LABELS[q.dc_facility].lower()}): {lead} weeks before the first "
+            "production workload can land (contracts, procurement, racking, network), added to the critical path.",
+            f"Hardware: {DC_HARDWARE_MONTHS} months of the current AWS bill for production capacity with headroom"
+            + (f", plus {DC_DR_HARDWARE_SHARE:.0%} for a disaster-recovery site" if q.dc_dr_site else "")
+            + "; facility: "
+            + (
+                "none (existing space and power)."
+                if not facility_months
+                else f"{facility_months:g} months of the AWS bill"
+                + (" across two sites." if sites == 2 and q.dc_facility != "existing" else ".")
+            ),
+            "Excluded for the data centre: running it after exit (power, cooling, facility and hardware staff, "
+            "maintenance contracts) and hardware refresh every 4–6 years.",
+        ],
+    }
 
 
 def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float) -> dict:
@@ -197,21 +256,23 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
     capacity = max(capacity, 0.5)
     effort_bound = total / (capacity * PRODUCTIVE_PCT)
     highest_tier = max((t for t, w in by_tier.items() if w > 0), default=1)
-    critical_path = CRITICAL_PATH_WEEKS[highest_tier] + lz_base / 2
+    dc = _datacenter(q, monthly_spend)
+    critical_path = CRITICAL_PATH_WEEKS[highest_tier] + lz_base / 2 + dc["lead_weeks"]
     build_weeks = max(effort_bound, critical_path)
     calendar_weeks = math.ceil(build_weeks + DECOMMISSION_WEEKS)
 
     labour = total * 5 * q.day_rate
     parallel = q.parallel_run_months * monthly_spend * PARALLEL_RUN_OVERLAP * q.fx_per_usd
-    total_cost = labour + parallel
+    total_cost = labour + parallel + dc["hardware"] + dc["facility"]
 
     # Waves: landing zone first, then easiest to hardest so the team learns on portable workloads.
     mobilise = max(6.0, landing_zone * (1 + PMO_PCT) / (capacity * PRODUCTIVE_PCT))
-    mobilise = min(mobilise, build_weeks * 0.35)
+    mobilise = max(min(mobilise, build_weeks * 0.35), dc["lead_weeks"])
     remaining = build_weeks - mobilise
     wave_effort = {"w1": by_tier[1] + by_tier[2], "w2": by_tier[3], "w3": by_tier[4] + by_tier[5]}
     wave_total = sum(wave_effort.values()) or 1.0
-    waves = [{"name": "Mobilise & target landing zone", "start": 0.0, "weeks": round(mobilise, 1), "tiers": []}]
+    first = "Mobilise, data centre & hardware" if dc["lead_weeks"] else "Mobilise & target landing zone"
+    waves = [{"name": first, "start": 0.0, "weeks": round(mobilise, 1), "tiers": []}]
     cursor = mobilise
     for key, name, tiers in (
         ("w1", "Wave 1: portable (tiers 1–2)", [1, 2]),
@@ -280,6 +341,8 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "currency": q.currency,
             "labour": round(labour),
             "parallel_run": round(parallel),
+            "hardware": round(dc["hardware"]),
+            "facility": round(dc["facility"]),
             "total": round(total_cost),
             "low": round(total_cost * COST_RANGE[0]),
             "high": round(total_cost * COST_RANGE[1]),
@@ -288,6 +351,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             if monthly_spend > 0
             else None,
         },
+        datacenter=dc if q.target == "datacenter" else None,
         waves=waves,
         assumptions=[
             "Service effort: catalog engineer-weeks per workload × √(monthly spend / "
@@ -306,6 +370,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             f"Parallel running: {q.parallel_run_months} months at {PARALLEL_RUN_OVERLAP:.0%} of current AWS spend "
             "(target ramps up as AWS ramps down)"
             + (f", converted at {q.fx_per_usd:g} {q.currency}/USD." if q.currency != "USD" else "."),
+            *dc["assumptions"],
             "Excluded: target-cloud run cost after exit, licence changes, early-termination of AWS commitments "
             "(EDP, Savings Plans, RIs), and data-transfer-out fees (since March 2024 AWS credits egress for "
             "customers leaving AWS, on request to AWS Support and subject to approval, for a move completed within "

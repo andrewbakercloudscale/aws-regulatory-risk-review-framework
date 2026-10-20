@@ -399,3 +399,5 @@ table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(-
 
 .mr-error { margin: 24px 0; padding: 18px 20px; border-left: 4px solid var(--t5); }
 .mr-error h2 { margin: 0 0 8px; font-size: 18px; }
+.dc-fields { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-left: 3px solid var(--border); }
+.dc-fields[hidden] { display: none; }

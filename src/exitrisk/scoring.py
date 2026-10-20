@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 from . import __version__
 from .catalog import Catalog, load_catalog
-from .estimate import TARGET_LABELS, TYPICAL_COUNTS, Questionnaire, build_estimate, service_effort
+from .estimate import TARGET_LABELS, TARGET_PHRASES, TYPICAL_COUNTS, Questionnaire, build_estimate, service_effort
 from .filtering import AccountFilter
 from .issues import Issue
 
@@ -694,28 +694,34 @@ def _growth_finding(g: dict) -> dict | None:
     }
 
 
+def _cost_parts(est: dict) -> str:
+    """What the one-off cost is made of: hardware only appears for an exit to your own data centre."""
+    return "engineering, hardware and parallel running" if est.get("datacenter") else "engineering and parallel running"
+
+
 def _exit(est: dict, q: Questionnaire, defaults: bool) -> tuple[list[dict], str]:
     """The exit as tiles (window, cost, effort, target) and as one sentence; nothing when there is no spend."""
     if est.get("empty"):
         return [], ""
-    rg, target = est["ranges"], TARGET_LABELS[q.target]
+    rg, target, phrase = est["ranges"], TARGET_LABELS[q.target], TARGET_PHRASES[q.target]
     pct = rg.get("pct_of_annual_spend")
+    others = "hardware and parallel running" if est.get("datacenter") else "parallel running"
     facts = [
         {"label": "Exit window", "value": rg["duration"], "note": f"bound by {est['duration']['constrained_by']}"},
         {
             "label": "One-off cost",
             "value": rg["cost"],
-            "note": (f"{pct} of a year's AWS spend; " if pct else "") + "engineering and parallel running",
+            "note": (f"{pct} of a year's AWS spend; " if pct else "") + _cost_parts(est),
         },
-        {"label": "Engineering", "value": rg["effort"], "note": "plus parallel running"},
+        {"label": "Engineering", "value": rg["effort"], "note": "plus " + others},
         {"label": "Target", "value": target, "note": "assumed exit destination"},
     ]
     for f in facts[:3]:
         f["provisional"] = defaults
     line = (
-        f"Exit window: roughly {rg['duration']} to move everything to {target}. One-off cost: {rg['cost']}"
+        f"Exit window: roughly {rg['duration']} to move everything to {phrase}. One-off cost: {rg['cost']}"
         + (f", {pct} of a year's AWS spend" if pct else "")
-        + f"; {rg['effort']} of engineering plus parallel running."
+        + f"; {rg['effort']} of engineering plus {others}."
     )
     return facts, line
 
@@ -824,7 +830,7 @@ def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire)
             "spend at risk; they set the pace of any exit."
         )
     lines.append(
-        f"A full exit to {TARGET_LABELS[q.target]} would take roughly {est['ranges']['duration']} and "
-        f"{est['ranges']['effort']}, costing roughly {est['ranges']['cost']} in engineering and parallel running."
+        f"A full exit to {TARGET_PHRASES[q.target]} would take roughly {est['ranges']['duration']} and "
+        f"{est['ranges']['effort']}, costing roughly {est['ranges']['cost']} in {_cost_parts(est)}."
     )
     return lines

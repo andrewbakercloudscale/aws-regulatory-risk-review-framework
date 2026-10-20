@@ -27,7 +27,7 @@ from .aws_session import available_profiles, make_session, profile_accounts
 from .catalog import load_catalog
 from .collectors import organizations
 from .demo import create_demo_scan
-from .estimate import CICD_LABELS, IAC_LABELS, TARGET_LABELS, Questionnaire
+from .estimate import CICD_LABELS, DC_FACILITY_LABELS, IAC_LABELS, TARGET_LABELS, TARGET_PATTERN, Questionnaire
 from .filtering import AccountFilter, FilterError
 from .issues import describe_exception
 from .logging_config import configure_logging, get_logger, tail_log
@@ -69,7 +69,7 @@ class ScanRequest(BaseModel):
     inventory: bool = False
     regions: list[str] | None = None
     label: str = Field("", max_length=120)
-    target: str = Field("azure", pattern=r"^(azure|gcp|oci|sovereign|onprem)$")
+    target: str = Field("azure", pattern=TARGET_PATTERN)
 
 
 class SSOSessionRequest(BaseModel):
@@ -206,6 +206,7 @@ def create_app(allow_remote: bool = False) -> FastAPI:
             "cicd": CICD_LABELS,
             "iac": IAC_LABELS,
             "target": TARGET_LABELS,
+            "dc_facility": DC_FACILITY_LABELS,
             "defaults": Questionnaire().model_dump(),
         }
 

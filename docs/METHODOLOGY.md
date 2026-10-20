@@ -112,7 +112,8 @@ on the command line, `--questionnaire answers.json` does the same.
 |---|---|
 | Standard CI/CD pipeline used to create assets? | One standard 0.85 · Several, partially standard 1.0 · Mostly manual 1.3 |
 | Terraform used, and current? | Terraform current 0.8 · Terraform with drift 1.1 · CloudFormation/CDK 1.25 · Little or none 1.5 |
-| Target platform | Azure 1.0 · Google Cloud 1.0 · Oracle Cloud 1.1 · Sovereign/local cloud 1.2 · On-premises 1.35 |
+| Target platform | Azure 1.0 · Google Cloud 1.0 · Oracle Cloud 1.1 · Sovereign/local cloud 1.2 · On-premises platform you already run 1.35 · Physical data centre 1.5 |
+| Physical data centre only: where the hardware goes, and a second site for DR? | Existing space · Colocation · Build new; DR site yes/no → lead time and one-off hardware and facility cost (below) |
 | Regulated entity | Yes 1.15 (exit-plan evidence, regulator notification, assurance testing) · No 1.0 |
 | Core cloud team size, % allocated; application engineer FTE | Capacity, not effort |
 | Blended day rate, currency, FX per USD, contingency %, parallel-run months, materiality | Cost |
@@ -145,6 +146,7 @@ per "typical workload" (`TYPICAL_COUNTS` in `estimate.py`).
 capacity (FTE)   = cloud team × allocation% + application engineers
 effort-bound     = total effort / (capacity × 80% productive)
 critical path    = {tier 5: 26, 4: 16, 3: 10, 2: 8, 1: 6} weeks for the hardest tier present + landing zone / 2
+                   + data-centre lead time (physical data centre only)
 calendar         = max(effort-bound, critical path) + 4 weeks decommissioning
 ```
 
@@ -157,9 +159,27 @@ target platform and its patterns on low-risk workloads.
 ```
 labour        = total effort × 5 days × day rate
 parallel run  = parallel-run months × monthly AWS spend × 50% × FX       (target ramps up as AWS ramps down)
-total         = labour + parallel run;   range −25% / +50%;   duration range −20% / +40%
+total         = labour + parallel run + hardware + facility;   range −25% / +50%;   duration range −20% / +40%
 % of annual   = total / (monthly AWS spend × 12 × FX)                    one-off exit cost vs a year of the bill
 ```
+
+#### Exit to a physical data centre
+
+Leaving AWS for your own data centre is a different programme from moving to another cloud: every
+managed service AWS ran (databases, queues, load balancers, identity, backup) becomes software and
+hardware you buy, rack and operate, and nothing can move until the facility and hardware exist.
+
+```
+delivery factor  = 1.5 for the target                       (vs 1.35 for an on-premises platform you already run)
+lead time        = existing space 16 · colocation 26 · build new 104 weeks   on the critical path, before wave 1
+hardware         = 9 months of the AWS bill × FX × (1.6 with a DR site, else 1.0)
+facility         = existing 0 · colocation 2 · build new 12 months of the AWS bill per site × FX
+```
+
+Hardware is sized from the bill because it is the only capacity signal the scan has; AWS prices include
+the managed-service premium, so treat it as an order of magnitude and replace it with a sizing exercise.
+Running the data centre after exit (power, cooling, facility and hardware staff, maintenance contracts,
+refresh every 4–6 years) is not in the one-off cost.
 
 **The report quotes ranges, never single figures.** Cost, effort and duration are shown as the
 range above, widened outward to round numbers (e.g. "$7m–$16m", "2.5–5 years", "300–700

@@ -105,10 +105,17 @@
     fillSelect("cicd", state.options.cicd);
     fillSelect("iac", state.options.iac);
     fillSelect("target", state.options.target);
+    fillSelect("dc_facility", state.options.dc_facility);
     for (const [k, v] of Object.entries(q)) {
       if (!f[k]) continue;
       if (f[k].type === "checkbox") f[k].checked = !!v; else f[k].value = v;
     }
+    syncDatacenter();
+  }
+
+  // The data-centre questions only apply when the exit target is your own data centre.
+  function syncDatacenter() {
+    $("#dcFields").hidden = $("#qForm").target.value !== "datacenter";
   }
 
   function readQuestionnaire() {
@@ -542,6 +549,13 @@
     }
   }
 
+  // "about 60% engineering, the rest parallel running"; a data-centre exit also names hardware and facility.
+  function costSplit(e) {
+    const pct = (v) => Math.round(100 * v / Math.max(e.cost.total, 1));
+    if (!e.datacenter) return `about ${pct(e.cost.labour)}% engineering, the rest parallel running`;
+    return `about ${pct(e.cost.labour)}% engineering, ${pct(e.cost.hardware + e.cost.facility)}% hardware and facility, the rest parallel running`;
+  }
+
   function renderEstimate(r) {
     const e = r.estimate;
     $("#estEmpty").hidden = !e.empty;
@@ -551,7 +565,7 @@
       ? `<span class="prov-tag">Provisional</span> Using default answers. Change any answer, or confirm these, to estimate for your organisation.`
       : `<span class="ok-tag">✓ Your answers</span> The estimate uses the answers below.`;
     $("#estTiles").innerHTML = e.empty ? "" : [
-      tile("Total exit cost (indicative)", e.ranges.cost, `${e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend · ` : ""}about ${Math.round(100 * e.cost.labour / Math.max(e.cost.total, 1))}% engineering, the rest parallel running`, prov),
+      tile("Total exit cost (indicative)", e.ranges.cost, `${e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend · ` : ""}${costSplit(e)}`, prov),
       tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, prov),
       tile("Engineering effort", e.ranges.effort, plural(e.effort.material_accounts, "material account"), prov),
     ].join("");
@@ -581,7 +595,9 @@
 
     const q = e.inputs, o = state.options;
     const ans = [["Standard CI/CD pipeline", o.cicd[q.cicd]], ["Terraform / IaC", o.iac[q.iac]], ["Core cloud team", `${q.cloud_team_size} people at ${q.cloud_team_allocation_pct}%`],
-      ["Application engineers", `${q.app_engineers_fte} FTE`], ["Target", o.target[q.target]], ["Blended day rate", `${num(q.day_rate)} ${q.currency}`],
+      ["Application engineers", `${q.app_engineers_fte} FTE`], ["Target", o.target[q.target]],
+      ...(e.datacenter ? [["Data centre", o.dc_facility[q.dc_facility]], ["Disaster-recovery site", q.dc_dr_site ? "Yes, a second site" : "No"]] : []),
+      ["Blended day rate", `${num(q.day_rate)} ${q.currency}`],
       ["Contingency", `${q.contingency_pct}%`], ["Parallel running", `${q.parallel_run_months} months`], ["Regulated", q.regulated ? "Yes" : "No"]];
     $("#answers").innerHTML = ans.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
     $("#assumptions").innerHTML = e.assumptions.map((a) => `<li>${esc(a)}</li>`).join("");
@@ -999,6 +1015,7 @@
       target: f.target.value || "azure",
     };
     $("#qForm").target.value = body.target;
+    syncDatacenter();
     readQuestionnaire();
     $("#scanError").textContent = "";
     $("#btnStartScan").disabled = true;
@@ -1301,7 +1318,7 @@
       state.mrShowAll = false;
       // Each scan remembers the exit target chosen when it was started.
       const t = (state.scans || []).find((s) => s.id === state.scanId)?.target;
-      if (t) $("#qForm").target.value = t;
+      if (t) { $("#qForm").target.value = t; syncDatacenter(); }
       loadReport();
     });
     $("#btnApply").addEventListener("click", loadReport);
@@ -1314,7 +1331,7 @@
     });
     for (const id of ["#fInclude", "#fExclude"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") loadReport(); });
     // Any answer, or "these answers are right", makes the estimate the organisation's own.
-    const confirmAnswers = () => { $("#qForm").confirmed.value = "true"; loadReport(); };
+    const confirmAnswers = () => { $("#qForm").confirmed.value = "true"; syncDatacenter(); loadReport(); };
     $("#btnRecalc").addEventListener("click", confirmAnswers);
     $("#qForm").addEventListener("change", confirmAnswers);
     $("#btnAnswerQs").addEventListener("click", (ev) => {

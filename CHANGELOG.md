@@ -6,6 +6,19 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **Physical data centre as an exit target** (`datacenter`; `exitrisk scan --target datacenter`). It asks
+  where the hardware goes (existing space, colocation or a new build) and whether to buy a second site for
+  disaster recovery. The estimate adds the facility lead time to the critical path (16, 26 or 104 weeks
+  before the first workload lands), one-off hardware (9 months of the AWS bill, +60% for a DR site) and
+  facility cost (0, 2 or 12 months of the bill per site), and a 1.5 delivery factor because every managed
+  service becomes something you run. The timeline, cost split, executive summary and assumptions name the
+  hardware; running the data centre after exit is listed as excluded. Method in METHODOLOGY.md.
+
+### Changed
+- "On-premises" is now "On-premises platform you already run (Kubernetes / VMs)" to separate it from
+  building a data centre; its factor (1.35) is unchanged.
+
 ## [0.3.3] - 2026-10-20
 
 ### Catalog 2026.10.3 (120 services)

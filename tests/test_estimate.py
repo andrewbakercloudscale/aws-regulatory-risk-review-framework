@@ -67,3 +67,36 @@ def test_ranges_are_rounded_outward_and_never_a_single_figure():
     assert r["cost"].count("–") == 1 and r["duration"].count("–") == 1 and r["effort"].endswith("person-months")
     lo, hi = (float(x.strip("$m")) * 1e6 for x in r["cost"].split("–"))
     assert lo <= est["cost"]["low"] and hi >= est["cost"]["high"]
+
+
+def test_datacenter_adds_hardware_facility_and_lead_time():
+    huge = dict(cloud_team_size=2000, cloud_team_allocation_pct=100, app_engineers_fte=5000)
+    onprem = _est(target="onprem", **huge)
+    colo = _est(target="datacenter", dc_facility="colocation", **huge)
+    build = _est(target="datacenter", dc_facility="build", **huge)
+    assert onprem["datacenter"] is None and onprem["cost"]["hardware"] == 0
+    assert colo["cost"]["hardware"] > 0 and colo["cost"]["facility"] > 0
+    assert colo["cost"]["total"] > onprem["cost"]["total"]
+    assert build["cost"]["facility"] > colo["cost"]["facility"]
+    # The facility has to exist before workloads move: lead time sits on the critical path.
+    assert colo["duration"]["critical_path_weeks"] == pytest.approx(onprem["duration"]["critical_path_weeks"] + 26)
+    assert build["duration"]["calendar_weeks"] > colo["duration"]["calendar_weeks"]
+    assert colo["waves"][0]["name"].startswith("Mobilise, data centre") and colo["waves"][0]["weeks"] >= 26
+    assert any("Physical data centre" in a for a in colo["assumptions"])
+
+
+def test_datacenter_options():
+    with_dr = _est(target="datacenter", dc_facility="existing")
+    no_dr = _est(target="datacenter", dc_facility="existing", dc_dr_site=False)
+    assert with_dr["cost"]["facility"] == 0
+    assert no_dr["cost"]["hardware"] < with_dr["cost"]["hardware"]
+    # Only the data-centre target uses these answers.
+    assert _est(dc_facility="build")["cost"]["facility"] == 0
+    with pytest.raises(ValueError):
+        Questionnaire(target="datacenter", dc_facility="cave")
+
+
+def test_datacenter_reads_in_the_executive_summary():
+    r = build_report(build_demo_scan(), questionnaire=Questionnaire(target="datacenter", confirmed=True))
+    text = str(r["summary"]["executive"])
+    assert "your own data centre" in text and "hardware" in text
