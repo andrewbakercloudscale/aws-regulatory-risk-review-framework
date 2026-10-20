@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-10-20
+
 ### Added
 - Multi-region: DynamoDB's failover note now names the second region's import from S3 quota (15 TB at a
   time in us-east-1, us-west-2 and eu-west-1, 1 TB elsewhere) and the 10 TB a day replica backfill quota.
