@@ -15,7 +15,9 @@ from botocore.exceptions import (
     EndpointConnectionError,
     NoCredentialsError,
     ProfileNotFound,
+    SSOTokenLoadError,
     TokenRetrievalError,
+    UnauthorizedSSOTokenError,
 )
 
 SEVERITIES = ("info", "warning", "error", "critical")
@@ -73,6 +75,8 @@ def describe_exception(exc: BaseException) -> tuple[str, str, str]:
             str(exc),
             "No credentials resolved for this profile. If you use aws-cli-zsp, check its menu-bar status.",
         )
+    if isinstance(exc, (SSOTokenLoadError, UnauthorizedSSOTokenError)):
+        return "SSOToken", str(exc), "Not signed in to AWS SSO (or the sign-in expired). Use AWS sign-in at the top."
     if isinstance(exc, TokenRetrievalError):
         return "TokenRetrieval", str(exc), "SSO/credential-process token could not be refreshed; log in again."
     if isinstance(exc, EndpointConnectionError):
@@ -93,5 +97,6 @@ def is_fatal_auth_error(code: str) -> bool:
         "NoCredentials",
         "ProfileNotFound",
         "TokenRetrieval",
+        "SSOToken",
         "CredentialRetrievalError",
     }

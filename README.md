@@ -52,6 +52,13 @@ The scanner uses standard AWS profiles from `~/.aws/config`, so anything boto3 s
 the first API call of a scan triggers one Touch ID approval and the resulting 1-hour session is reused
 for the whole scan. The tool never reads, stores or logs keys.
 
+**AWS SSO (IAM Identity Center), no terminal needed.** Click **AWS sign-in** in the console header, add
+your access portal's start URL once (its region is found automatically), and approve the sign-in on
+AWS's own page. The console lists every account you can reach, preselects the organization's
+management account, and **Use for a new scan** creates (or reuses) a matching SSO profile in
+`~/.aws/config`. The token goes to the AWS CLI's own cache, so `aws` and `exitrisk scan --profile …`
+share the sign-in; it is never sent to the browser.
+
 ### Command line
 
 ```bash
@@ -70,6 +77,7 @@ exitrisk catalog                                                        # list s
 | ![Accounts](docs/images/accounts.png) **Accounts** — risk vs spend; ranking by weighted contribution | ![Services](docs/images/services.png) **Services** — what drives lock-in |
 | ![Estimate](docs/images/estimate.png) **Exit estimate** — questionnaire, timeline, effort | ![Issues](docs/images/issues.png) **Data quality** — what the report does not cover |
 | ![Appendix](docs/images/appendix-catalog.png) **Appendix** — tier, rationale, migration path, duration | ![Dark mode](docs/images/dashboard-dark.png) **Dark mode** |
+| ![AWS sign-in](docs/images/sso-sign-in.png) **AWS sign-in** — SSO / Identity Center from the header | ![New scan](docs/images/new-scan-dialog.png) **New scan** — profile, OU, deep scan |
 
 A complete sample report generated from the demo data: [docs/sample-report.pdf](docs/sample-report.pdf).
 

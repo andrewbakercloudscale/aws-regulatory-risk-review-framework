@@ -24,7 +24,7 @@
 #
 # Contributions welcome: see CONTRIBUTING.md. Keep `why` factual and `migration` actionable.
 
-version: "2026.10"
+version: "2026.10.1"
 
 tiers:
   1: {label: Portable, score: 10}
@@ -242,7 +242,7 @@ services:
 
   # ---------------------------------------------------------------- Databases
   - service: Amazon Relational Database Service
-    aliases: [Amazon RDS, Amazon Aurora]
+    aliases: [Amazon RDS, Amazon Aurora, Amazon RDS Optimize CPU License Included Third Party Fees]
     display: RDS / Aurora
     category: Database
     tier: 2
@@ -527,6 +527,16 @@ services:
     targets: {azure: Event Grid, gcp: Eventarc / Cloud Scheduler, other: Kafka / Argo Events}
     effort_weeks: 4
     duration: 1-2 months
+
+  - service: Amazon AppFlow
+    display: AppFlow
+    category: Integration
+    tier: 3
+    why: Managed SaaS-to-AWS data flows (Salesforce, SAP, ServiceNow to S3 / Redshift). Flow definitions and connectors are AWS-specific; the data and schedules are simple to re-create.
+    migration: Rebuild flows in Azure Data Factory / Logic Apps, Google Application Integration, or a neutral ELT tool (Fivetran, Airbyte).
+    targets: {azure: Data Factory / Logic Apps, gcp: Application Integration / Data Fusion, other: Fivetran / Airbyte}
+    effort_weeks: 1
+    duration: 2-6 weeks
 
   - service: AWS Step Functions
     display: Step Functions
@@ -835,6 +845,26 @@ services:
     effort_weeks: 0.5
     duration: Retention-bound tail
 
+  - service: AWS Identity and Access Management Access Analyzer
+    display: IAM Access Analyzer
+    category: Security
+    tier: 2
+    why: Analyses IAM and resource policies for external and unused access. Findings and archive rules are AWS-specific, but nothing runs on it.
+    migration: Replace with the target's entitlement analysis (Entra Permissions Management, IAM Recommender) or a CNAPP; recreate archive rules as policy.
+    targets: {azure: Entra Permissions Management / Defender for Cloud, gcp: IAM Recommender / Policy Analyzer, other: CNAPP (Wiz, Prisma Cloud)}
+    effort_weeks: 0.5
+    duration: Part of landing zone
+
+  - service: AWS Service Catalog
+    display: Service Catalog
+    category: Management
+    tier: 3
+    why: Portfolios of approved CloudFormation / Terraform products with constraints and launch roles. The self-service model ports; the products and constraints are AWS-specific.
+    migration: Rebuild the catalogue as Azure Managed Applications / template specs, GCP Service Catalog, or an internal developer portal (Backstage) over Terraform modules.
+    targets: {azure: Managed Applications / Template Specs, gcp: Service Catalog, other: Backstage + Terraform modules}
+    effort_weeks: 2
+    duration: 1-2 months
+
   - service: AWS Config
     display: Config
     category: Security
@@ -909,6 +939,7 @@ services:
     duration: Proportional to IaC estate
 
   - service: AWS CodeBuild
+    aliases: [CodeBuild]
     display: CodeBuild
     category: DevOps
     tier: 2
@@ -1124,6 +1155,11 @@ services:
 
   # ---------------------------------------------------------------- Business applications & media
   - service: Amazon Connect
+    aliases:
+      - Contact Lens for Amazon Connect
+      - Amazon Connect Customer Profiles
+      - Contact Center Telecommunications (service sold by AMCS, LLC)
+      - Contact Center Telecommunications South Africa
     display: Connect
     category: Business apps
     tier: 5
@@ -1134,7 +1170,7 @@ services:
     duration: 6-12 months
 
   - service: Amazon Pinpoint
-    aliases: [AWS End User Messaging]
+    aliases: [AWS End User Messaging, AWS End User Messaging Third Party Fees]
     display: Pinpoint
     category: Business apps
     tier: 4
@@ -1154,6 +1190,17 @@ services:
     targets: {azure: Communication Services Email, gcp: SendGrid (partner), other: SendGrid / Postmark / Mailgun}
     effort_weeks: 1
     duration: 2-4 weeks (IP warm-up)
+
+  - service: Amazon WorkSpaces Applications
+    aliases: [Amazon AppStream 2.0, Amazon AppStream]
+    display: WorkSpaces Applications (AppStream)
+    category: Business apps
+    tier: 3
+    why: Application streaming with AWS-specific image builder, fleets and stacks. The applications are unchanged; images, scaling and user access are rebuilt.
+    migration: Move published applications to Azure Virtual Desktop RemoteApp, Citrix or a browser-delivered alternative; rebuild images and entitlements.
+    targets: {azure: Azure Virtual Desktop (RemoteApp), gcp: Citrix / VMware Horizon on Google Cloud, other: Citrix DaaS / Omnissa Horizon}
+    effort_weeks: 3
+    duration: 1-3 months
 
   - service: Amazon WorkSpaces
     display: WorkSpaces

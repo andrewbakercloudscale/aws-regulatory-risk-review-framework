@@ -4,6 +4,20 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 and the project uses [semantic versioning](https://semver.org/). The service catalog carries its own
 `version` (YYYY.MM) because tier changes alter scores: quote both versions when comparing reports.
 
+## [Unreleased]
+
+### Added
+- **AWS sign-in (IAM Identity Center / SSO) in the console header**: add a portal by start URL (region
+  auto-detected), approve on AWS's page, pick account and role, and scan. Tokens are written to the AWS
+  CLI's SSO cache in its own format; profiles are added to `~/.aws/config` only on request.
+- Report banner explaining partial views (member-account fallback) and filters that match no account.
+
+### Changed
+- With no spend in scope the estimate shows "–" instead of a fixed landing-zone figure.
+- Catalog 2026.10.1: Amazon Connect billing lines (Contact Lens, Customer Profiles, Contact Center
+  Telecommunications) map to Connect; new entries for AppFlow, Service Catalog, IAM Access Analyzer and
+  WorkSpaces Applications (AppStream); aliases for third-party fee lines and `CodeBuild`.
+
 ## [0.1.0] - 2026-10-20
 
 ### Added

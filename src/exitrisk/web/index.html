@@ -17,6 +17,7 @@
   <div class="topbar-actions">
     <label class="sr-only" for="scanSelect">Scan</label>
     <select id="scanSelect" title="Stored scans"></select>
+    <button id="btnSso" class="btn" title="Sign in through your AWS access portal (IAM Identity Center)"><span class="dot" id="ssoDot"></span><span id="ssoLabel">AWS sign-in</span></button>
     <button id="btnNewScan" class="btn primary">New scan</button>
     <button id="btnDemo" class="btn">Load demo data</button>
     <button id="btnPdf" class="btn">Export PDF</button>
@@ -226,7 +227,7 @@
 <dialog id="scanDialog" class="dialog">
   <form method="dialog" id="scanForm">
     <h2>New scan</h2>
-    <p class="muted small">Read-only. Credentials come from your local AWS profile; with aws-cli-zsp you will be asked for Touch ID once. Use a profile in the <strong>management (payer) account</strong> for an organisation-wide view.</p>
+    <p class="muted small">Read-only. Credentials come from your local AWS profile (or <a href="#" id="lnkSso">sign in with AWS SSO</a>); with aws-cli-zsp you will be asked for Touch ID once. Use a profile in the <strong>management (payer) account</strong> for an organisation-wide view.</p>
     <label>AWS profile<select name="profile" id="sProfile"></select></label>
     <div class="row">
       <button type="button" class="btn" id="btnLoadOus">Load OUs</button>
@@ -248,6 +249,40 @@
     <div class="dialog-actions">
       <button value="cancel" class="btn ghost" formnovalidate>Close</button>
       <button type="button" id="btnStartScan" class="btn primary">Start scan</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- AWS SSO sign-in dialog -->
+<dialog id="ssoDialog" class="dialog">
+  <form method="dialog" id="ssoForm" autocomplete="off">
+    <h2>AWS sign-in</h2>
+    <p class="muted small">Signs in through your organisation's AWS access portal (IAM Identity Center), the same as <code>aws sso login</code>. You approve it on AWS's own page; the token stays in the AWS CLI cache on this machine and is never sent to this page.</p>
+    <label>Access portal<select id="ssoSession"></select></label>
+    <p id="ssoStatus" class="small"></p>
+    <div class="row">
+      <button type="button" class="btn primary" id="btnSsoLogin">Sign in</button>
+      <button type="button" class="btn ghost" id="btnSsoAddToggle">Add a portal…</button>
+    </div>
+    <div id="ssoAdd" class="subpanel" hidden>
+      <label>Name<input id="ssoNewName" placeholder="e.g. mycompany" maxlength="64" pattern="[A-Za-z0-9_.\-]+"></label>
+      <label>Start URL<input id="ssoNewUrl" placeholder="https://d-1234567890.awsapps.com/start" maxlength="300"></label>
+      <div class="row"><button type="button" class="btn" id="btnSsoAdd">Add portal</button><span class="muted small">The portal's region is found automatically.</span></div>
+    </div>
+    <div id="ssoPending" class="subpanel" hidden>
+      <p>Approve the sign-in in the AWS tab that just opened. Check it shows this code:</p>
+      <p class="code-big" id="ssoCode"></p>
+      <p class="small">Tab didn't open? <a id="ssoLink" target="_blank" rel="noopener noreferrer">Open the AWS approval page</a>.</p>
+    </div>
+    <div id="ssoUse" class="subpanel" hidden>
+      <p class="small muted">Pick the account and role to scan with. For an organisation-wide view use the <strong>management account</strong>; any read-only role that can call Organizations and Cost Explorer works.</p>
+      <label>Account<select id="ssoAccount"></select></label>
+      <label>Role<select id="ssoRole"></select></label>
+    </div>
+    <p id="ssoError" class="error-text" role="alert"></p>
+    <div class="dialog-actions">
+      <button value="cancel" class="btn ghost" formnovalidate>Close</button>
+      <button type="button" id="btnSsoUse" class="btn primary" hidden>Use for a new scan</button>
     </div>
   </form>
 </dialog>

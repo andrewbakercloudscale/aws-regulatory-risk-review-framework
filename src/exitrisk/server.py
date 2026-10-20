@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, store
+from . import __version__, sso, store
 from .aws_session import available_profiles, make_session
 from .catalog import load_catalog
 from .collectors import organizations
@@ -49,6 +49,22 @@ class ScanRequest(BaseModel):
     inventory: bool = False
     regions: list[str] | None = None
     label: str = Field("", max_length=120)
+
+
+class SSOSessionRequest(BaseModel):
+    name: str = Field(..., max_length=64)
+    start_url: str = Field(..., max_length=300)
+    region: str | None = Field(None, max_length=30, pattern=r"^[a-z0-9-]*$")
+
+
+class SSOLoginRequest(BaseModel):
+    session: str = Field(..., max_length=64)
+
+
+class SSOProfileRequest(BaseModel):
+    session: str = Field(..., max_length=64)
+    account_id: str = Field(..., pattern=r"^\d{12}$")
+    role: str = Field(..., max_length=64)
 
 
 class FilterModel(BaseModel):
@@ -110,6 +126,47 @@ def create_app(allow_remote: bool = False) -> FastAPI:
     @app.get("/api/profiles")
     def profiles():
         return {"profiles": available_profiles()}
+
+    def sso_call(fn, *args):
+        try:
+            return fn(*args)
+        except sso.SSOFailure as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            code, msg, hint = describe_exception(exc)
+            log.warning("SSO call %s failed: %s %s", fn.__name__, code, msg)
+            return JSONResponse({"error": msg, "code": code, "hint": hint}, status_code=502)
+
+    @app.get("/api/sso/sessions")
+    def sso_sessions():
+        return {"sessions": sso_call(sso.list_sessions)}
+
+    @app.post("/api/sso/sessions")
+    def sso_add_session(req: SSOSessionRequest):
+        return sso_call(sso.add_session, req.name, req.start_url, req.region or None)
+
+    @app.post("/api/sso/login")
+    def sso_login(req: SSOLoginRequest):
+        return sso_call(sso.start_login, req.session).snapshot()
+
+    @app.get("/api/sso/login/{login_id}")
+    def sso_login_status(login_id: str):
+        login = sso.get_login(login_id)
+        if not login:
+            raise HTTPException(404, "sign-in not found")
+        return login.snapshot()
+
+    @app.get("/api/sso/{session}/accounts")
+    def sso_accounts(session: str):
+        return sso_call(sso.list_accounts, session)
+
+    @app.get("/api/sso/{session}/accounts/{account_id}/roles")
+    def sso_roles(session: str, account_id: str):
+        return {"roles": sso_call(sso.list_roles, session, account_id)}
+
+    @app.post("/api/sso/profile")
+    def sso_profile(req: SSOProfileRequest):
+        return {"profile": sso_call(sso.ensure_profile, req.session, req.account_id, req.role)}
 
     @app.get("/api/options")
     def options():

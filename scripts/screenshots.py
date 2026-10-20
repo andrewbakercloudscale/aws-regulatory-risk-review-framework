@@ -22,6 +22,15 @@ PORT = 8749
 def main() -> int:
     tmp = tempfile.mkdtemp(prefix="exitrisk-shots-")
     os.environ["EXITRISK_DATA_DIR"] = tmp  # must be set before exitrisk is imported
+    # Never show the author's real AWS profiles or SSO portals in published screenshots.
+    fake_cfg = Path(tmp) / "aws-config"
+    fake_cfg.write_text(
+        "[profile org-management-readonly]\nregion = eu-west-1\n\n[profile sandbox]\nregion = eu-west-1\n\n"
+        "[sso-session example]\nsso_start_url = https://d-1234567890.awsapps.com/start\nsso_region = eu-west-1\n"
+    )
+    os.environ["AWS_CONFIG_FILE"] = str(fake_cfg)
+    os.environ["AWS_SHARED_CREDENTIALS_FILE"] = str(Path(tmp) / "aws-credentials")
+    os.environ["EXITRISK_SSO_CACHE_DIR"] = str(Path(tmp) / "sso-cache")
     sys.path.insert(0, str(ROOT / "src"))
 
     import uvicorn
@@ -72,6 +81,12 @@ def main() -> int:
         page.fill("input[name=role_name]", "ExitRiskReadOnly")
         page.wait_for_timeout(200)
         shoot(page, "#scanDialog", "new-scan-dialog.png")
+        page.keyboard.press("Escape")
+
+        page.click("#btnSso")
+        page.wait_for_selector("#ssoDialog[open]")
+        page.wait_for_timeout(200)
+        shoot(page, "#ssoDialog", "sso-sign-in.png")
         page.keyboard.press("Escape")
 
         dark = browser.new_context(viewport={"width": 1360, "height": 900}, device_scale_factor=2, color_scheme="dark")

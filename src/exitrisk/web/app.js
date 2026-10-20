@@ -461,7 +461,7 @@
   }
 
   // ------------------------------------------------------------------ new scan dialog
-  async function openScanDialog() {
+  async function openScanDialog(selectProfile) {
     const dlg = $("#scanDialog");
     $("#scanError").textContent = "";
     $("#scanProgress").hidden = true;
@@ -469,6 +469,7 @@
     try {
       const { profiles } = await api("/api/profiles");
       $("#sProfile").innerHTML = profiles.length ? profiles.map((p) => `<option>${esc(p)}</option>`).join("") : `<option value="">(no profiles found - default credential chain)</option>`;
+      if (typeof selectProfile === "string" && profiles.includes(selectProfile)) $("#sProfile").value = selectProfile;
     } catch (e) { $("#scanError").textContent = e.message; }
     dlg.showModal();
   }
@@ -549,6 +550,141 @@
     if (!$("#logDialog").open) $("#logDialog").showModal();
   }
 
+  // ------------------------------------------------------------------ AWS SSO sign-in
+  const sso = { sessions: [], loginTimer: null, mgmt: null };
+  const LS_SSO = "exitrisk.ssoSession";
+
+  async function refreshSsoBadge() {
+    try {
+      ({ sessions: sso.sessions } = await api("/api/sso/sessions"));
+    } catch (e) { console.error("sso sessions", e); sso.sessions = []; }
+    const on = sso.sessions.filter((s) => s.signed_in);
+    $("#btnSso").classList.toggle("signed-in", on.length > 0);
+    $("#ssoLabel").textContent = on.length ? `SSO: ${on.map((s) => s.name).join(", ")}` : "AWS sign-in";
+    $("#btnSso").title = on.length ? `Signed in until ${new Date(on[0].expires_at).toLocaleString()}` : "Sign in through your AWS access portal (IAM Identity Center)";
+  }
+
+  function currentSso() { return sso.sessions.find((s) => s.name === $("#ssoSession").value); }
+
+  async function openSsoDialog(ev) {
+    ev?.preventDefault?.();
+    if ($("#scanDialog").open) $("#scanDialog").close();
+    $("#ssoError").textContent = "";
+    $("#ssoPending").hidden = true;
+    await refreshSsoBadge();
+    let want = null;
+    try { want = localStorage.getItem(LS_SSO); } catch { /* ignore */ }
+    $("#ssoSession").innerHTML = sso.sessions.length
+      ? sso.sessions.map((s) => `<option value="${esc(s.name)}">${esc(s.name)} · ${esc(s.start_url.replace("https://", ""))}</option>`).join("")
+      : `<option value="">(no portals configured - add one below)</option>`;
+    if (want && sso.sessions.some((s) => s.name === want)) $("#ssoSession").value = want;
+    $("#ssoAdd").hidden = sso.sessions.length > 0;
+    $("#ssoDialog").showModal();
+    await showSsoState();
+  }
+
+  async function showSsoState() {
+    const s = currentSso();
+    $("#ssoUse").hidden = true;
+    $("#btnSsoUse").hidden = true;
+    $("#btnSsoLogin").disabled = !s;
+    if (!s) { $("#ssoStatus").textContent = ""; return; }
+    try { localStorage.setItem(LS_SSO, s.name); } catch { /* ignore */ }
+    $("#ssoStatus").textContent = s.signed_in
+      ? `Signed in · token valid until ${new Date(s.expires_at).toLocaleString()} · region ${s.region}`
+      : `Not signed in · region ${s.region}`;
+    $("#btnSsoLogin").textContent = s.signed_in ? "Sign in again" : "Sign in";
+    if (s.signed_in) await loadSsoAccounts(s);
+  }
+
+  async function loadSsoAccounts(s) {
+    $("#ssoUse").hidden = false;
+    $("#ssoAccount").innerHTML = `<option>Loading accounts…</option>`;
+    $("#ssoRole").innerHTML = "";
+    try {
+      const { accounts, management_account_id: mgmt } = await api(`/api/sso/${encodeURIComponent(s.name)}/accounts`);
+      sso.mgmt = mgmt;
+      const sorted = [...accounts].sort((a, b) => (b.id === mgmt) - (a.id === mgmt));
+      $("#ssoAccount").innerHTML = sorted.map((a) => `<option value="${esc(a.id)}">${esc(a.name)} · ${esc(a.id)}${a.id === mgmt ? " · management account" : ""}</option>`).join("");
+      const linked = s.profiles.find((p) => p.account_id === mgmt) || s.profiles[0];
+      if (linked && accounts.some((a) => a.id === linked.account_id)) $("#ssoAccount").value = linked.account_id;
+      $("#ssoStatus").textContent += ` · ${accounts.length} accounts${mgmt ? "" : " · management account not visible"}`;
+      await loadSsoRoles(linked?.role);
+    } catch (e) { $("#ssoError").textContent = `${e.message}${e.hint ? " — " + e.hint : ""}`; }
+  }
+
+  async function loadSsoRoles(prefer) {
+    const s = currentSso(), acct = $("#ssoAccount").value;
+    $("#btnSsoUse").hidden = true;
+    $("#ssoRole").innerHTML = `<option>Loading roles…</option>`;
+    try {
+      const { roles } = await api(`/api/sso/${encodeURIComponent(s.name)}/accounts/${encodeURIComponent(acct)}/roles`);
+      $("#ssoRole").innerHTML = roles.map((r) => `<option>${esc(r)}</option>`).join("") || `<option value="">(no roles)</option>`;
+      const ro = prefer && roles.includes(prefer) ? prefer : roles.find((r) => /read|audit|view/i.test(r));
+      if (ro) $("#ssoRole").value = ro;
+      $("#btnSsoUse").hidden = !roles.length;
+    } catch (e) { $("#ssoRole").innerHTML = ""; $("#ssoError").textContent = e.message; }
+  }
+
+  async function ssoLogin() {
+    const s = currentSso();
+    if (!s) return;
+    $("#ssoError").textContent = "";
+    // Open the tab inside the click so pop-up blockers allow it, then point it at AWS.
+    const tab = window.open("", "_blank");
+    try {
+      const login = await api("/api/sso/login", { method: "POST", body: { session: s.name } });
+      if (tab) { tab.opener = null; tab.location.href = login.verification_uri; }
+      $("#ssoLink").href = login.verification_uri;
+      $("#ssoCode").textContent = login.user_code;
+      $("#ssoPending").hidden = false;
+      $("#btnSsoLogin").disabled = true;
+      clearInterval(sso.loginTimer);
+      sso.loginTimer = setInterval(async () => {
+        try {
+          const st = await api(`/api/sso/login/${encodeURIComponent(login.id)}`);
+          if (st.status === "pending") return;
+          clearInterval(sso.loginTimer);
+          $("#ssoPending").hidden = true;
+          $("#btnSsoLogin").disabled = false;
+          if (st.status !== "complete") { $("#ssoError").textContent = st.message; return; }
+          toast(`Signed in to ${s.name}`);
+          await refreshSsoBadge();
+          await showSsoState();
+        } catch (e) { clearInterval(sso.loginTimer); $("#ssoError").textContent = e.message; $("#btnSsoLogin").disabled = false; }
+      }, 2000);
+    } catch (e) {
+      tab?.close();
+      $("#ssoError").textContent = `${e.message}${e.hint ? " — " + e.hint : ""}`;
+    }
+  }
+
+  async function ssoAddPortal() {
+    const name = $("#ssoNewName").value.trim(), url = $("#ssoNewUrl").value.trim();
+    $("#ssoError").textContent = "";
+    if (!name || !url) { $("#ssoError").textContent = "Enter a name and the portal's start URL."; return; }
+    $("#btnSsoAdd").disabled = true;
+    $("#btnSsoAdd").textContent = "Finding region…";
+    try {
+      const added = await api("/api/sso/sessions", { method: "POST", body: { name, start_url: url } });
+      try { localStorage.setItem(LS_SSO, added.name); } catch { /* ignore */ }
+      toast(`Added ${added.name} (${added.region})`);
+      $("#ssoDialog").close();
+      await openSsoDialog();
+    } catch (e) { $("#ssoError").textContent = e.message; }
+    finally { $("#btnSsoAdd").disabled = false; $("#btnSsoAdd").textContent = "Add portal"; }
+  }
+
+  async function ssoUse() {
+    const s = currentSso();
+    try {
+      const { profile } = await api("/api/sso/profile", { method: "POST", body: { session: s.name, account_id: $("#ssoAccount").value, role: $("#ssoRole").value } });
+      $("#ssoDialog").close();
+      await openScanDialog(profile);
+      toast(`Using profile ${profile}`);
+    } catch (e) { $("#ssoError").textContent = e.message; }
+  }
+
   // ------------------------------------------------------------------ boot
   async function boot() {
     window.addEventListener("error", (e) => console.error("ui error", e.message));
@@ -587,7 +723,17 @@
       chartDefaults();
       if (state.report) render();
     });
-    $("#btnNewScan").addEventListener("click", openScanDialog);
+    $("#btnNewScan").addEventListener("click", () => openScanDialog());
+    $("#btnSso").addEventListener("click", openSsoDialog);
+    $("#lnkSso").addEventListener("click", openSsoDialog);
+    $("#ssoSession").addEventListener("change", showSsoState);
+    $("#ssoAccount").addEventListener("change", () => loadSsoRoles($("#ssoRole").value));
+    $("#btnSsoLogin").addEventListener("click", ssoLogin);
+    $("#btnSsoAddToggle").addEventListener("click", () => { $("#ssoAdd").hidden = !$("#ssoAdd").hidden; });
+    $("#btnSsoAdd").addEventListener("click", ssoAddPortal);
+    $("#btnSsoUse").addEventListener("click", ssoUse);
+    $("#ssoDialog").addEventListener("close", () => clearInterval(sso.loginTimer));
+    refreshSsoBadge();
     $("#btnLoadOus").addEventListener("click", loadOus);
     $("#btnStartScan").addEventListener("click", startScan);
     $("#sInventory").addEventListener("change", (e) => { $("#invOpts").hidden = !e.target.checked; });

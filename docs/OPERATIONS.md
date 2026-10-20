@@ -3,7 +3,9 @@
 ## Running a scan
 
 1. `exitrisk serve` and open http://127.0.0.1:8740.
-2. **New scan** → choose the profile for the management account → **Load OUs** (first AWS call; with
+2. With AWS SSO: **AWS sign-in** → pick or add the access portal → **Sign in** (approve on the AWS
+   page that opens) → choose the management account and a read-only role → **Use for a new scan**.
+   Otherwise: **New scan** → choose the profile for the management account → **Load OUs** (first AWS call; with
    aws-cli-zsp, approve Touch ID) → pick an OU or leave the root → months of history (3 is a good
    default; 6–12 shows trend) → optionally tick **Deep scan** and give the member role name.
 3. Watch the progress bar. A spend-only scan of a few hundred accounts takes seconds; a deep scan takes
@@ -40,6 +42,8 @@ jq -r 'select(.level=="ERROR" or .level=="WARNING")' ~/.exitrisk/logs/exitrisk.l
 |---|---|---|
 | `ExpiredToken`, `ExpiredTokenException` | Session older than its lifetime | Re-run; aws-cli-zsp prompts for Touch ID again |
 | `credential_process` failed / cancelled | Touch ID prompt dismissed or the ZSP helper not running | Re-run and approve; check the aws-cli-zsp menu-bar status |
+| `SSOToken` / "Not signed in" | No AWS SSO sign-in for the profile's portal, or it expired | **AWS sign-in** in the header, or `aws sso login --sso-session <name>` |
+| Account appears in SSO but "management account not visible" | The roles you hold cannot call `organizations:DescribeOrganization` | Pick the payer account by name; ask for a read-only role there |
 | `ProfileNotFound` | Typo in the profile | `aws configure list-profiles` |
 | `AccessDeniedException` on Organizations | Not the management account, or missing permissions | Use the payer account profile; see IAM_PERMISSIONS.md. The scan continues for the calling account only |
 | `AWSOrganizationsNotInUseException` | Standalone account | Expected; the report covers that one account |

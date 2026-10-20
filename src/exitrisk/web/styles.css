@@ -232,3 +232,10 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .coverage p { margin: 4px 0; }
 #estBody { display: contents; }
 #estBody[hidden] { display: none; }
+
+.subpanel { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 0 0 12px; background: var(--surface-2); }
+.subpanel p { margin: 4px 0 8px; }
+.code-big { font: 600 22px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+#btnSso { display: inline-flex; align-items: center; gap: 8px; }
+#btnSso .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+#btnSso.signed-in .dot { background: #2f9e5b; }
