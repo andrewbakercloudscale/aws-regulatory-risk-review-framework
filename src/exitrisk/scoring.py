@@ -281,6 +281,7 @@ def build_report(
     estimate["empty"] = total_monthly <= 0
     summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
     summary["narrative"] = _narrative(summary, accounts_out, estimate, questionnaire)
+    summary["executive"] = _executive_summary(summary, accounts_out, estimate, questionnaire, scan, bool(inventory))
 
     sev_order = {"critical": 0, "error": 1, "warning": 2, "info": 3}
     issues.sort(key=lambda i: sev_order.get(i.get("severity"), 9))
@@ -338,6 +339,125 @@ def _money(v: float, cur: str) -> str:
     if v >= 1e3:
         return f"{cur} {v / 1e3:,.0f}k"
     return f"{cur} {v:,.0f}"
+
+
+def _executive_summary(
+    summary: dict, accounts: list[dict], est: dict, q: Questionnaire, scan: dict, deep_scan: bool
+) -> dict:
+    """The one-page brief that opens the report: bottom line, findings, the exit, actions, confidence."""
+    if summary["score"] is None:
+        return {
+            "bottom_line": "No in-scope spend was found, so this report cannot rate exit risk.",
+            "findings": [],
+            "exit": "",
+            "actions": ["Widen the account filter or scan an OU that has spend, then re-run the report."],
+            "confidence": "Low",
+            "confidence_reasons": ["No spend in scope."],
+        }
+    s, cur = summary, q.currency
+    by_spend, by_acc = s["score_by_spend"], s["score_by_accounts"]
+    n, port, hi = s["accounts_rated"], s["portable_accounts"], s["high_risk_accounts"]
+    lockin = [x["display"] for x in s["top_lockin_services"][:3]]
+    lockin_txt = ", ".join(lockin) if lockin else "no single service"
+    gap = by_spend - by_acc
+    if gap >= 5:
+        shape = (
+            f"concentrated: {hi} of {n} account(s) carry most of it, on {lockin_txt}, while "
+            f"{port} account(s) ({100 * port / n:.0f}%) are broadly portable"
+        )
+    elif gap <= -5:
+        shape = (
+            "widespread: it sits across many smaller accounts rather than a few large ones, "
+            "so the spend view understates how many workloads need re-engineering"
+        )
+    else:
+        shape = f"spread in line with spend; {port} of {n} account(s) are broadly portable"
+    months = est["duration"]["calendar_months"]
+    if by_spend >= 55:
+        verdict = "Leaving AWS would be a re-engineering programme, not a migration"
+    elif by_spend >= 40:
+        verdict = "An exit is feasible but needs significant re-engineering of the lock-in workloads"
+    else:
+        verdict = "An exit is technically feasible: most workloads would move with modest change"
+    if months >= 24:
+        verdict += f"; at this estate's size it is still a multi-year undertaking (~{months / 12:.0f} years)."
+    else:
+        verdict += "."
+    bottom = (
+        f"Exit risk is {s['rating_by_spend']} ({by_spend:.0f}/100 by spend, {by_acc:.0f}/100 by number of "
+        f"accounts) and {shape}. {verdict}"
+    )
+
+    findings = [
+        f"{s['high_risk_pct']:.0f}% of spend ({_money(s['high_risk_monthly'] * 12, 'USD')} a year) runs on High or "
+        "Critical services that exist only on AWS and must be re-engineered, not just moved.",
+        f"{port} of {n} account(s) are Low or Moderate risk; {hi} are High or Critical and hold "
+        f"{s['high_risk_accounts_spend_pct']:.0f}% of spend.",
+    ]
+    top = [a for a in accounts if a["contribution"] > 0][:3]
+    if len(top) > 1 and s["score"]:
+        share = sum(a["contribution"] for a in top) / s["score"] * 100
+        findings.append(
+            f"{len(top)} accounts set the pace of any exit: {', '.join(a['name'] for a in top)} "
+            f"({share:.0f}% of the weighted risk)."
+        )
+    if lockin:
+        findings.append(f"The largest lock-in exposures are {', '.join(lockin)}.")
+
+    exit_line = (
+        f"About {est['duration']['calendar_months']:.0f} months "
+        f"(range {est['duration']['low_months']:.0f}-{est['duration']['high_months']:.0f}) and "
+        f"{_money(est['cost']['total'], cur)} ({_money(est['cost']['low'], cur)}-{_money(est['cost']['high'], cur)}) "
+        f"to move to {TARGET_LABELS[q.target]}: {est['effort']['person_months']:,.0f} person-months of engineering "
+        "plus parallel running."
+    )
+
+    actions = []
+    if top and (hi or gap >= 5):
+        actions.append(
+            f"Write and test exit plans for {', '.join(a['name'] for a in top)} first; they drive most of the cost "
+            "and the timeline."
+        )
+    if lockin:
+        actions.append(
+            f"Make portability a design criterion for new work on {lockin_txt}: prefer the open-standard "
+            "alternative named in Appendix A unless the business case says otherwise."
+        )
+    defaults = q == Questionnaire(target=q.target, currency=q.currency, fx_per_usd=q.fx_per_usd)
+    if defaults:
+        actions.append(
+            "Answer the delivery questions in section 5 (CI/CD, Terraform, team size, day rate): the estimate "
+            "above still uses default answers."
+        )
+    if not deep_scan:
+        actions.append("Grant the read-only deep-scan role so the estimate uses resource counts, not spend alone.")
+    actions.append("Re-run this review quarterly and track the score; a rising score means new lock-in.")
+
+    reasons, level = [], 3
+    if scan.get("mode") == "demo":
+        reasons.append("Synthetic demo data.")
+        level = 1
+    if s["coverage"]:
+        reasons.append("Partial coverage of the estate (see the note at the top).")
+        level = min(level, 2)
+    if defaults:
+        reasons.append("Estimate uses default delivery answers.")
+        level = min(level, 2)
+    if not deep_scan:
+        reasons.append("Spend data only; no resource counts.")
+        level = min(level, 2)
+    if s["unclassified_services"]:
+        reasons.append(f"{s['unclassified_services']} service(s) not in the catalog, scored as Moderate.")
+    if not reasons:
+        reasons.append("Full scan, answered questionnaire, every service classified.")
+    return {
+        "bottom_line": bottom,
+        "findings": findings,
+        "exit": exit_line,
+        "actions": actions[:5],
+        "confidence": {1: "Low", 2: "Medium", 3: "High"}[level],
+        "confidence_reasons": reasons,
+    }
 
 
 def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire) -> list[str]:

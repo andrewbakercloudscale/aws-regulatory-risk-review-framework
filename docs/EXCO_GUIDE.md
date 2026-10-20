@@ -5,6 +5,10 @@ presenting it.
 
 ## The one-page story (report section 1)
 
+Section 1 opens with a written brief you can read out as-is: the **bottom line**, **what we found**,
+**what leaving would take**, **what we recommend** and a **confidence** rating that says why the numbers
+might move (for example, the delivery questions in section 5 not yet answered). The key figures follow.
+
 Figures below are from the synthetic demo organisation filtered to `prod`.
 
 1. **The scores** — "Our production estate scores 43/100 by spend and 45/100 by number of accounts:

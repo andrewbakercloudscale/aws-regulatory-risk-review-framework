@@ -12,6 +12,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   per-account and a √spend blend are selectable (console *Score weighting*, CLI `--weighting`).
 
 ### Added
+- **Written executive summary at the start of the report**: a bottom-line verdict, what we found, what
+  leaving would take, numbered recommendations and a confidence rating with its reasons (default
+  questionnaire answers, spend-only scan, partial coverage, demo data). Also in the JSON as
+  `summary.executive`. Replaces the "Key messages" list.
 - Breadth view: accounts per rating vs share of spend (section 3), "Portable accounts X of N" KPI tile and
   a key message counting portable vs High/Critical accounts.
 

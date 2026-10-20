@@ -269,3 +269,19 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .hero-pair .hero-value { font-size: 44px; }
 .scale-marker.acc { background: var(--surface); border: 2px solid var(--ink); width: 5px; }
 .hero-pair .hero-label { font-size: 12px; margin-top: 4px; white-space: nowrap; }
+
+.brief { border-top: 4px solid var(--ink); margin-bottom: 18px; }
+.brief-eyebrow { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+.brief-bottom { margin: 6px 0 14px; font-size: 18px; line-height: 1.45; font-weight: 600; color: var(--ink); }
+.brief-cols { display: grid; grid-template-columns: 1.3fr 1fr 1.3fr; gap: 20px; }
+.brief-cols h3 { margin: 0 0 6px; font-size: 13px; }
+.brief-cols ul, .brief-cols ol { margin: 0; padding-left: 18px; }
+.brief-cols li, .brief-cols p { margin: 4px 0; font-size: 13.5px; line-height: 1.45; }
+.brief-conf { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12.5px; }
+h3.sub { margin: 4px 0 10px; font-size: 13px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; }
+@media (max-width: 900px) { .brief-cols { grid-template-columns: 1fr; } }
+@media print {
+  .brief-bottom { font-size: 15px; }
+  .brief-cols { grid-template-columns: 1.3fr 1fr 1.3fr; gap: 14px; }
+  .brief-cols li, .brief-cols p { font-size: 11px; }
+}

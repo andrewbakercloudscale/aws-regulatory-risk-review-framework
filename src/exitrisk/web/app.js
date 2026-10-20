@@ -215,7 +215,14 @@
         tile("Engineering effort", `${num(e.effort.person_months)} person-months`, `capacity ${num(e.team.capacity_fte, 1)} FTE`),
       ]),
     ].join("");
-    $("#narrative").innerHTML = s.narrative.map((l) => `<li>${esc(l)}</li>`).join("");
+    const x = s.executive;
+    $("#briefBottom").textContent = x.bottom_line;
+    $("#briefFindings").innerHTML = x.findings.map((l) => `<li>${esc(l)}</li>`).join("");
+    $("#briefExit").textContent = x.exit || "–";
+    $("#briefActions").innerHTML = x.actions.map((l) => `<li>${esc(l)}</li>`).join("");
+    const confRating = { High: "Low", Medium: "High", Low: "Critical" }[x.confidence];
+    ratingBadge($("#briefConf"), confRating, `Confidence: ${x.confidence}`);
+    $("#briefConfWhy").textContent = x.confidence_reasons.join(" ");
   }
 
   // Chart.js defaults - recessive chrome, thin marks, tooltips on.

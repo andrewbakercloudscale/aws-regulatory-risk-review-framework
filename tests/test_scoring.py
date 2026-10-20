@@ -150,3 +150,21 @@ def test_one_dominant_account_shows_in_spend_view_not_account_view():
 def test_unknown_weighting_is_rejected():
     with pytest.raises(ValueError):
         build_report(_scan([]), weighting="bogus")
+
+
+def test_executive_summary_flags_concentration_and_default_answers():
+    costs = [{"account_id": "big", "service": "Amazon Connect", "month": "2026-09", "amount": 100000}] + [
+        {"account_id": str(i), "service": "Amazon Elastic Compute Cloud - Compute", "month": "2026-09", "amount": 2000}
+        for i in range(9)
+    ]
+    accounts = [{"id": "big", "name": "big-prd"}] + [{"id": str(i), "name": f"app{i}-prd"} for i in range(9)]
+    x = build_report(_scan(costs, accounts))["summary"]["executive"]
+    assert "concentrated" in x["bottom_line"] and "9 account(s) (90%) are broadly portable" in x["bottom_line"]
+    assert any("big-prd" in a for a in x["actions"])
+    assert any("default answers" in a for a in x["actions"])
+    assert x["confidence"] in {"Medium", "Low"} and x["exit"].startswith("About ")
+
+
+def test_executive_summary_without_spend():
+    x = build_report(_scan([]))["summary"]["executive"]
+    assert x["confidence"] == "Low" and not x["findings"]

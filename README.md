@@ -91,7 +91,7 @@ exitrisk catalog                                                        # list s
 
 | | |
 |---|---|
-| ![Executive summary](docs/images/executive-summary.png) **Executive summary** — score, KPIs, key messages | ![Risk profile](docs/images/risk-profile.png) **Risk profile** — spend by tier and trend |
+| ![Executive summary](docs/images/executive-summary.png) **Executive summary** — bottom line, findings, exit cost/time, recommendations, confidence; then scores and KPIs | ![Risk profile](docs/images/risk-profile.png) **Risk profile** — spend by tier and trend |
 | ![Accounts](docs/images/accounts.png) **Accounts** — risk vs spend; ranking by weighted contribution | ![Services](docs/images/services.png) **Services** — what drives lock-in |
 | ![Estimate](docs/images/estimate.png) **Exit estimate** — questionnaire, timeline, effort | ![Issues](docs/images/issues.png) **Data quality** — what the report does not cover |
 | ![Appendix](docs/images/appendix-catalog.png) **Appendix** — tier, rationale, migration path, duration | ![Dark mode](docs/images/dashboard-dark.png) **Dark mode** |
