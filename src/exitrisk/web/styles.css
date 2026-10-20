@@ -261,3 +261,7 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .scope p { margin: -6px 0 10px; }
 .select-row { display: flex; gap: 8px; }
 .select-row select { flex: 1; }
+
+.hero-alt { font-size: 12px; color: var(--ink-2); margin: 6px 0 2px; }
+.data.compact td, .data.compact th { padding: 6px 8px; }
+.data tr.total td { border-top: 2px solid var(--border); }

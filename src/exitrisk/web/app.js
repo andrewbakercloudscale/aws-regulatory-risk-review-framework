@@ -125,9 +125,10 @@
   async function loadReport() {
     if (!state.scanId) return;
     const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
+    const weighting = $("#fWeighting").value || "balanced";
     $("#filterError").textContent = "";
     try {
-      state.report = await api("/api/report", { method: "POST", body: { scan_id: state.scanId, filter, questionnaire: readQuestionnaire() } });
+      state.report = await api("/api/report", { method: "POST", body: { scan_id: state.scanId, filter, questionnaire: readQuestionnaire(), weighting } });
     } catch (e) {
       $("#filterError").textContent = e.message;
       toast(e.message);
@@ -136,6 +137,7 @@
     const url = new URL(location.href);
     url.searchParams.set("scan", state.scanId);
     for (const [k, v] of Object.entries(filter)) { if (v && !(k === "mode" && v === "contains")) url.searchParams.set(k, v); else url.searchParams.delete(k); }
+    if (weighting !== "balanced") url.searchParams.set("weighting", weighting); else url.searchParams.delete("weighting");
     if (!PRINT) history.replaceState(null, "", url);
     render();
   }
@@ -193,11 +195,14 @@
     $("#heroScore").textContent = s.score == null ? "–" : Math.round(s.score);
     ratingBadge($("#heroRating"), s.rating, s.score == null ? "No spend in scope" : `${s.rating} exit risk`);
     $(".scale-bands").innerHTML = [1, 2, 3, 4, 5].map((t) => `<div style="background:${tierColor(t)};border-radius:3px"></div>`).join("");
+    const sb = s.score_by_weighting || {}, wl = { balanced: "balanced", spend: "by spend", equal: "per account" };
+    $("#heroAlt").textContent = s.score == null ? "" : `${s.weighting_label}. Other weightings: ` + Object.keys(wl).filter((k) => k !== s.weighting && sb[k] != null).map((k) => `${wl[k]} ${Math.round(sb[k])}`).join(" · ");
     $("#scaleMarker").style.left = `${Math.min(100, Math.max(0, s.score || 0))}%`;
     $("#kpiTiles").innerHTML = [
       tile("Annual spend in scope", money(s.annual_spend), `${money(s.monthly_spend)} / month, amortised`),
       tile("Spend on High/Critical services", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
-      tile("Accounts in scope", num(s.accounts_in_scope), `${s.accounts_with_spend} with spend · ${s.accounts_excluded} filtered out`),
+      tile("Portable accounts", s.accounts_rated ? `${num(s.portable_accounts)} of ${num(s.accounts_rated)}` : "–",
+        s.accounts_rated ? `${pct(100 * s.portable_accounts / s.accounts_rated)} Low/Moderate · ${num(s.high_risk_accounts)} High/Critical (${pct(s.high_risk_accounts_spend_pct)} of spend)` : "No accounts with spend"),
       ...(e.empty ? [tile("Indicative exit cost", "–", "No spend in scope"), tile("Indicative duration", "–", "No spend in scope"), tile("Engineering effort", "–", "No spend in scope")] : [
         tile("Indicative exit cost", money(e.cost.total, cur), `range ${money(e.cost.low, cur)} – ${money(e.cost.high, cur)}`),
         tile("Indicative duration", `${num(e.duration.calendar_months)} months`, `range ${num(e.duration.low_months)} – ${num(e.duration.high_months)} months`),
@@ -269,7 +274,35 @@
     });
   }
 
+  function renderBreadth(r) {
+    const s = r.summary, rows = s.accounts_by_rating || [];
+    chart("chBreadth", {
+      type: "bar",
+      data: {
+        labels: ["Accounts", "Spend"],
+        datasets: rows.map((b) => ({ label: b.rating, data: [b.pct_accounts, b.pct_spend], raw: b, backgroundColor: tierColor(RATING_TIER[b.rating]), borderColor: css("--surface"), borderWidth: 1, barPercentage: 0.7 })),
+      },
+      options: {
+        indexAxis: "y",
+        scales: { x: { stacked: true, max: 100, ticks: { callback: (v) => `${v}%` }, grid: { color: css("--grid") } }, y: { stacked: true, grid: { display: false } } },
+        plugins: { legend: { position: "bottom" }, tooltip: { callbacks: { label: (c) => {
+          const b = c.dataset.raw;
+          return c.dataIndex === 0 ? ` ${b.rating}: ${b.accounts} account(s) · ${pct(b.pct_accounts, 1)}` : ` ${b.rating}: ${money(b.monthly_spend)}/month · ${pct(b.pct_spend, 1)}`;
+        } } } },
+      },
+    });
+    $("#ratingTable").innerHTML = `<thead><tr><th>Rating</th><th class="num-cell">Accounts</th><th class="num-cell">Share</th><th class="num-cell">USD / month</th><th class="num-cell">Spend share</th></tr></thead><tbody>` +
+      rows.map((b) => `<tr><td><span class="swatch" style="background:${tierColor(RATING_TIER[b.rating])}"></span>${esc(b.rating)}</td><td class="num-cell">${num(b.accounts)}</td><td class="num-cell">${pct(b.pct_accounts, 1)}</td><td class="num-cell">${money(b.monthly_spend)}</td><td class="num-cell">${pct(b.pct_spend, 1)}</td></tr>`).join("") +
+      `<tr class="total"><td><strong>Portable</strong> (Low + Moderate)</td><td class="num-cell"><strong>${num(s.portable_accounts)}</strong></td><td class="num-cell">${s.accounts_rated ? pct(100 * s.portable_accounts / s.accounts_rated, 1) : "–"}</td><td></td><td></td></tr></tbody>`;
+    $("#weightingNote").textContent = `OU score weighting: ${s.weighting_label}. ` + ({
+      balanced: "Bigger accounts count for more, but one very large account cannot dominate the score.",
+      spend: "Each account counts in proportion to its spend; one large account can dominate.",
+      equal: "Every account with spend counts the same, whatever its size.",
+    })[s.weighting] + " Change it in the bar at the top.";
+  }
+
   function renderAccounts(r) {
+    renderBreadth(r);
     const accts = r.accounts.filter((a) => a.monthly_spend > 0 && a.score != null);
     const maxC = Math.max(...accts.map((a) => a.contribution), 0.01);
     chart("chAccounts", {
@@ -762,6 +795,7 @@
       [state.options, state.catalog] = await Promise.all([api("/api/options"), api("/api/catalog")]);
     } catch (e) { toast(e.message, 8000); return; }
     fillQuestionnaire(loadQuestionnaire());
+    if (["balanced", "spend", "equal"].includes(params.get("weighting"))) $("#fWeighting").value = params.get("weighting");
     for (const k of ["include", "exclude", "mode"]) if (params.get(k)) $(`#f${k[0].toUpperCase()}${k.slice(1)}`).value = params.get(k);
 
     const scans = await refreshScans();
@@ -771,6 +805,7 @@
 
     $("#scanSelect").addEventListener("change", (e) => { state.scanId = e.target.value; loadReport(); });
     $("#btnApply").addEventListener("click", loadReport);
+    $("#fWeighting").addEventListener("change", loadReport);
     for (const id of ["#fInclude", "#fExclude"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") loadReport(); });
     $("#btnRecalc").addEventListener("click", loadReport);
     $("#qForm").addEventListener("change", loadReport);

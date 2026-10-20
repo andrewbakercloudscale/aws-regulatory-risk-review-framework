@@ -50,15 +50,31 @@ For account *a* with monthly spend *s<sub>a,i</sub>* on service *i* whose tier s
 
 ```
 inherent_risk(a)  = Σ_i s(a,i) · t(i) / Σ_i s(a,i)          0–100, how hard this account is to move
-weight(a)         = S(a) / Σ_b S(b)                          share of in-scope spend, S(a) = Σ_i s(a,i)
+weight(a)         = f(S(a)) / Σ_b f(S(b))                    S(a) = Σ_i s(a,i), monthly spend of the account
 contribution(a)   = inherent_risk(a) · weight(a)             points of the OU score this account carries
-OU score          = Σ_a contribution(a)                      = spend-weighted risk of the whole OU
+OU score          = Σ_a contribution(a)
 ```
 
-**Why weight by spend.** An executive question is "how much of our business is hard to move", not
-"how many hard-to-move things exist". A $2k/month account built entirely on DynamoDB has an inherent
-risk of 95 (Critical) — and it appears in red on the account chart — but at 0.3% of spend it adds
-0.3 points to the OU score. A $120k/month Redshift-centred data platform at 59 adds 12.
+The weighting function *f* is selectable (console: **Score weighting**; CLI: `--weighting`):
+
+| Weighting | f(S) | Use when |
+|---|---|---|
+| **Balanced** (default) | √S | The headline number. Bigger accounts count for more, but one very large account cannot dominate. |
+| Spend | S | You want "share of the bill that is hard to move". One large account can set the whole score. |
+| Equal per account | 1 | You want "how many of our accounts are hard to move", whatever their size. |
+
+**Why balanced by default.** Pure spend weighting answers "how much of our business is hard to move",
+but in a real estate a single account (say, a contact centre on Amazon Connect at 20% of the bill)
+can move the OU score by ten points on its own, which misrepresents an estate where 90% of accounts
+are portable. The square root keeps the ordering — a $100k account still outweighs a $1k account —
+while compressing a 100× spend gap to a 10× weight gap. A $2k/month account built entirely on
+DynamoDB (inherent risk 95) still appears in red on the account chart, but adds only a few points.
+The report always shows all three scores side by side, so the choice is never hidden.
+
+**Breadth view.** Alongside the score, the report counts accounts per rating and sets the share of
+accounts against the share of spend (section 3). *Portable* accounts are those rated Low or Moderate;
+*higher-risk* accounts are High or Critical. "10 of 145 accounts are High/Critical but hold 25% of
+spend" is a concentration to manage, not an estate-wide problem — and the chart makes that visible.
 
 Ratings: Low < 25 ≤ Moderate < 40 ≤ Elevated < 55 ≤ High < 70 ≤ Critical. An estate entirely on tier-1
 services scores 10; entirely on tier-2, 30.

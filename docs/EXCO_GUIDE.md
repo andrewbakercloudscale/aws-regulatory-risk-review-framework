@@ -7,12 +7,16 @@ presenting it.
 
 Figures below are from the synthetic demo organisation filtered to `prod`.
 
-1. **The score** — "Our production estate scores 43/100: Elevated exit risk." It is the spend-weighted
+1. **The score** — "Our production estate scores 43/100: Elevated exit risk." It is the size-weighted
    difficulty of moving every workload off AWS, from 10 (everything on commodity infrastructure) to 95
    (everything on services that exist only on AWS).
 2. **How much is locked in** — "32% of production spend, $2.4m a year, runs on services we would have to
    re-engineer, not just move."
-3. **Where** — "Three accounts carry 63% of that risk: the data platform (Redshift and Glue), card
+
+   **How many accounts** — "7 of 12 production accounts are portable; 5 are High or Critical and hold
+   43% of spend." Few high-risk accounts with a lot of spend is a concentration to plan for, not an
+   estate-wide problem.
+3. **Where** — "Three accounts carry 55% of that risk: the data platform (Redshift and Glue), card
    processing (DynamoDB and Lambda) and the contact centre (Amazon Connect)."
 4. **What leaving would take** — "About 28 months and $7.1m (range $5.3m–$10.6m), with our current team
    and delivery maturity."

@@ -5,15 +5,19 @@ Scoring (see docs/METHODOLOGY.md):
 * every service has a tier 1-5 and a tier score (10, 30, 50, 75, 95);
 * an account's **inherent risk** is the spend-weighted mean tier score of its services
   (0-100) - how hard *that account* is to move;
-* an account's **weight** is its share of the in-scope spend;
+* an account's **weight** grows with its spend. By default ("balanced") it is proportional to
+  the square root of spend, so a large account counts for more than a small one but one huge
+  account (say a contact centre on Connect) cannot dominate the whole estate; "spend" (linear)
+  and "equal" (one account, one vote) are available for comparison;
 * its **contribution** = inherent risk x weight - how many points of the OU score it carries;
-* the **OU exit-risk score** is the sum of contributions, i.e. the spend-weighted risk of
-  the whole OU. A small account full of DynamoDB scores high on its own but contributes
-  little, which is exactly the behaviour the executive view needs.
+* the **OU exit-risk score** is the sum of contributions. A small account full of DynamoDB
+  scores high on its own but contributes little, which is the behaviour the executive view
+  needs. The report also counts accounts by rating, so breadth is visible beside the score.
 """
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -24,6 +28,14 @@ from .filtering import AccountFilter
 from .issues import Issue
 
 RATINGS = [(25, "Low"), (40, "Moderate"), (55, "Elevated"), (70, "High"), (101, "Critical")]
+
+WEIGHTINGS = {
+    "balanced": ("Balanced (square root of spend)", math.sqrt),
+    "spend": ("Spend (linear)", lambda m: m),
+    "equal": ("Equal per account", lambda m: 1.0 if m > 0 else 0.0),
+}
+DEFAULT_WEIGHTING = "balanced"
+RATING_NAMES = [label for _, label in RATINGS]
 
 # An account counts as exposed to a tier when it spends at least this much a month on it.
 MATERIAL_TIER_SPEND = 1.0
@@ -50,7 +62,11 @@ def build_report(
     account_filter: AccountFilter | None = None,
     questionnaire: Questionnaire | None = None,
     catalog: Catalog | None = None,
+    weighting: str = DEFAULT_WEIGHTING,
 ) -> dict:
+    if weighting not in WEIGHTINGS:
+        raise ValueError(f"weighting must be one of {', '.join(WEIGHTINGS)}")
+    weight_fn = WEIGHTINGS[weighting][1]
     catalog = catalog or load_catalog()
     account_filter = account_filter or AccountFilter()
     questionnaire = questionnaire or Questionnaire()
@@ -119,13 +135,18 @@ def build_report(
     total_monthly = sum(sum(s.values()) for s in per_account.values()) / n_months
     inventory = scan.get("inventory") or {}
 
+    def monthly_of(aid: str) -> float:
+        return sum(per_account.get(aid, {}).values()) / n_months
+
+    total_weight = sum(weight_fn(monthly_of(aid)) for aid in in_scope)
+
     accounts_out = []
     services_agg: dict[str, dict] = {}
     for aid, acct in in_scope.items():
         svc_totals = per_account.get(aid, {})
         monthly = sum(svc_totals.values()) / n_months
         score = _weighted_score(svc_totals, catalog)
-        weight = monthly / total_monthly if total_monthly else 0.0
+        weight = weight_fn(monthly) / total_weight if total_weight else 0.0
         tier_spend = {t: 0.0 for t in range(1, 6)}
         effort_by_tier = {t: 0.0 for t in range(1, 6)}
         inv_totals = (inventory.get(aid) or {}).get("totals", {})
@@ -184,10 +205,26 @@ def build_report(
     for rank, a in enumerate(accounts_out, 1):
         a["rank"] = rank
 
-    # Sum of unrounded contributions = spend-weighted mean score across the OU.
-    ou_score = (
-        sum(a["monthly_spend"] * (a["score"] or 0) for a in accounts_out) / total_monthly if total_monthly else None
-    )
+    # Sum of contributions = weighted mean score across the OU, under each weighting for comparison.
+    def ou_score_by(fn) -> float | None:
+        w = [(fn(a["monthly_spend"]), a["score"] or 0) for a in accounts_out]
+        tw = sum(x for x, _ in w)
+        return sum(x * sc for x, sc in w) / tw if tw and total_monthly else None
+
+    scores_by_weighting = {k: ou_score_by(fn) for k, (_, fn) in WEIGHTINGS.items()}
+    ou_score = scores_by_weighting[weighting]
+
+    # Breadth: how many accounts sit in each rating, and how much spend they carry.
+    by_rating = {r: {"rating": r, "accounts": 0, "monthly_spend": 0.0} for r in RATING_NAMES}
+    for a in accounts_out:
+        if a["score"] is not None:
+            by_rating[a["rating"]]["accounts"] += 1
+            by_rating[a["rating"]]["monthly_spend"] += a["monthly_spend"]
+    rated = sum(b["accounts"] for b in by_rating.values())
+    for b in by_rating.values():
+        b["monthly_spend"] = round(b["monthly_spend"], 2)
+        b["pct_accounts"] = round(100 * b["accounts"] / rated, 1) if rated else 0.0
+        b["pct_spend"] = round(100 * b["monthly_spend"] / total_monthly, 1) if total_monthly else 0.0
     tiers = []
     for t in range(1, 6):
         spend = sum(a["tier_spend"][t] for a in accounts_out)
@@ -224,6 +261,14 @@ def build_report(
         "unclassified_services": len(unclassified),
         "excluded_billing_monthly": round(excluded_spend / n_months, 2),
         "top_lockin_services": [s for s in services_out if s["tier"] >= 4][:5],
+        "weighting": weighting,
+        "weighting_label": WEIGHTINGS[weighting][0],
+        "score_by_weighting": {k: (round(v, 1) if v is not None else None) for k, v in scores_by_weighting.items()},
+        "accounts_rated": rated,
+        "accounts_by_rating": list(by_rating.values()),
+        "portable_accounts": by_rating["Low"]["accounts"] + by_rating["Moderate"]["accounts"],
+        "high_risk_accounts": by_rating["High"]["accounts"] + by_rating["Critical"]["accounts"],
+        "high_risk_accounts_spend_pct": round(by_rating["High"]["pct_spend"] + by_rating["Critical"]["pct_spend"], 1),
     }
     estimate["empty"] = total_monthly <= 0
     summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
@@ -250,6 +295,7 @@ def build_report(
             "tool_version": __version__,
             "inventory": bool(inventory),
             "target_label": TARGET_LABELS[questionnaire.target],
+            "weighting": weighting,
         },
         "summary": summary,
         "tiers": tiers,
@@ -296,6 +342,13 @@ def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire)
         f"{summary['high_risk_pct']:.0f}% of spend ({_money(summary['high_risk_monthly'] * 12, 'USD')}/yr) runs on "
         "High or Critical services that have no direct equivalent outside AWS and need re-engineering.",
     ]
+    n, port, hi = summary["accounts_rated"], summary["portable_accounts"], summary["high_risk_accounts"]
+    if n:
+        lines.append(
+            f"{port} of {n} account(s) ({100 * port / n:.0f}%) are Low or Moderate risk and broadly portable; "
+            f"{hi} ({100 * hi / n:.0f}%) are High or Critical, holding {summary['high_risk_accounts_spend_pct']:.0f}% "
+            "of spend."
+        )
     if summary["top_lockin_services"]:
         names = ", ".join(s["display"] for s in summary["top_lockin_services"][:3])
         lines.append(f"The largest lock-in exposures are {names}.")

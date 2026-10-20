@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- **OU score weighting defaults to "balanced" (square root of spend)** so one very large account cannot
+  dominate the score. Spend-linear and equal-per-account weightings are selectable (console *Score
+  weighting*, CLI `--weighting`); the hero shows the score under all three.
+
+### Added
+- Breadth view: accounts per rating vs share of spend (section 3), "Portable accounts X of N" KPI tile and
+  a key message counting portable vs High/Critical accounts.
+
 ### Fixed
 - Billing lines of one service (e.g. Connect, Contact Lens, Connect telephony) are merged per account: they no
   longer repeat in the lock-in column or multiply that service's migration effort.

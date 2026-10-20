@@ -21,7 +21,7 @@ def test_small_high_risk_account_moves_ou_score_little():
         {"month": "2026-01", "account_id": "1", "service": "Amazon Elastic Kubernetes Service", "amount": 99000},
         {"month": "2026-01", "account_id": "2", "service": "Amazon DynamoDB", "amount": 1000},
     ]
-    r = build_report(_scan(costs))
+    r = build_report(_scan(costs), weighting="spend")
     small = next(a for a in r["accounts"] if a["name"] == "small-prod")
     big = next(a for a in r["accounts"] if a["name"] == "big-prod")
     assert small["score"] == 95 and big["score"] == 10
@@ -30,6 +30,10 @@ def test_small_high_risk_account_moves_ou_score_little():
     assert r["summary"]["score"] == pytest.approx(10.85, abs=0.06)
     assert r["summary"]["rating"] == "Low"
     assert sum(a["contribution"] for a in r["accounts"]) == pytest.approx(r["summary"]["score"], abs=0.06)
+    # Balanced (sqrt) weighting gives the small account more say, but it still stays Low.
+    balanced = build_report(_scan(costs))["summary"]
+    assert balanced["score"] == pytest.approx(0.9087 * 10 + 0.0913 * 95, abs=0.1)
+    assert balanced["rating"] == "Low"
 
 
 def test_tax_and_negatives_excluded_and_unclassified_flagged():
@@ -121,3 +125,32 @@ def test_billing_lines_of_one_service_merge_and_tiers_count_accounts():
     connect = next(s for s in r["services"] if s["display"] == "Connect")
     assert connect["monthly_spend"] == 8000 and connect["accounts"] == 1
     assert {t["tier"]: t["accounts"] for t in r["tiers"]}[5] == 1
+
+
+def test_balanced_weighting_limits_one_dominant_account():
+    # One very large Connect account and nine small portable ones.
+    costs = [{"account_id": "big", "service": "Amazon Connect", "month": "2026-09", "amount": 100000}] + [
+        {"account_id": str(i), "service": "Amazon Elastic Compute Cloud - Compute", "month": "2026-09", "amount": 2000}
+        for i in range(9)
+    ]
+    accounts = [{"id": "big", "name": "big-prd"}] + [{"id": str(i), "name": f"app{i}-prd"} for i in range(9)]
+    scan = _scan(costs, accounts)
+    spend = build_report(scan, weighting="spend")["summary"]
+    balanced = build_report(scan)["summary"]
+    equal = build_report(scan, weighting="equal")["summary"]
+    assert spend["score"] > balanced["score"] > equal["score"]
+    assert balanced["score_by_weighting"] == {
+        "balanced": balanced["score"],
+        "spend": spend["score"],
+        "equal": equal["score"],
+    }
+    assert (
+        balanced["portable_accounts"] == 9 and balanced["high_risk_accounts"] == 1 and balanced["accounts_rated"] == 10
+    )
+    crit = next(b for b in balanced["accounts_by_rating"] if b["rating"] == "Critical")
+    assert crit["accounts"] == 1 and crit["pct_accounts"] == 10.0 and crit["pct_spend"] > 80
+
+
+def test_unknown_weighting_is_rejected():
+    with pytest.raises(ValueError):
+        build_report(_scan([]), weighting="bogus")

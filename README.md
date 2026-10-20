@@ -16,8 +16,12 @@ than a workshop opinion.
 - **Scores every account** by the spend-weighted exit difficulty of the AWS services it uses.
   EKS, EC2 and Postgres/Aurora score low; DynamoDB, Lambda, Step Functions, Redshift and Connect score
   high. 112 services are classified in an open, reviewable [catalog](docs/SERVICE_CATALOG.md).
-- **Weights by size.** An account's contribution to the OU score is its risk × its share of spend, so
-  a small account full of proprietary services is flagged without distorting the headline number.
+- **Weights by size, without letting one account dominate.** By default an account's weight is the
+  square root of its spend, so a small account full of proprietary services is flagged without
+  distorting the headline number, and one very large account (e.g. a contact centre on Connect) cannot
+  set the whole score. Spend-linear and equal-per-account weightings are one click away.
+- **Counts portable vs higher-risk accounts**: how many accounts sit in each rating, against the share
+  of spend they hold.
 - **Filters to production** (or anything else) by account name: contains / starts with / ends with /
   regex, plus exclusions, e.g. `prod, prd` excluding `sandbox`.
 - **Estimates the exit**: engineer effort, calendar duration and cost, adjusted by a questionnaire on
@@ -107,8 +111,9 @@ A complete sample report generated from the demo data: [docs/sample-report.pdf](
 | 5 | Critical | 95 | DynamoDB, Connect, Greengrass, SWF, QLDB |
 
 - **Inherent risk** of an account = spend-weighted mean of its services' scores (0–100).
-- **Contribution** = inherent risk × the account's share of in-scope spend.
-- **OU exit-risk score** = sum of contributions = spend-weighted risk across the OU.
+- **Weight** = √spend of the account ÷ Σ √spend (default "balanced"; or linear spend, or equal per account).
+- **Contribution** = inherent risk × weight.
+- **OU exit-risk score** = sum of contributions. The report shows the score under all three weightings.
 - Ratings: Low < 25 ≤ Moderate < 40 ≤ Elevated < 55 ≤ High < 70 ≤ Critical.
 
 Full detail, including the estimate model and its limitations: [docs/METHODOLOGY.md](docs/METHODOLOGY.md).

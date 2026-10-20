@@ -83,6 +83,7 @@ class ReportRequest(BaseModel):
     scan_id: str
     filter: FilterModel = FilterModel()
     questionnaire: Questionnaire = Questionnaire()
+    weighting: str = Field("balanced", pattern=r"^(balanced|spend|equal)$")
 
 
 def _host_name(header: str) -> str:
@@ -253,7 +254,7 @@ def create_app(allow_remote: bool = False) -> FastAPI:
             flt = AccountFilter(**req.filter.model_dump())
         except FilterError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return build_report(scan, flt, req.questionnaire)
+        return build_report(scan, flt, req.questionnaire, weighting=req.weighting)
 
     @app.get("/api/catalog")
     def catalog():

@@ -44,6 +44,14 @@
     <label for="fExclude">Exclude names</label>
     <input id="fExclude" placeholder="e.g. sandbox" autocomplete="off">
   </div>
+  <div class="field narrow">
+    <label for="fWeighting" title="How much a bigger account counts in the OU score">Score weighting</label>
+    <select id="fWeighting">
+      <option value="balanced">Balanced (√ spend)</option>
+      <option value="spend">By spend</option>
+      <option value="equal">Per account</option>
+    </select>
+  </div>
   <button id="btnApply" class="btn primary">Apply</button>
   <span id="filterError" class="error-text" role="alert"></span>
 </section>
@@ -90,6 +98,7 @@
           <div class="hero-label">OU exit-risk score</div>
           <div class="hero-value"><span id="heroScore">–</span><span class="hero-of">/100</span></div>
           <div id="heroRating" class="badge"></div>
+          <div id="heroAlt" class="hero-alt"></div>
           <div class="scale" aria-hidden="true"><div class="scale-bands"></div><div id="scaleMarker" class="scale-marker"></div></div>
           <div class="scale-labels" aria-hidden="true"><span>Low</span><span>Mod.</span><span>Elev.</span><span>High</span><span>Critical</span></div>
         </div>
@@ -116,7 +125,18 @@
 
     <!-- 3. Accounts -->
     <section class="section" id="sec-accounts">
-      <h2><span class="num">3</span>Accounts: risk weighted by size</h2>
+      <h2><span class="num">3</span>Accounts: how many are at risk, and how big</h2>
+      <div class="grid-2">
+        <figure class="card chart-card">
+          <figcaption><h3>Accounts by exit-risk rating</h3><p class="muted">Share of accounts (top) against share of spend (bottom). Few accounts holding a lot of spend is a concentration to manage, not an estate-wide problem.</p></figcaption>
+          <div class="chart-box short"><canvas id="chBreadth" role="img" aria-label="Stacked bars comparing the share of accounts and the share of spend in each risk rating"></canvas></div>
+        </figure>
+        <div class="card">
+          <h3>Portable vs higher-risk accounts</h3>
+          <table class="data compact" id="ratingTable"></table>
+          <p class="muted small" id="weightingNote"></p>
+        </div>
+      </div>
       <figure class="card chart-card">
         <figcaption><h3>Inherent risk vs spend</h3><p class="muted">Each bubble is an account. Up = harder to move; right = bigger; bubble size = points it contributes to the OU score. Top-right accounts drive the exit.</p></figcaption>
         <div class="chart-box tall"><canvas id="chAccounts" role="img" aria-label="Bubble chart of account risk score against monthly spend"></canvas></div>

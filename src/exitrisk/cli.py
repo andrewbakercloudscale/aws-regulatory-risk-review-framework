@@ -91,6 +91,7 @@ def _report(args) -> int:
         store.load_scan(args.scan_id),
         AccountFilter(include=args.include or "", exclude=args.exclude or "", mode=args.mode),
         q,
+        weighting=args.weighting,
     )
     text = json.dumps(report, indent=2, default=str)
     if args.out:
@@ -132,6 +133,7 @@ def _pdf(args) -> int:
                 "include": args.include,
                 "exclude": args.exclude,
                 "mode": args.mode,
+                "weighting": args.weighting,
                 "print": "1",
             }.items()
             if v
@@ -201,6 +203,12 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--exclude")
         p.add_argument("--mode", default="contains", choices=["contains", "prefix", "suffix", "regex"])
         p.add_argument("--out")
+        p.add_argument(
+            "--weighting",
+            default="balanced",
+            choices=["balanced", "spend", "equal"],
+            help="how accounts are weighted in the OU score (default: balanced = square root of spend)",
+        )
         if name == "report":
             p.add_argument("--questionnaire", help="JSON file with questionnaire answers")
         else:
