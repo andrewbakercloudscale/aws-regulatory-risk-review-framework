@@ -65,6 +65,10 @@ exit" (a fact a board can govern).
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs
   manual failover). See [MULTI_REGION.md](docs/MULTI_REGION.md).
+- **Tests resilience** (section 6): which accounts are critical (from account tags such as
+  `Criticality = Tier1`, or names you give), how much of the critical estate one regional event would
+  take down, whether tier 1 channels are isolated from each other (anti-affinity), what could move in
+  weeks under a stressed exit, and how many terabytes an exit has to move and how long that takes.
 - **Exports a board-ready PDF** with charts, an executive narrative, a data-quality section, and an
   appendix explaining every service's tier, recommended migration path and typical duration.
 - **Never fails silently**: every AWS API error becomes an issue on the report with a fix, and is
@@ -148,6 +152,10 @@ exitrisk catalog                                                        # list s
 **Exit estimate** — Your answers (CI/CD, Terraform, team size), the exit timeline and where the effort goes.
 
 ![Exit estimate](docs/images/estimate.png)
+
+**Resilience** — Critical accounts, correlated failure by region and channel, a stressed exit and the data to move.
+
+![Resilience](docs/images/resilience.png)
 
 **Data quality** — What the report does not cover, and why.
 

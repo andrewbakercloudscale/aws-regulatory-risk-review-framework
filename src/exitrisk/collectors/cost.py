@@ -142,6 +142,92 @@ def fetch_region_costs(session: boto3.Session, account_ids: list[str], months: i
     return rows
 
 
+# Services that hold data, and the storage usage types that are copies (snapshots, backups, PITR,
+# Multi-AZ mirrors) or archives (Glacier, Deep Archive) rather than live data.
+STORAGE_SERVICES = (
+    "Amazon Simple Storage Service",
+    "EC2 - Other",
+    "Amazon DynamoDB",
+    "Amazon Relational Database Service",
+    "Amazon Elastic File System",
+    "Amazon Redshift",
+    "Amazon OpenSearch Service",
+    "Amazon DocumentDB (with MongoDB compatibility)",
+    "Amazon FSx",
+    "AWS Backup",
+)
+_COPY_MARKERS = ("Snapshot", "Backup", "PITR", "Mirror")
+_ARCHIVE_MARKERS = ("Glacier", "GDA", "GIR", "DeepArchive")
+# Billed in GB-months but not data held: early-deletion fees for archive tiers.
+_NOT_HELD = ("EarlyDelete",)
+
+
+def storage_kind(service: str, usage_type: str) -> str:
+    """'live', 'copy' (snapshot, backup, PITR, mirror) or 'archive' (Glacier tiers)."""
+    if service == "AWS Backup" or any(m in usage_type for m in _COPY_MARKERS):
+        return "copy"
+    if any(m in usage_type for m in _ARCHIVE_MARKERS):
+        return "archive"
+    return "live"
+
+
+def fetch_storage(session: boto3.Session, account_ids: list[str], services: set[str]) -> list[dict]:
+    """GB stored per account, service and usage type, averaged over the last complete month.
+
+    Storage is billed in GB-months, so the usage quantity of a GB-month line is the average
+    number of GB held. One query per storage service the scan saw spend on, per 100 accounts.
+    """
+    client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
+    start, end = month_window(1)
+    rows: list[dict] = []
+    for service in (s for s in STORAGE_SERVICES if s in services):
+        for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER):
+            filt = {
+                "And": [
+                    {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER]}},
+                    {"Dimensions": {"Key": "SERVICE", "Values": [service]}},
+                ]
+            }
+            token = None
+            while True:
+                kwargs = {
+                    "TimePeriod": {"Start": start, "End": end},
+                    "Granularity": "MONTHLY",
+                    "Metrics": ["UsageQuantity"],
+                    "GroupBy": [
+                        {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
+                        {"Type": "DIMENSION", "Key": "USAGE_TYPE"},
+                    ],
+                    "Filter": filt,
+                }
+                if token:
+                    kwargs["NextPageToken"] = token
+                resp = client.get_cost_and_usage(**kwargs)
+                for period in resp["ResultsByTime"]:
+                    for g in period.get("Groups", []):
+                        usage = g["Metrics"]["UsageQuantity"]
+                        gb = float(usage["Amount"])
+                        account_id, usage_type = g["Keys"]
+                        if usage.get("Unit") not in ("GB-Mo", "GB-Month") or gb < 1:
+                            continue
+                        if any(m in usage_type for m in _NOT_HELD):
+                            continue
+                        rows.append(
+                            {
+                                "account_id": account_id,
+                                "service": service,
+                                "usage_type": usage_type,
+                                "kind": storage_kind(service, usage_type),
+                                "gb": round(gb, 1),
+                            }
+                        )
+                token = resp.get("NextPageToken")
+                if not token:
+                    break
+    log.info("cost explorer storage: %d rows, %d account(s), month %s", len(rows), len(account_ids), start[:7])
+    return rows
+
+
 def fetch_costs(session: boto3.Session, account_ids: list[str], months: int) -> tuple[list[dict], dict]:
     """Return (rows, period). Each Cost Explorer request costs US$0.01; a typical scan makes a handful."""
     client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)

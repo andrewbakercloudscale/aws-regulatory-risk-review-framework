@@ -100,3 +100,60 @@ def test_describe_exception(code, fatal):
     got_code, msg, hint = describe_exception(exc)
     assert got_code == code and msg == "nope" and hint
     assert is_fatal_auth_error(code) is fatal
+
+
+def test_fetch_storage_keeps_gb_months_and_classifies(monkeypatch):
+    client = boto3.client("ce", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
+    stub = Stubber(client)
+
+    def group(acct, usage, gb, unit="GB-Mo"):
+        return {"Keys": [acct, usage], "Metrics": {"UsageQuantity": {"Amount": str(gb), "Unit": unit}}}
+
+    period = {"TimePeriod": {"Start": "2026-09-01", "End": "2026-10-01"}, "Estimated": False}
+    stub.add_response(
+        "get_cost_and_usage",
+        {
+            "ResultsByTime": [
+                {
+                    **period,
+                    "Groups": [
+                        group("111111111111", "EUW2-TimedStorage-ByteHrs", 2048),
+                        group("111111111111", "EUW2-TimedStorage-GlacierByteHrs", 1024),
+                        group("111111111111", "EUW2-EarlyDelete-GDA", 500),  # a fee, not data held
+                        group("111111111111", "EUW2-Requests-Tier1", 9999, unit="Requests"),
+                    ],
+                }
+            ]
+        },
+    )
+    stub.add_response(
+        "get_cost_and_usage",
+        {"ResultsByTime": [{**period, "Groups": [group("111111111111", "EUW2-EBS:SnapshotUsage", 300)]}]},
+    )
+    session = _session()
+    monkeypatch.setattr(session, "client", lambda *a, **k: client)
+    with stub:
+        rows = cost.fetch_storage(
+            session, ["111111111111"], {"Amazon Simple Storage Service", "EC2 - Other", "AWS Lambda"}
+        )
+    assert [(r["usage_type"], r["kind"], r["gb"]) for r in rows] == [
+        ("EUW2-TimedStorage-ByteHrs", "live", 2048.0),
+        ("EUW2-TimedStorage-GlacierByteHrs", "archive", 1024.0),
+        ("EUW2-EBS:SnapshotUsage", "copy", 300.0),
+    ]
+
+
+def test_fetch_account_tags_trims_keys(monkeypatch):
+    client = boto3.client("organizations", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
+    stub = Stubber(client)
+    stub.add_response(
+        "list_tags_for_resource",
+        {"Tags": [{"Key": "Criticality ", "Value": " Tier 1"}]},
+        {"ResourceId": "222222222222"},
+    )
+    session = _session()
+    monkeypatch.setattr(session, "client", lambda *a, **k: client)
+    with stub:
+        assert organizations.fetch_account_tags(session, ["222222222222"]) == {
+            "222222222222": {"Criticality": "Tier 1"}
+        }

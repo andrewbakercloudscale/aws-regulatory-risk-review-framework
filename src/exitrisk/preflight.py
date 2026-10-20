@@ -32,6 +32,7 @@ MANAGEMENT_POLICY = {
                 "organizations:ListRoots",
                 "organizations:ListOrganizationalUnitsForParent",
                 "organizations:ListAccountsForParent",
+                "organizations:ListTagsForResource",
             ],
             "Resource": "*",
         },

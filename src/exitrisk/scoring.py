@@ -30,6 +30,7 @@ from .catalog import Catalog, load_catalog
 from .estimate import TARGET_LABELS, TARGET_PHRASES, TYPICAL_COUNTS, Questionnaire, build_estimate, service_effort
 from .filtering import AccountFilter
 from .issues import Issue
+from .resilience import build_resilience
 
 RATINGS = [(25, "Low"), (40, "Moderate"), (55, "Elevated"), (70, "High"), (101, "Critical")]
 
@@ -410,6 +411,7 @@ def build_report(
     services_out = _services(services_agg, sp, months_in_data, n_months, total_monthly)
 
     estimate = build_estimate(questionnaire, accounts_out, total_monthly)
+    resilience = build_resilience(scan, accounts_out, questionnaire)
     summary = {
         "score": round(ou_score, 1) if ou_score is not None else None,
         "rating": rating(ou_score),
@@ -451,7 +453,9 @@ def build_report(
     estimate["provisional"] = not questionnaire.confirmed
     summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
     summary["narrative"] = _narrative(summary, accounts_out, estimate, questionnaire)
-    summary["executive"] = _executive_summary(summary, accounts_out, estimate, questionnaire, scan, bool(inventory))
+    summary["executive"] = _executive_summary(
+        summary, accounts_out, estimate, questionnaire, scan, bool(inventory), resilience
+    )
 
     sev_order = {"critical": 0, "error": 1, "warning": 2, "info": 3}
     issues.sort(key=lambda i: sev_order.get(i.get("severity"), 9))
@@ -485,6 +489,7 @@ def build_report(
         ],
         "growth": growth,
         "estimate": estimate,
+        "resilience": resilience,
         "issues": issues,
         "issue_counts": {s: sum(1 for i in issues if i.get("severity") == s) for s in sev_order},
     }
@@ -549,7 +554,13 @@ _NO_SPEND_SUMMARY = {
 
 
 def _executive_summary(
-    summary: dict, accounts: list[dict], est: dict, q: Questionnaire, scan: dict, deep_scan: bool
+    summary: dict,
+    accounts: list[dict],
+    est: dict,
+    q: Questionnaire,
+    scan: dict,
+    deep_scan: bool,
+    resilience: dict | None = None,
 ) -> dict:
     """The one-page brief that opens the report: bottom line, findings, the exit, actions, confidence.
 
@@ -561,9 +572,9 @@ def _executive_summary(
     defaults, empty = not q.confirmed, bool(est.get("empty"))
     headline = _headline(summary, est, defaults)
     context = _context(summary)
-    findings = _findings(summary, accounts)
+    findings = _findings(summary, accounts) + _resilience_findings(resilience or {})
     exit_facts, exit_line = _exit(est, q, defaults)
-    actions = _actions(summary, accounts, defaults, deep_scan)
+    actions = _actions(summary, accounts, defaults, deep_scan, resilience or {})
     confidence, reasons = _confidence(summary, scan, defaults, deep_scan)
     plain = lambda x: f"{x['lead']} {x['text']}"  # noqa: E731
     return {
@@ -726,7 +737,42 @@ def _exit(est: dict, q: Questionnaire, defaults: bool) -> tuple[list[dict], str]
     return facts, line
 
 
-def _actions(s: dict, accounts: list[dict], defaults: bool, deep_scan: bool) -> list[dict]:
+def _resilience_findings(r: dict) -> list[dict]:
+    """Correlated failure: how much of the critical estate one regional event would take down."""
+    c, crit = r.get("concentration") or {}, r.get("criticality") or {}
+    if not c.get("available") or c["pct"] < 70:
+        return []
+    who = (
+        f"the spend of {_plural(crit['critical_accounts'], 'critical account')}"
+        if c["basis"] == "critical"
+        else "in-scope spend (no account is marked critical yet)"
+    )
+    text = f"runs in {c['region_name']}, so one regional event takes down most of it at once."
+    if c["no_anti_affinity"]:
+        x = c["no_anti_affinity"][0]
+        text += f" Channels {_join(x['channels'])} share that region: no anti-affinity between them."
+    return [{"lead": f"{c['pct']:.0f}% of {who}", "text": text}]
+
+
+def _resilience_action(r: dict) -> dict | None:
+    st, crit = r.get("stressed_exit") or {}, r.get("criticality") or {}
+    none = next((b for b in st.get("buckets", []) if b["key"] == "none"), None)
+    if not crit.get("critical_accounts"):
+        return {
+            "lead": "Tag critical accounts",
+            "text": "(Criticality = Tier1 in AWS Organizations, or name them in section 6) so the resilience "
+            "view measures the critical estate, not all of it.",
+        }
+    if none and none["pct"] >= 10:
+        return {
+            "lead": "Pre-build a stressed-exit fallback",
+            "text": f"for the {none['pct']:.0f}% of critical spend on AWS-only services: a stand-in process, a "
+            "manual workaround or a warm copy elsewhere, tested before it is needed.",
+        }
+    return None
+
+
+def _actions(s: dict, accounts: list[dict], defaults: bool, deep_scan: bool, resilience: dict) -> list[dict]:
     top, _ = _pace_setters(accounts)
     lockin = [x["display"] for x in s["top_lockin_services"][:3]]
     actions = []
@@ -754,6 +800,9 @@ def _actions(s: dict, accounts: list[dict], defaults: bool, deep_scan: bool) -> 
                 "unless the business case says otherwise.",
             }
         )
+    res = _resilience_action(resilience)
+    if res:
+        actions.append(res)
     if not deep_scan:
         actions.append(
             {

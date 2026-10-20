@@ -110,6 +110,10 @@ class Questionnaire(BaseModel):
     parallel_run_months: int = Field(6, ge=0, le=36)
     regulated: bool = True
     materiality: float = Field(25, ge=0, le=1_000_000)
+    # Resilience view only (not the estimate): accounts to treat as critical when they carry no
+    # criticality tag (comma-separated, name contains), and the link speed for moving data out.
+    critical_accounts: str = Field("", max_length=200)
+    transfer_gbps: float = Field(10, gt=0, le=1000)
     # True once someone has answered (or confirmed) these questions. Until then the cost and time
     # figures rest on defaults, and the report labels them provisional instead of headlining them.
     confirmed: bool = False

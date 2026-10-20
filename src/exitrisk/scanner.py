@@ -145,6 +145,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False) -> dict:
         "accounts": data.get("accounts", []),
         "costs": data.get("costs", []),
         "region_costs": data.get("region_costs"),
+        "storage": data.get("storage"),
         "period": data.get("period"),
         "inventory": data.get("inventory", {}),
         "issues": [i.to_dict() for i in job.issues],
@@ -241,6 +242,35 @@ def run_scan(job: ScanJob) -> dict:
         doc = _document(job, data)
         store.save_scan(doc)
         return doc
+    job.update("organizations", 22, f"{len(accounts)} account(s) in {data['ou']['path']}")
+
+    # 2b. Account tags: business criticality and channel. Optional, so a refusal is a warning.
+    if data["ou"]["id"] != "-":
+        job.update("organizations", 23, "Reading account tags (criticality, channel)")
+        try:
+            tags = organizations.fetch_account_tags(session, [a["id"] for a in data["accounts"]])
+            for a in data["accounts"]:
+                a["tags"] = tags.get(a["id"], {})
+        except Exception as exc:  # optional data: never fail a scan for it
+            if not isinstance(exc, (ClientError, BotoCoreError)):
+                log.exception("account tags failed with an unexpected error")
+            code, msg, hint = describe_exception(exc)
+            job.add_issue(
+                Issue(
+                    "warning",
+                    "organizations",
+                    f"account tags unavailable: {msg}",
+                    " ".join(
+                        x
+                        for x in (
+                            hint,
+                            "Grant organizations:ListTagsForResource, or name the critical accounts in the console.",
+                        )
+                        if x
+                    ),
+                    error_code=code,
+                )
+            )
     job.update("organizations", 25, f"{len(accounts)} account(s) in {data['ou']['path']}")
 
     # 3. Spend per account per service. Without this there is no score, so a failure is fatal.
@@ -286,6 +316,25 @@ def run_scan(job: ScanJob) -> dict:
             )
         )
     job.update("cost", 55, f"{len(data.get('region_costs', []))} region cost line(s) collected")
+
+    # 3c. Data held per account (GB-months of storage), for the data-gravity view. Optional.
+    job.update("cost", 57, "Querying Cost Explorer for data stored")
+    try:
+        data["storage"] = cost.fetch_storage(session, [a.id for a in accounts], {r["service"] for r in data["costs"]})
+    except Exception as exc:  # optional data: never fail a scan for it
+        if not isinstance(exc, (ClientError, BotoCoreError)):
+            log.exception("data stored failed with an unexpected error")
+        code, msg, hint = describe_exception(exc)
+        job.add_issue(
+            Issue(
+                "warning",
+                "cost",
+                f"data stored unavailable: {msg}",
+                " ".join(x for x in (hint, "The resilience view will not size the data to move.") if x),
+                error_code=code,
+            )
+        )
+    job.update("cost", 58, f"{len(data.get('storage') or [])} storage line(s) collected")
 
     # 4. Optional deep inventory through a role in each member account.
     if p.inventory:

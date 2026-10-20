@@ -17,6 +17,7 @@ database and no cloud deployment: scans are JSON files in a private directory on
  │  collectors/ organizations · cost · inventory │   │  ExitRiskReadOnly (list-only) │
  │  scoring.py  report: scores, ranking, trend   │   └──────────────────────────────┘
  │  estimate.py questionnaire → effort/cost/time │
+ │  resilience  criticality · data · stress test │
  │  catalog.py  service_catalog.yaml             │
  │  store.py    ~/.exitrisk/scans/<id>.json      │
  │  logging     ~/.exitrisk/logs/exitrisk.log    │
@@ -60,7 +61,7 @@ The rule is **degrade, never die silently**:
 
 Throttling is absorbed by botocore's adaptive retry mode (10 attempts). Every issue has severity,
 category, account, region, AWS error code, message and a remediation hint, and is stored with the scan
-and shown in report section 6.
+and shown in report section 7.
 
 Logs go to the console (human) and `~/.exitrisk/logs/exitrisk.log` (JSON lines, rotated at 5 MB × 5).
 Each record carries the scan's `run_id`, so `jq 'select(.run_id=="<id>")'` extracts one scan; the console's

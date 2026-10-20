@@ -401,3 +401,12 @@ table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(-
 .mr-error h2 { margin: 0 0 8px; font-size: 18px; }
 .dc-fields { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-left: 3px solid var(--border); }
 .dc-fields[hidden] { display: none; }
+
+/* Resilience (section 6) */
+.section-lede { margin: -4px 0 14px; max-width: 80ch; }
+.split-list { display: grid; gap: 10px; margin: 8px 0 14px; }
+.split-label { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.split-row .bar { height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.split-row .bar i { display: block; height: 100%; border-radius: 4px; }
+.chip.crit { border-color: var(--t5); color: var(--t5); font-weight: 600; }
+#resTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }

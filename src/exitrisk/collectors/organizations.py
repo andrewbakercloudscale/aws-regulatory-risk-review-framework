@@ -97,3 +97,22 @@ def list_accounts_under(session: boto3.Session, ou: dict) -> list[Account]:
         stack.extend(node["children"])
     log.info("found %d accounts under %s", len(accounts), ou["path"])
     return accounts
+
+
+def fetch_account_tags(session: boto3.Session, account_ids: list[str]) -> dict[str, dict[str, str]]:
+    """Tags on each account (criticality, channel, product...). Keys are trimmed: tags typed by hand
+    often carry a trailing space. Raises on the first refusal, so the caller can report it once."""
+    client = _client(session)
+
+    def one(account_id: str) -> tuple[str, dict[str, str]]:
+        tags: dict[str, str] = {}
+        for page in client.get_paginator("list_tags_for_resource").paginate(ResourceId=account_id):
+            for t in page["Tags"]:
+                tags.setdefault(t["Key"].strip(), t["Value"].strip())
+        return account_id, tags
+
+    # Organizations throttles hard: few workers, botocore retries the rest.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        out = dict(pool.map(one, account_ids))
+    log.info("read tags for %d accounts (%d tagged)", len(out), sum(1 for t in out.values() if t))
+    return out

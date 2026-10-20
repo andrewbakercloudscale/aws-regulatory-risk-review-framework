@@ -356,6 +356,60 @@ def _region_split(accounts: list[dict], costs: list[dict], months: int) -> list[
     return rows
 
 
+# Account tags as people really type them: mixed key styles, "Tier 1" with a space.
+_TAGS = {
+    "payments-core-prod": {"Criticality": "Tier 1", "Channel": "Payments"},
+    "cards-processing-prod": {"Criticality": "Tier 1", "Channel": "Card payments"},
+    "digital-channels-prod": {"business-criticality": "critical", "Channel": "Mobile app"},
+    "core-banking-prod": {"Criticality": "Tier 1", "Channel": "Core banking"},
+    "identity-prod": {"Criticality": "Tier 1", "Channel": "Shared platform"},
+    "contact-centre-prod": {"Criticality": "Tier 2", "Channel": "Contact centre"},
+    "data-platform-prod": {"Criticality": "Tier 2"},
+    "fraud-analytics-prod": {"Criticality": "Tier 2"},
+}
+
+# Storage per account, sized from the service's spend: (usage type, kind, GB per USD a month).
+_STORAGE = {
+    "Amazon Simple Storage Service": [
+        ("TimedStorage-ByteHrs", "live", 30.0),
+        ("TimedStorage-GlacierByteHrs", "archive", 12.0),
+    ],
+    "EC2 - Other": [("EBS:VolumeUsage.gp3", "live", 5.0), ("EBS:SnapshotUsage", "copy", 4.0)],
+    "Amazon Relational Database Service": [("Aurora:StorageUsage", "live", 1.2), ("Aurora:BackupUsage", "copy", 2.5)],
+    "Amazon DynamoDB": [("TimedStorage-ByteHrs", "live", 1.1), ("TimedPITRStorage-ByteHrs", "copy", 1.0)],
+    "Amazon Redshift": [("RMS:ra3.4xlarge", "live", 8.0), ("Redshift:PaidSnapshots", "copy", 2.0)],
+}
+
+
+def _storage(accounts: list[dict], costs: list[dict], months: int) -> list[dict]:
+    """GB held per account and storage type, in the same regions as the spend (London for production)."""
+    from .collectors.cost import storage_kind
+
+    totals: dict[tuple, float] = {}
+    for r in costs:
+        if r["service"] in _STORAGE:
+            key = (r["account_id"], r["service"])
+            totals[key] = totals.get(key, 0.0) + r["amount"] / months
+    names = {a["id"]: a["name"] for a in accounts}
+    rows = []
+    for (aid, svc), monthly in totals.items():
+        prefix = "EUW2-" if "prod" in names[aid] else "EU-"
+        for usage, kind, gb_per_usd in _STORAGE[svc]:
+            if kind == "archive" and names[aid] not in ("log-archive", "data-platform-prod", "security-audit"):
+                continue
+            assert storage_kind(svc, usage) == kind  # noqa: S101 - keeps the demo honest to the collector
+            rows.append(
+                {
+                    "account_id": aid,
+                    "service": svc,
+                    "usage_type": prefix + usage,
+                    "kind": kind,
+                    "gb": round(monthly * gb_per_usd, 1),
+                }
+            )
+    return rows
+
+
 def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
     rng = random.Random(seed)  # noqa: S311 - deterministic synthetic data, not security
     start, end = month_window(months)
@@ -383,6 +437,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
                 "status": "SUSPENDED" if ou == "Suspended" else "ACTIVE",
                 "ou_id": f"ou-demo-{i:02d}",
                 "ou_path": f"Root / {ou}",
+                "tags": {"Environment": "prod" if "prod" in name else "non-prod", **_TAGS.get(name, {})},
             }
         )
         for mi, month in enumerate(month_keys):
@@ -419,6 +474,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
 
     by_name = {a["name"]: a["id"] for a in accounts}
     region_costs = _region_split(accounts, costs, months)
+    storage = _storage(accounts, costs, months)
     issues = [
         Issue(
             "error",
@@ -473,6 +529,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
         "accounts": accounts,
         "costs": costs,
         "region_costs": region_costs,
+        "storage": storage,
         "period": {"start": start, "end": end, "months": months},
         "inventory": inventory,
         "issues": issues,

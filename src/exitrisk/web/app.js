@@ -86,7 +86,7 @@
 
   // ------------------------------------------------------------------ questionnaire
   const Q_NUM = ["cloud_team_size", "cloud_team_allocation_pct", "app_engineers_fte", "day_rate", "fx_per_usd",
-    "contingency_pct", "parallel_run_months", "materiality"];
+    "contingency_pct", "parallel_run_months", "materiality", "transfer_gbps"];
 
   function loadQuestionnaire() {
     let q = { ...(state.options?.defaults || {}) };
@@ -106,9 +106,11 @@
     fillSelect("iac", state.options.iac);
     fillSelect("target", state.options.target);
     fillSelect("dc_facility", state.options.dc_facility);
-    for (const [k, v] of Object.entries(q)) {
-      if (!f[k]) continue;
-      if (f[k].type === "checkbox") f[k].checked = !!v; else f[k].value = v;
+    for (const form of [f, $("#resForm")]) {
+      for (const [k, v] of Object.entries(q)) {
+        if (!form[k]) continue;
+        if (form[k].type === "checkbox") form[k].checked = !!v; else form[k].value = v;
+      }
     }
     syncDatacenter();
   }
@@ -119,9 +121,9 @@
   }
 
   function readQuestionnaire() {
-    const f = $("#qForm");
     const q = {};
-    for (const el of f.elements) {
+    // The resilience inputs (section 6) travel with the delivery answers but do not confirm them.
+    for (const el of [...$("#qForm").elements, ...$("#resForm").elements]) {
       if (!el.name) continue;
       if (el.type === "checkbox") q[el.name] = el.checked;
       else if (el.name === "confirmed") q.confirmed = el.value === "true";
@@ -182,6 +184,7 @@
       renderAccounts(r);
       renderServices(r);
       renderEstimate(r);
+      renderResilience(r);
       renderIssues(r);
       renderAppendix(r);
     } catch (e) {
@@ -500,7 +503,7 @@
     const multiOu = new Set(all.map((a) => a.ou_path)).size > 1;
     const rows = shown.map((a, i) => `<tr>
       <td class="num-cell muted">${i + 1}</td>
-      <td class="acct"><strong>${esc(a.name)}</strong><div class="hint">${esc(a.id)}${multiOu ? ` · ${esc(a.ou_path)}` : ""}</div></td>
+      <td class="acct"><strong>${esc(a.name)}</strong>${a.critical ? ` <span class="chip crit" title="${a.critical_source === "tag" ? "Criticality tag on the account" : "Matches a critical name in section 6"}">Critical</span>` : ""}<div class="hint">${esc(a.id)}${a.channel ? ` · ${esc(a.channel)}` : ""}${multiOu ? ` · ${esc(a.ou_path)}` : ""}</div></td>
       <td class="num-cell">${money(a.monthly_spend)}</td>
       <td class="risk">${a.score == null ? "–" : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span><div class="hint">${pct(a.high_risk_pct)} High/Crit spend</div>`}</td>
       <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.spend_at_risk / maxC).toFixed(1)}%"></i></div><span class="num-cell">${money(a.spend_at_risk)}</span></div></td>
@@ -601,6 +604,78 @@
       ["Contingency", `${q.contingency_pct}%`], ["Parallel running", `${q.parallel_run_months} months`], ["Regulated", q.regulated ? "Yes" : "No"]];
     $("#answers").innerHTML = ans.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
     $("#assumptions").innerHTML = e.assumptions.map((a) => `<li>${esc(a)}</li>`).join("");
+  }
+
+  // ------------------------------------------------------------------ resilience
+  const tb = (v) => (!v ? "–" : v >= 1000 ? `${num(v / 1024, 1)} PB` : `${num(v, v < 10 ? 1 : 0)} TB`);
+  const days = (d) => (d < 1 ? "under a day" : d < 120 ? `${Math.round(d)} days` : `${num(d / 30.4, 0)} months`);
+
+  function splitList(rows) {
+    // rows: [{label, pct, color, note}]: one bar per row, so it reads in print and on a phone.
+    return rows.map((x) => `<div class="split-row"><div class="split-label"><span>${esc(x.label)}</span><span class="num-cell">${pct(x.pct)}</span></div>
+      <div class="bar"><i style="width:${Math.min(100, x.pct).toFixed(1)}%;background:${x.color}"></i></div>${x.note ? `<div class="hint">${esc(x.note)}</div>` : ""}</div>`).join("");
+  }
+
+  function renderResilience(r) {
+    const s = r.resilience, c = s.criticality, d = s.data, k = s.concentration, st = s.stressed_exit;
+    const crit = c.critical_accounts > 0;
+    $("#resTagNote").textContent = !c.tags_read
+      ? "Account tags were not read in this scan (older scan, or organizations:ListTagsForResource not granted). Name the critical accounts below."
+      : c.by_tag
+        ? `${plural(c.by_tag, "account")} tagged critical in AWS Organizations (a Criticality or Tier tag of Tier 1, Critical, Mission critical or similar).`
+        : `${plural(c.tagged_accounts, "account")} carry tags, but none marks criticality. Add Criticality = Tier1, or name the critical accounts below.`;
+    const basis = crit ? "critical spend" : "in-scope spend";
+    const none = st.buckets.find((b) => b.key === "none");
+    const tiles = [
+      tile("Critical accounts", crit ? num(c.critical_accounts) : "None marked", crit ? `${pct(c.pct_spend)} of spend · ${money(c.monthly_spend * 12)} a year` : "Figures below cover all in-scope accounts"),
+      k.available ? tile("Correlated failure", `${k.level} · ${k.score}`, `${pct(k.pct)} of ${basis} in ${k.region_name}`) : tile("Correlated failure", "–", k.reason),
+      tile("No rapid exit", pct(none.pct), `of ${basis} is on AWS-only services`),
+    ];
+    if (d.available && !d.empty) tiles.push(tile("Data to move", tb(d.move_tb), `${days(d.transfer_days)} at ${num(d.transfer_gbps)} Gbps`));
+    $("#resTiles").innerHTML = tiles.join("");
+
+    // Correlated failure.
+    if (k.available) {
+      $("#resConcNote").textContent = `Share of ${basis} by region${crit ? ` (${plural(c.critical_accounts, "critical account")})` : ""}. One regional event takes out everything in the top bar at once.${k.global_pct ? ` A further ${pct(k.global_pct, 1)} is global services (IAM, Route 53, CloudFront), which share a control plane across regions.` : ""}`;
+      $("#resRegions").innerHTML = splitList(k.regions.slice(0, 5).map((x, i) => ({ label: x.name, pct: x.pct, color: i ? css("--ink-2") : tierColor(k.level === "High" ? 5 : k.level === "Elevated" ? 4 : 3) })));
+      const shared = new Set(k.no_anti_affinity.flatMap((x) => x.channels));
+      $("#resChannels").innerHTML = k.channels.length
+        ? `<thead><tr><th>Channel</th><th>Runs mainly in</th><th>Isolated from other channels?</th></tr></thead><tbody>${k.channels.map((ch) => `<tr><td>${esc(ch.channel)}</td><td>${esc(ch.name)} <span class="hint">${pct(ch.pct)}</span></td><td>${shared.has(ch.channel) ? '<span class="sev" style="--dot:var(--t5)">No</span>' : '<span class="sev" style="--dot:var(--t1)">Yes</span>'}</td></tr>`).join("")}</tbody>`
+        : `<tbody><tr><td class="hint">No Channel tag on the accounts. Tag accounts with Channel (cards, mobile app, payments) to test whether tier 1 channels are isolated from each other.</td></tr></tbody>`;
+    } else {
+      $("#resConcNote").textContent = k.reason;
+      $("#resRegions").innerHTML = "";
+      $("#resChannels").innerHTML = "";
+    }
+
+    // Stressed exit.
+    $("#resStressNote").textContent = `If AWS stopped serving you with little notice, how fast could ${basis} (${money(st.monthly_spend * 12)} a year) move?`;
+    const bColor = { weeks: tierColor(1), months: tierColor(3), none: tierColor(5) };
+    $("#resStress").innerHTML = splitList(st.buckets.map((b) => ({ label: b.label, pct: b.pct, color: bColor[b.key], note: b.note })));
+    $("#resStuck").innerHTML = st.accounts.length
+      ? `<thead><tr><th>${crit ? "Critical account" : "Account"} with no rapid exit</th><th class="num-cell">Per month</th><th class="num-cell">AWS-only</th></tr></thead><tbody>${st.accounts.slice(0, 8).map((a) => `<tr><td><strong>${esc(a.name)}</strong><div class="hint">${esc(a.services.join(", "))}</div></td><td class="num-cell">${money(a.monthly_spend)}</td><td class="num-cell">${pct(a.pct)}</td></tr>`).join("")}</tbody>`
+      : `<tbody><tr><td class="hint">No ${crit ? "critical " : ""}account has a quarter or more of its spend on AWS-only services.</td></tr></tbody>`;
+
+    // Data held.
+    if (!d.available || d.empty) {
+      $("#resDataNote").textContent = d.reason || "No storage usage recorded for these accounts.";
+      for (const id of ["#resDataPoints", "#resDataServices", "#resDataAccounts"]) $(id).innerHTML = "";
+      return;
+    }
+    $("#resDataNote").textContent = `Average data stored last month, from Cost Explorer storage usage (GB-months); no data is read. ${tb(d.total_tb)} in all: ${tb(d.live_tb)} live, ${tb(d.archive_tb)} archived and ${tb(d.copy_tb)} of snapshots and backups, which are rebuilt at the target rather than moved.`;
+    const egress = d.egress_list_usd;
+    const points = [
+      `Moving ${tb(d.move_tb)} (live and archived) over ${num(d.transfer_gbps)} Gbps takes about ${days(d.transfer_days)} of continuous transfer. ${d.fits_credit_window ? `That fits the ${d.credit_days}-day window of AWS's free data transfer out for customers leaving AWS.` : `That is longer than the ${d.credit_days}-day window of AWS's free data transfer out for customers leaving AWS: plan waves, a faster link, or offline transfer.`}`,
+      `Without that credit, internet egress at list price would be roughly ${money(egress[0])}–${money(egress[1])}.`,
+      ...(crit && d.critical_tb ? [`Critical accounts hold ${tb(d.critical_tb)}: the data a stressed exit would need first.`] : []),
+      ...(d.dynamodb_tb ? [`DynamoDB holds ${tb(d.dynamodb_tb)}; the largest account (${d.dynamodb_largest_account}) holds ${tb(d.dynamodb_largest_tb)}. Exports to S3 are not region-limited, but rebuilding in a second region by import from S3 takes ${plural(d.dynamodb_imports_small_region, "import job")} of up to 1 TB each outside us-east-1, us-west-2 and eu-west-1.`] : []),
+      ...(d.regions.length ? [`By region: ${d.regions.slice(0, 4).map((x) => `${x.name} ${tb(x.tb)}`).join(", ")}.`] : []),
+    ];
+    $("#resDataPoints").innerHTML = points.map((x) => `<li>${esc(x)}</li>`).join("");
+    const head = (first) => `<thead><tr><th>${first}</th><th class="num-cell">Live</th><th class="num-cell">Archive</th><th class="num-cell">Copies</th></tr></thead>`;
+    const cells = (x) => `<td class="num-cell">${tb(x.live_tb)}</td><td class="num-cell">${tb(x.archive_tb)}</td><td class="num-cell">${tb(x.copy_tb)}</td>`;
+    $("#resDataServices").innerHTML = head("Service") + `<tbody>${d.services.slice(0, 8).map((x) => `<tr><td>${esc(x.service.replace(/^Amazon |^AWS /, ""))}</td>${cells(x)}</tr>`).join("")}</tbody>`;
+    $("#resDataAccounts").innerHTML = head("Account") + `<tbody>${d.accounts.slice(0, 8).map((x) => `<tr><td>${esc(x.name)}${x.critical ? ' <span class="chip crit">Critical</span>' : ""}</td>${cells(x)}</tr>`).join("")}</tbody>`;
   }
 
   function renderIssues(r) {
@@ -1039,10 +1114,10 @@
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         $("#btnStartScan").disabled = false;
         if (s.status === "failed") {
-          $("#scanError").textContent = `Scan failed: ${s.message}. See section 6 and the log for details.`;
+          $("#scanError").textContent = `Scan failed: ${s.message}. See section 7 and the log for details.`;
         } else {
           $("#scanDialog").close();
-          toast(`Scan ${s.status}${s.issues ? ` with ${s.issues} issue(s) - see section 6` : ""}`);
+          toast(`Scan ${s.status}${s.issues ? ` with ${s.issues} issue(s) - see section 7` : ""}`);
         }
         await refreshScans(id);
         state.scanId = id;
@@ -1334,6 +1409,8 @@
     const confirmAnswers = () => { $("#qForm").confirmed.value = "true"; syncDatacenter(); loadReport(); };
     $("#btnRecalc").addEventListener("click", confirmAnswers);
     $("#qForm").addEventListener("change", confirmAnswers);
+    $("#resForm").addEventListener("change", loadReport);
+    $("#resForm").addEventListener("submit", (ev) => { ev.preventDefault(); loadReport(); });
     $("#btnAnswerQs").addEventListener("click", (ev) => {
       ev.preventDefault();
       $("#sec-estimate").scrollIntoView({ behavior: "smooth", block: "start" });

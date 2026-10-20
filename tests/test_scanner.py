@@ -37,6 +37,7 @@ def test_organizations_unavailable_falls_back_to_single_account(monkeypatch):
         raise ClientError({"Error": {"Code": "AWSOrganizationsNotInUseException", "Message": "no org"}}, "Describe")
 
     monkeypatch.setattr(scanner.organizations, "describe_org", no_org)
+    monkeypatch.setattr(scanner.cost, "fetch_storage", lambda s, ids, services: [])
     monkeypatch.setattr(
         scanner.cost,
         "fetch_costs",
@@ -153,3 +154,70 @@ def test_spend_by_region_failure_is_an_issue_not_a_failed_scan(monkeypatch, capl
     assert issue["severity"] == "warning" and "one region" in issue["hint"]
     if isinstance(error, KeyError):
         assert any(r.exc_info for r in caplog.records if "unexpected" in r.getMessage())
+
+
+def test_storage_failure_is_an_issue_not_a_failed_scan(monkeypatch):
+    _single_account(monkeypatch)
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: [])
+
+    def boom(*_a):
+        raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "denied"}}, "GetCostAndUsage")
+
+    monkeypatch.setattr(scanner.cost, "fetch_storage", boom)
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
+    assert doc["status"] == "complete" and doc["storage"] is None
+    assert any("data stored unavailable" in i["message"] for i in doc["issues"])
+
+
+def _org(monkeypatch):
+    """A one-OU organisation with two accounts, spend and nothing else."""
+    from exitrisk.collectors.organizations import Account
+
+    monkeypatch.setattr(scanner, "make_session", lambda profile: object())
+    monkeypatch.setattr(scanner, "caller_identity", lambda s: {"account_id": "111111111111", "arn": "arn:x"})
+    monkeypatch.setattr(
+        scanner.organizations, "describe_org", lambda s: {"id": "o-1", "management_account_id": "111111111111"}
+    )
+    monkeypatch.setattr(
+        scanner.organizations, "list_ou_tree", lambda s: {"id": "r-1", "name": "Root", "path": "Root", "children": []}
+    )
+    monkeypatch.setattr(
+        scanner.organizations,
+        "list_accounts_under",
+        lambda s, ou: [
+            Account(i, f"acct-{i[-1]}", "", "ACTIVE", "r-1", "Root") for i in ("222222222222", "333333333333")
+        ],
+    )
+    monkeypatch.setattr(
+        scanner.cost,
+        "fetch_costs",
+        lambda s, ids, m: (
+            [{"month": "2026-09", "account_id": i, "service": "AWS Lambda", "amount": 10.0} for i in ids],
+            {"start": "2026-09-01", "end": "2026-10-01", "months": 1},
+        ),
+    )
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: [])
+    monkeypatch.setattr(scanner.cost, "fetch_storage", lambda s, ids, services: [])
+
+
+def test_account_tags_are_saved_on_accounts(monkeypatch):
+    _org(monkeypatch)
+    monkeypatch.setattr(
+        scanner.organizations, "fetch_account_tags", lambda s, ids: {"222222222222": {"Criticality": "Tier 1"}}
+    )
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
+    tags = {a["id"]: a["tags"] for a in doc["accounts"]}
+    assert tags == {"222222222222": {"Criticality": "Tier 1"}, "333333333333": {}}
+
+
+def test_account_tags_refused_is_a_warning(monkeypatch):
+    _org(monkeypatch)
+
+    def denied(*_a):
+        raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "denied"}}, "ListTagsForResource")
+
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", denied)
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
+    assert doc["status"] == "complete" and all("tags" not in a for a in doc["accounts"])
+    issue = next(i for i in doc["issues"] if "account tags" in i["message"])
+    assert issue["severity"] == "warning" and "ListTagsForResource" in issue["hint"]

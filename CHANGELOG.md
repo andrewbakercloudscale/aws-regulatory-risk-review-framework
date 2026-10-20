@@ -6,6 +6,29 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-20
+
+### Added
+- **Resilience view** (report section 6; data quality moves to section 7). It measures the risks the
+  exit score does not: correlated failure and a stressed exit.
+  - **Critical accounts** from account tags (`Criticality`, `Tier`, `BusinessCriticality`... with values
+    such as Tier 1, Critical, Mission critical) or name patterns typed in section 6. Critical accounts
+    carry a badge in the account ranking. A `Channel` tag names the customer channel.
+  - **Correlated failure**: share of critical spend in its dominant region (High at 90% or more), each
+    channel's region, and channels that share a region (no anti-affinity).
+  - **Stressed exit**: critical spend that could move in weeks (tiers 1 to 2), months (tier 3) or not
+    without a pre-built fallback (tiers 4 to 5), and the critical accounts stuck on AWS-only services.
+  - **Data held**: terabytes of live data, archives and copies by service, account and region, from
+    Cost Explorer storage usage; the time to move it at your link speed, whether it fits AWS's 60-day
+    free data transfer out window for leaving AWS, list-price egress otherwise, and DynamoDB against the
+    1 TB per import job limit outside the three large regions.
+  - One finding (correlated failure) and one action (tag critical accounts, or pre-build a stressed-exit
+    fallback) in the executive summary.
+- Scans read account tags (`organizations:ListTagsForResource`, added to the policy, permission set and
+  access check) and storage usage (`ce:GetCostAndUsage`, already granted). Both are optional: a refusal
+  is a warning and the scan completes.
+- Answers file: `critical_accounts` (comma-separated name patterns) and `transfer_gbps` (default 10).
+
 ## [0.3.5] - 2026-10-20
 
 ### Added

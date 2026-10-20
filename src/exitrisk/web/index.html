@@ -284,9 +284,50 @@
       </div>
     </section>
 
-    <!-- 6. Data quality -->
+    <!-- 6. Resilience -->
+    <section class="section" id="sec-resilience">
+      <h2><span class="num">6</span>Resilience: critical accounts, data and a stressed exit</h2>
+      <p class="muted section-lede">A planned exit is one question. Regulators also ask what happens to critical services if AWS, or one region, fails, and what could move in weeks rather than years. These figures inform; they do not change the score or the estimate.</p>
+      <div class="grid-est">
+        <form class="card questionnaire" id="resForm" autocomplete="off">
+          <h3>Which accounts are critical?</h3>
+          <p class="muted small" id="resTagNote"></p>
+          <label>Also treat as critical (name contains, comma-separated)<input name="critical_accounts" maxlength="200" placeholder="payments, cards, core-banking"></label>
+          <label>Link speed for moving data out (Gbps)<input name="transfer_gbps" type="number" min="0.1" max="1000" step="1"></label>
+          <p class="muted small">Half the link speed is assumed usable. Saved in this browser only.</p>
+        </form>
+        <div class="est-results">
+          <div class="tiles" id="resTiles"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Correlated failure: where the critical estate runs</h3>
+          <p class="muted small" id="resConcNote"></p>
+          <div id="resRegions" class="split-list"></div>
+          <div class="table-wrap"><table class="data compact" id="resChannels"></table></div>
+        </div>
+        <div class="card">
+          <h3>Stressed exit: what could move in a hurry</h3>
+          <p class="muted small" id="resStressNote"></p>
+          <div id="resStress" class="split-list"></div>
+          <div class="table-wrap"><table class="data compact" id="resStuck"></table></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Data held: what an exit has to move</h3>
+        <p class="muted small" id="resDataNote"></p>
+        <ul id="resDataPoints" class="assumptions"></ul>
+        <div class="grid-2">
+          <div class="table-wrap"><table class="data compact" id="resDataServices"></table></div>
+          <div class="table-wrap"><table class="data compact" id="resDataAccounts"></table></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. Data quality -->
     <section class="section" id="sec-issues">
-      <h2><span class="num">6</span>Data quality &amp; scan issues</h2>
+      <h2><span class="num">7</span>Data quality &amp; scan issues</h2>
       <div class="card">
         <p class="muted small">What this report does <em>not</em> cover. Every API error during the scan is recorded here and in the log.</p>
         <div id="issueCounts" class="issue-counts"></div>

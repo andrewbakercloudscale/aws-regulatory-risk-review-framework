@@ -10,6 +10,8 @@ is printed on the report's assumptions list.
 | Source | API | What | Where it runs |
 |---|---|---|---|
 | AWS Organizations | `ListRoots`, `ListOrganizationalUnitsForParent`, `ListAccountsForParent`, `DescribeOrganization` | OU tree; accounts under the chosen OU, recursively; account name, status, OU path | Management account |
+| AWS Organizations (optional) | `ListTagsForResource` | Account tags, for business criticality and channel (resilience view) | Management account |
+| Cost Explorer (optional) | `GetCostAndUsage` | `UsageQuantity` in GB-months for the last complete month, by `LINKED_ACCOUNT` × `USAGE_TYPE`, for each storage service in use: data held (resilience view) | Management account |
 | Cost Explorer | `GetCostAndUsage` | **Amortised** cost, monthly, grouped by `LINKED_ACCOUNT` × `SERVICE`, for the last *N* complete months | Management account |
 | Deep scan (optional) | List/describe calls in every enabled region | Counts of Lambda functions, DynamoDB tables, state machines, Kinesis streams, SQS queues, SNS topics, EventBridge rules, API Gateway APIs, Cognito user pools, Glue jobs, Redshift clusters, CloudFormation stacks, EKS/ECS clusters, RDS instances by engine | Each member account via `ExitRiskReadOnly` |
 
@@ -211,6 +213,43 @@ The asymmetric ranges reflect that early estimates of migrations are far more of
 Each scan is stored as JSON (`~/.exitrisk/scans/<id>.json`) with the raw Cost Explorer lines, accounts,
 inventory and issues. `exitrisk report <id> --include prod --questionnaire answers.json` regenerates
 the full report deterministically; the report footer carries the tool version, catalog version and scan id.
+
+## Resilience (report section 6)
+
+The exit score answers how hard a *planned* exit is. Section 6 answers the regulator's harder
+questions: what one failure would take down, and what could move under stress. None of it changes
+the score or the estimate.
+
+**Which accounts are critical.** An account is critical when a tag says so, or when its name contains
+one of the patterns typed in section 6 (`critical_accounts` in the answers file). Tag keys are matched
+ignoring case, spaces, dashes and underscores: `Criticality`, `BusinessCriticality`, `Tier`,
+`ServiceTier`, `WorkloadTier`, `Critical`. Values that mark an account critical: Tier 1 / T1 / 1,
+Tier 0, Critical, Mission critical, Business critical, CIF, Critical or important, P1, High, Gold,
+Platinum, True, Yes. A `Channel` (or `BusinessChannel`, `CustomerChannel`) tag names the customer
+channel the account serves. When no account is critical, every figure below covers all in-scope
+accounts and says so.
+
+**Correlated failure.** The share of critical spend in its dominant region, from Cost Explorer spend
+by region (global services excluded and shown separately). 90% or more is *High*, 70% to 90%
+*Elevated*, below that *Moderate*. Each channel's dominant region is shown; two or more channels with
+the same dominant region have no anti-affinity: one regional event takes them all down together, and
+a card rail with stand-in processing gains nothing from it if the mobile app fails with it.
+
+**Stressed exit.** Critical spend split by how fast it could move if AWS stopped serving you with
+little notice: tiers 1 to 2 in weeks (rehost as is), tier 3 in months (rework), tiers 4 to 5 not at
+all without a pre-built fallback, a manual workaround or a stand-in process. Critical accounts with a
+quarter or more of their spend on tiers 4 to 5 are listed.
+
+**Data held.** Cost Explorer bills storage in GB-months, so the usage quantity of a storage line is the
+average data held over the month; nothing is read from the data itself. Lines are classed as copies
+(snapshots, backups, point-in-time recovery, Multi-AZ mirrors, AWS Backup), archives (Glacier tiers)
+or live data; early-deletion fees are dropped. Live data and archives must move; copies are rebuilt at
+the target. Transfer time assumes half the link speed in section 6 is usable. Egress at list price is
+$0.05 to $0.15 per GB; AWS credits it for customers leaving AWS, on approval, for a move completed
+within 60 days, so the view says whether the data fits that window. The region of each line comes
+from its usage-type prefix (`EUW2-` London, `AFS1-` Cape Town, no prefix us-east-1). DynamoDB's
+largest account is sized against the 1 TB per import job limit outside us-east-1, us-west-2 and
+eu-west-1.
 
 ## Multi-region
 
