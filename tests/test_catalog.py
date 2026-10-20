@@ -73,3 +73,18 @@ def test_billing_lines_excluded():
     cat = load_catalog()
     assert cat.lookup("Tax").excluded
     assert cat.lookup("AWS Support (Enterprise)").excluded
+
+
+def test_lifecycle_notes_and_recent_additions():
+    cat = load_catalog()
+    assert "30 October 2026" in cat.lookup("Amazon Pinpoint").why
+    assert "30 September 2026" in cat.lookup("AWS App Mesh").why
+    assert "reopened" in cat.lookup("AWS CodeCommit").why
+    for svc, tier in [
+        ("AWS Elastic Disaster Recovery", 2),
+        ("AWS Fault Injection Simulator", 2),
+        ("AWS Payment Cryptography", 4),
+        ("AWS CloudShell", 1),
+    ]:
+        info = cat.lookup(svc)
+        assert info.classified and info.tier == tier, svc

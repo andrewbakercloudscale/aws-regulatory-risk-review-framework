@@ -24,7 +24,7 @@
 #
 # Contributions welcome: see CONTRIBUTING.md. Keep `why` factual and `migration` actionable.
 
-version: "2026.10.2"
+version: "2026.10.3"
 
 tiers:
   1: {label: Portable, score: 10}
@@ -693,17 +693,58 @@ services:
     effort_weeks: 1
     duration: 1-2 weeks
 
+  - service: AWS Elastic Disaster Recovery
+    display: Elastic Disaster Recovery
+    category: Storage
+    tier: 2
+    why: Agent-based block-level replication of servers; the replication settings and recovery plans are AWS-specific, the servers are not.
+    migration: Replace with Azure Site Recovery / Backup and DR / Zerto; replicate into the target before cut-over, then retire.
+    targets: {azure: Azure Site Recovery, gcp: Backup and DR, other: Zerto / Veeam}
+    effort_weeks: 1
+    duration: 2-6 weeks
+
+  - service: AWS Fault Injection Simulator
+    aliases: [AWS Fault Injection Service]
+    display: Fault Injection
+    category: DevOps
+    tier: 2
+    why: Experiment templates use AWS actions and targets; the chaos-engineering practice and runbooks carry over.
+    migration: Recreate experiments in Azure Chaos Studio / Gremlin / LitmusChaos.
+    targets: {azure: Azure Chaos Studio, gcp: Gremlin / LitmusChaos, other: Gremlin / LitmusChaos}
+    effort_weeks: 0.5
+    duration: 1-2 weeks
+
+  - service: AWS CloudShell
+    display: CloudShell
+    category: Management
+    tier: 1
+    why: A browser shell; nothing runs on it that must move.
+    migration: Use the target's cloud shell.
+    targets: {azure: Azure Cloud Shell, gcp: Cloud Shell, other: Local terminal}
+    effort_weeks: 0.1
+    duration: Days
+
   - service: AWS App Mesh
     display: App Mesh
     category: Networking
     tier: 2
-    why: Envoy-based mesh with AWS control plane (being retired by AWS).
-    migration: Move to Istio / Linkerd / Cilium service mesh.
+    why: Envoy-based mesh with AWS control plane. AWS ended support on 30 September 2026; meshes and the console are no longer accessible.
+    migration: Move now to ECS Service Connect / VPC Lattice (staying on AWS) or Istio / Linkerd / Cilium (portable).
     targets: {azure: Istio add-on for AKS, gcp: Cloud Service Mesh, other: Istio / Linkerd}
     effort_weeks: 2
     duration: 2-6 weeks
 
   # ---------------------------------------------------------------- Security & identity
+  - service: AWS Payment Cryptography
+    display: Payment Cryptography
+    category: Security
+    tier: 4
+    why: Managed payment HSM with an AWS-held key hierarchy; payment keys must be re-established through a key ceremony, and card schemes or acquirers may need to re-certify.
+    migration: Move to Azure Payment HSM or Thales payShield / Futurex (on premises or hosted); plan key ceremonies and scheme sign-off early.
+    targets: {azure: Azure Payment HSM, gcp: Partner payment HSM (Thales / Futurex), other: Thales payShield / Futurex}
+    effort_weeks: 6
+    duration: 3-6 months
+
   - service: AWS Key Management Service
     display: KMS
     category: Security
@@ -963,7 +1004,7 @@ services:
     display: CodeCommit
     category: DevOps
     tier: 1
-    why: Plain Git (closed to new customers by AWS).
+    why: Plain Git. (AWS closed it to new customers in July 2024 and reopened it in November 2025.)
     migration: git push --mirror to GitHub / Azure Repos / GitLab.
     targets: {azure: Azure Repos / GitHub, gcp: Secure Source Manager / GitHub, other: GitHub / GitLab}
     effort_weeks: 0.25
@@ -1174,8 +1215,8 @@ services:
     display: Pinpoint
     category: Business apps
     tier: 4
-    why: Proprietary campaign, journey and segment definitions; sender IDs and registered numbers are tied to AWS.
-    migration: Move to Braze / Twilio / Azure Communication Services; re-register sender IDs and short codes.
+    why: Proprietary campaign, journey and segment definitions; sender IDs and registered numbers are tied to AWS. AWS ends support for Pinpoint's engagement features (campaigns, journeys, segments, analytics) on 30 October 2026; SMS, voice and push continue as AWS End User Messaging.
+    migration: Move to Braze / Twilio / Azure Communication Services, or within AWS to Connect outbound campaigns; re-register sender IDs and short codes.
     targets: {azure: Azure Communication Services, gcp: Firebase Cloud Messaging + partner, other: Braze / Twilio}
     effort_weeks: 4
     duration: 1-3 months

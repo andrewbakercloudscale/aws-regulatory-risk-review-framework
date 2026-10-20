@@ -6,6 +6,31 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-20
+
+### Catalog 2026.10.3 (120 services)
+- Added AWS Elastic Disaster Recovery (Low), AWS Fault Injection Simulator / Service (Low), AWS Payment
+  Cryptography (High: key ceremonies and scheme sign-off) and AWS CloudShell (Portable). They were
+  previously scored as unclassified (Moderate) and had no multi-region profile.
+- Lifecycle facts: Amazon Pinpoint engagement features reach end of support on 30 October 2026 (SMS, voice
+  and push continue as AWS End User Messaging); AWS App Mesh support ended on 30 September 2026; CodeCommit
+  reopened to new customers in November 2025.
+
+### Multi-region
+- Region data 2026.10.2: the four new services have regional availability and class; Elastic Disaster
+  Recovery and Payment Cryptography have specific failover notes. Region availability refreshed (107
+  services).
+
+### Added
+- `exitrisk scan --target azure|gcp|oci|sovereign|onprem` sets the exit target from the command line, as
+  the console's New scan dialog does.
+
+### Changed
+- Internal: `build_report` and the executive summary split into small, named steps (aggregation, accounts,
+  ratings, tiers, services; headline, context, findings, exit, actions, confidence). Output is identical
+  on 144 scenarios (demo and live scans, filters, questionnaires, weightings).
+- New CLI tests (bad answers files, unknown scan, report JSON, scan target) and catalog lifecycle tests.
+
 ## [0.3.2] - 2026-10-20
 
 Exit analysis review ahead of wider circulation.

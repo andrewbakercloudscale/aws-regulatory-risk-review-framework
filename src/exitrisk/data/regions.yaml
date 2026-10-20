@@ -21,7 +21,7 @@
 #             availability is "not verified"; global: one instance serves every region)
 #   class     how its spend scales with the resilience pattern (see `classes`)
 
-version: "2026.10.1"
+version: "2026.10.2"
 
 regions:
   us-east-1:      {name: US East (N. Virginia),          country: US, jurisdiction: US, continent: North America, lat: 38.9,  lon: -77.4,  price: 1.00}
@@ -237,6 +237,10 @@ services:
   AWS CodeBuild: {regional: AWS CodeBuild, class: tooling}
   AWS CodePipeline: {regional: AWS CodePipeline, class: tooling}
   AWS CodeCommit: {regional: AWS CodeCommit, class: tooling}
+  AWS Elastic Disaster Recovery: {regional: AWS Elastic Disaster Recovery (DRS), class: tooling}
+  AWS Fault Injection Simulator: {regional: AWS Fault Injection Service, class: tooling}
+  AWS CloudShell: {regional: AWS CloudShell, class: tooling}
+  AWS Payment Cryptography: {regional: AWS Payment Cryptography, class: platform}
   AWS CodeArtifact: {regional: AWS CodeArtifact, class: tooling}
   AWS CodeDeploy: {regional: AWS CodeDeploy, class: tooling}
   AWS Amplify: {regional: AWS Amplify, class: managed}
@@ -282,6 +286,8 @@ risks:
   Amazon MemoryDB: {failover: manual, note: "Multi-Region clusters only in some regions; otherwise snapshot copy and restore."}
   Amazon Neptune: {failover: manual, note: "Global Database for cross-region replicas; failover is a promotion step."}
   Amazon Simple Storage Service: {failover: native, note: "Cross-Region Replication (15-minute SLA with Replication Time Control). Applications must re-point, or use Multi-Region Access Points."}
+  AWS Elastic Disaster Recovery: {failover: native, note: "DRS can already recover servers into another region: check the in-scope servers replicate there and that a drill has been run."}
+  AWS Payment Cryptography: {failover: manual, note: "Payment keys are regional: replicate or import them into the second region, and confirm the card schemes and acquirers accept processing from it."}
   Amazon Elastic File System: {failover: native, note: "EFS replication to the second region (minutes of lag); fail over by mounting the replica."}
   Amazon FSx: {failover: manual, note: "Cross-region backup copy, or SnapMirror for FSx for NetApp ONTAP; restore or break the mirror to fail over."}
   AWS Backup: {failover: native, note: "Copy backups to a vault in the second region; restore time grows with data size."}

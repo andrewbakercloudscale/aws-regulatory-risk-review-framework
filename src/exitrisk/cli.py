@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import __version__, store
 from .config import settings
+from .estimate import TARGET_LABELS
 from .logging_config import configure_logging, get_logger, run_id_var
 
 log = get_logger("cli")
@@ -67,6 +68,7 @@ def _scan(args) -> int:
         inventory=args.inventory,
         regions=args.regions.split(",") if args.regions else None,
         label=args.label or "",
+        target=args.target,
     )
     params.validate()
     job = ScanJob(id=store.new_scan_id(), params=params)
@@ -242,6 +244,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--role", help="role name to assume in member accounts for --inventory")
     p.add_argument("--regions", help="comma-separated regions for --inventory (default: all enabled)")
     p.add_argument("--label")
+    p.add_argument(
+        "--target",
+        choices=list(TARGET_LABELS),
+        default="azure",
+        help="where you would exit to; seeds the cost and time estimate (default: azure)",
+    )
     p.set_defaults(fn=_scan)
 
     p = sub.add_parser("demo", help="create a synthetic demo scan")

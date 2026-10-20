@@ -19,8 +19,10 @@ plus counts of accounts per rating. "balanced" (square root of spend) is a selec
 
 from __future__ import annotations
 
+import copy
 import math
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from . import __version__
@@ -132,108 +134,95 @@ def _weighted_score(amounts: dict[str, float], catalog: Catalog) -> float | None
     return sum(amt * catalog.tier_score(catalog.lookup(s).tier) for s, amt in amounts.items()) / total
 
 
-def build_report(
-    scan: dict,
-    account_filter: AccountFilter | None = None,
-    questionnaire: Questionnaire | None = None,
-    catalog: Catalog | None = None,
-    weighting: str = DEFAULT_WEIGHTING,
-) -> dict:
-    if weighting not in WEIGHTINGS:
-        raise ValueError(f"weighting must be one of {', '.join(WEIGHTINGS)}")
-    weight_fn = WEIGHTINGS[weighting][1]
-    catalog = catalog or load_catalog()
-    account_filter = account_filter or AccountFilter()
-    questionnaire = questionnaire or Questionnaire()
-    all_ids = {a["id"] for a in scan.get("accounts", [])}
+@dataclass
+class _Spend:
+    """In-scope spend from the cost lines, aggregated every way the report needs it."""
 
-    period = scan.get("period") or {"months": 1}
-    months_in_data = sorted({r["month"] for r in scan.get("costs", [])})
-    n_months = max(len(months_in_data), 1)
-
-    all_accounts = {a["id"]: a for a in scan.get("accounts", [])}
-    in_scope = {aid: a for aid, a in all_accounts.items() if account_filter.matches(a["name"])}
-    excluded_count = len(all_accounts) - len(in_scope)
-    # Keep scan-wide issues, and account issues only for accounts the filter kept.
-    issues: list[dict] = [
-        i
-        for i in scan.get("issues", [])
-        if not i.get("account_id") or i["account_id"] in in_scope or i["account_id"] not in all_ids
-    ]
-
-    # Aggregate spend: account -> service -> total; month -> tier -> total.
-    per_account: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    trend: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
-    cat_trend: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    cat_lockin: dict[str, float] = defaultdict(float)
-    svc_trend: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    per_account: dict[str, dict[str, float]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(float)))
+    trend: dict[str, dict[int, float]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(float)))
+    cat_trend: dict[str, dict[str, float]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(float)))
+    cat_lockin: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    svc_trend: dict[str, dict[str, float]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(float)))
     # Marketplace: one catalog entry, many third-party products. service -> product -> month -> spend.
-    products: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
-    product_accounts: dict[tuple, set] = defaultdict(set)
-    excluded_spend = 0.0
-    unclassified: dict[str, float] = defaultdict(float)
-    negative_lines = 0
-    for r in scan.get("costs", []):
+    products: dict = field(default_factory=lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(float))))
+    product_accounts: dict[tuple, set] = field(default_factory=lambda: defaultdict(set))
+    excluded: float = 0.0
+    unclassified: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    negative_lines: int = 0
+
+
+def _aggregate(costs: list[dict], in_scope: dict, catalog: Catalog) -> _Spend:
+    sp = _Spend()
+    for r in costs:
         if r["account_id"] not in in_scope:
             continue
         info = catalog.lookup(r["service"])
         if info.excluded:
-            excluded_spend += r["amount"]
+            sp.excluded += r["amount"]
             continue
         if r["amount"] == 0:
             continue  # Cost Explorer lists free-tier services at exactly zero
         if r["amount"] < 0:
-            negative_lines += 1
+            sp.negative_lines += 1
             continue
         # Key by catalog entry so billing lines of one service (Connect, Contact Lens, telephony...)
         # count once for effort and lock-in, not once per line.
-        per_account[r["account_id"]][info.service] += r["amount"]
-        trend[r["month"]][info.tier] += r["amount"]
-        cat_trend[info.category][r["month"]] += r["amount"]
-        svc_trend[info.service][r["month"]] += r["amount"]
+        sp.per_account[r["account_id"]][info.service] += r["amount"]
+        sp.trend[r["month"]][info.tier] += r["amount"]
+        sp.cat_trend[info.category][r["month"]] += r["amount"]
+        sp.svc_trend[info.service][r["month"]] += r["amount"]
         if r.get("product"):
             product = r["product"].removesuffix(" (Amazon Bedrock Edition)")
-            products[info.service][product][r["month"]] += r["amount"]
-            product_accounts[(info.service, product)].add(r["account_id"])
+            sp.products[info.service][product][r["month"]] += r["amount"]
+            sp.product_accounts[(info.service, product)].add(r["account_id"])
         if info.tier >= 4:
-            cat_lockin[info.category] += r["amount"]
+            sp.cat_lockin[info.category] += r["amount"]
         if not info.classified:
-            unclassified[r["service"]] += r["amount"]
+            sp.unclassified[r["service"]] += r["amount"]
+    return sp
 
-    for svc, amt in sorted(unclassified.items(), key=lambda kv: -kv[1]):
-        issues.append(
-            Issue(
-                "warning",
-                "catalog",
-                f"'{svc}' is not in the service catalog; scored as Moderate "
-                f"(tier 3). {_money(amt / n_months) if amt / n_months >= 1 else 'Under $1'}/month in scope.",
-                "Add it to src/exitrisk/data/service_catalog.yaml (see CONTRIBUTING.md).",
-                service=svc,
-            ).to_dict()
-        )
-    if negative_lines:
-        issues.append(
+
+def _spend_issues(sp: _Spend, n_months: int) -> list[dict]:
+    out = [
+        Issue(
+            "warning",
+            "catalog",
+            f"'{svc}' is not in the service catalog; scored as Moderate "
+            f"(tier 3). {_money(amt / n_months) if amt / n_months >= 1 else 'Under $1'}/month in scope.",
+            "Add it to src/exitrisk/data/service_catalog.yaml (see CONTRIBUTING.md).",
+            service=svc,
+        ).to_dict()
+        for svc, amt in sorted(sp.unclassified.items(), key=lambda kv: -kv[1])
+    ]
+    if sp.negative_lines:
+        out.append(
             Issue(
                 "info",
                 "cost",
-                f"{_plural(negative_lines, 'negative cost line')} (credits/refunds not caught "
+                f"{_plural(sp.negative_lines, 'negative cost line')} (credits/refunds not caught "
                 "by the record-type filter) were ignored",
             ).to_dict()
         )
+    return out
 
-    total_monthly = sum(sum(s.values()) for s in per_account.values()) / n_months
-    inventory = scan.get("inventory") or {}
 
-    def monthly_of(aid: str) -> float:
-        return sum(per_account.get(aid, {}).values()) / n_months
-
-    total_weight = sum(weight_fn(monthly_of(aid)) for aid in in_scope)
-
-    accounts_out = []
-    services_agg: dict[str, dict] = {}
+def _accounts(
+    in_scope: dict,
+    sp: _Spend,
+    n_months: int,
+    catalog: Catalog,
+    q: Questionnaire,
+    weight_fn,
+    inventory: dict,
+) -> tuple[list[dict], dict[str, dict]]:
+    """One row per in-scope account, ranked by spend at risk, and the per-service totals across them."""
+    monthly_of = {aid: sum(sp.per_account.get(aid, {}).values()) / n_months for aid in in_scope}
+    total_weight = sum(weight_fn(m) for m in monthly_of.values())
+    rows: list[dict] = []
+    services: dict[str, dict] = {}
     for aid, acct in in_scope.items():
-        svc_totals = per_account.get(aid, {})
-        monthly = sum(svc_totals.values()) / n_months
+        svc_totals = sp.per_account.get(aid, {})
+        monthly = monthly_of[aid]
         score = _weighted_score(svc_totals, catalog)
         weight = weight_fn(monthly) / total_weight if total_weight else 0.0
         tier_spend = {t: 0.0 for t in range(1, 6)}
@@ -244,12 +233,12 @@ def build_report(
             info = catalog.lookup(svc)
             m = amt / n_months
             tier_spend[info.tier] += m
-            if m >= questionnaire.materiality:
+            if m >= q.materiality:
                 probe = TYPICAL_COUNTS.get(info.service)
                 count = inv_totals.get(probe[0]) if probe else None
                 effort_by_tier[info.tier] += service_effort(info.effort_weeks, m, count, probe[1] if probe else None)
             top.append((m, info))
-            agg = services_agg.setdefault(
+            agg = services.setdefault(
                 info.service,
                 {
                     "service": info.service,
@@ -265,10 +254,7 @@ def build_report(
             agg["monthly_spend"] += m
             agg["accounts"] += 1
         top.sort(key=lambda x: -x[0])
-        lockin = [{"service": i.display, "tier": i.tier, "monthly_spend": round(m, 2)} for m, i in top if i.tier >= 4][
-            :3
-        ]
-        accounts_out.append(
+        rows.append(
             {
                 "id": aid,
                 "name": acct["name"],
@@ -285,75 +271,144 @@ def build_report(
                 "top_services": [
                     {"service": i.display, "tier": i.tier, "monthly_spend": round(m, 2)} for m, i in top[:5]
                 ],
-                "top_lockin": lockin,
+                "top_lockin": [
+                    {"service": i.display, "tier": i.tier, "monthly_spend": round(m, 2)} for m, i in top if i.tier >= 4
+                ][:3],
                 "effort_by_tier": {t: round(v, 2) for t, v in effort_by_tier.items()},
                 "effort_weeks": round(sum(effort_by_tier.values()), 1),
                 "inventory": inv_totals,
             }
         )
     # Rank by criticality (spend x risk): large and hard to move first.
-    accounts_out.sort(key=lambda a: (-a["spend_at_risk"], -(a["score"] or 0)))
-    for rank, a in enumerate(accounts_out, 1):
+    rows.sort(key=lambda a: (-a["spend_at_risk"], -(a["score"] or 0)))
+    for rank, a in enumerate(rows, 1):
         a["rank"] = rank
+    return rows, services
 
-    # Sum of contributions = weighted mean score across the OU, under each weighting for comparison.
-    def ou_score_by(fn) -> float | None:
-        w = [(fn(a["monthly_spend"]), a["score"] or 0) for a in accounts_out]
+
+def _scores_by_weighting(accounts: list[dict], total_monthly: float) -> dict[str, float | None]:
+    """Sum of contributions = weighted mean score across the OU, under each weighting for comparison."""
+
+    def by(fn) -> float | None:
+        w = [(fn(a["monthly_spend"]), a["score"] or 0) for a in accounts]
         tw = sum(x for x, _ in w)
         return sum(x * sc for x, sc in w) / tw if tw and total_monthly else None
 
-    scores_by_weighting = {k: ou_score_by(fn) for k, (_, fn) in WEIGHTINGS.items()}
-    ou_score = scores_by_weighting[weighting]
+    return {k: by(fn) for k, (_, fn) in WEIGHTINGS.items()}
 
-    # Breadth: how many accounts sit in each rating, and how much spend they carry.
-    by_rating = {r: {"rating": r, "accounts": 0, "monthly_spend": 0.0} for r in RATING_NAMES}
-    for a in accounts_out:
+
+def _by_rating(accounts: list[dict], total_monthly: float) -> dict[str, dict]:
+    """Breadth: how many accounts sit in each rating, and how much spend they carry."""
+    out = {r: {"rating": r, "accounts": 0, "monthly_spend": 0.0} for r in RATING_NAMES}
+    for a in accounts:
         if a["score"] is not None:
-            by_rating[a["rating"]]["accounts"] += 1
-            by_rating[a["rating"]]["monthly_spend"] += a["monthly_spend"]
-    rated = sum(b["accounts"] for b in by_rating.values())
-    for b in by_rating.values():
+            out[a["rating"]]["accounts"] += 1
+            out[a["rating"]]["monthly_spend"] += a["monthly_spend"]
+    rated = sum(b["accounts"] for b in out.values())
+    for b in out.values():
         b["monthly_spend"] = round(b["monthly_spend"], 2)
         b["pct_accounts"] = round(100 * b["accounts"] / rated, 1) if rated else 0.0
         b["pct_spend"] = round(100 * b["monthly_spend"] / total_monthly, 1) if total_monthly else 0.0
-    tiers = []
+    return out
+
+
+def _tiers(accounts: list[dict], services: dict[str, dict], total_monthly: float, catalog: Catalog) -> list[dict]:
+    out = []
     for t in range(1, 6):
-        spend = sum(a["tier_spend"][t] for a in accounts_out)
-        tiers.append(
+        spend = sum(a["tier_spend"][t] for a in accounts)
+        out.append(
             {
                 "tier": t,
                 "label": catalog.tier_label(t),
                 "score": catalog.tier_score(t),
                 "monthly_spend": round(spend, 2),
                 "pct": round(100 * spend / total_monthly, 1) if total_monthly else 0.0,
-                "services": sum(1 for s in services_agg.values() if s["tier"] == t),
-                "accounts": sum(1 for a in accounts_out if a["tier_spend"][t] >= MATERIAL_TIER_SPEND),
+                "services": sum(1 for s in services.values() if s["tier"] == t),
+                "accounts": sum(1 for a in accounts if a["tier_spend"][t] >= MATERIAL_TIER_SPEND),
             }
         )
-    services_out = sorted(services_agg.values(), key=lambda s: -s["monthly_spend"])
-    first_m, last_m = (months_in_data[0], months_in_data[-1]) if len(months_in_data) >= 2 else (None, None)
-    for s in services_out:
+    return out
+
+
+def _services(services: dict[str, dict], sp: _Spend, months: list[str], n_months: int, total_monthly: float):
+    """Services by spend, with first-to-last-month change and, for Marketplace, the products behind them."""
+    out = sorted(services.values(), key=lambda s: -s["monthly_spend"])
+    first_m, last_m = (months[0], months[-1]) if len(months) >= 2 else (None, None)
+    for s in out:
         s["monthly_spend"] = round(s["monthly_spend"], 2)
         s["pct"] = round(100 * s["monthly_spend"] / total_monthly, 2) if total_monthly else 0.0
         if first_m:
-            by_month = svc_trend.get(s["service"], {})
+            by_month = sp.svc_trend.get(s["service"], {})
             first, last = by_month.get(first_m, 0.0), by_month.get(last_m, 0.0)
             s["first"], s["last"], s["change"] = round(first, 2), round(last, 2), round(last - first, 2)
             s["change_pct"] = round(100 * (last - first) / first, 1) if first > 0 else None
-        if s["service"] in products:
+        if s["service"] in sp.products:
             rows = []
-            for name, by_month in products[s["service"]].items():
+            for name, by_month in sp.products[s["service"]].items():
                 row = {
                     "name": name,
                     "monthly_spend": round(sum(by_month.values()) / n_months, 2),
-                    "accounts": len(product_accounts[(s["service"], name)]),
+                    "accounts": len(sp.product_accounts[(s["service"], name)]),
                 }
                 if first_m:
                     row["change"] = round(by_month.get(last_m, 0.0) - by_month.get(first_m, 0.0), 2)
                 rows.append(row)
             s["products"] = sorted(rows, key=lambda x: -x["monthly_spend"])[:10]
+    return out
 
-    high_pct = sum(t["pct"] for t in tiers if t["tier"] >= 4)
+
+def _top_rises(services: list[dict]) -> list[dict]:
+    """The services whose monthly spend rose most, so growth names its causes."""
+    return [
+        {
+            "display": s["display"],
+            "category": s["category"],
+            "tier": s["tier"],
+            "change": s["change"],
+            "product": max(s["products"], key=lambda p: p.get("change", 0))["name"] if s.get("products") else None,
+        }
+        for s in sorted(services, key=lambda s: -s.get("change", 0))[:3]
+        if s.get("change", 0) >= 1
+    ]
+
+
+def build_report(
+    scan: dict,
+    account_filter: AccountFilter | None = None,
+    questionnaire: Questionnaire | None = None,
+    catalog: Catalog | None = None,
+    weighting: str = DEFAULT_WEIGHTING,
+) -> dict:
+    if weighting not in WEIGHTINGS:
+        raise ValueError(f"weighting must be one of {', '.join(WEIGHTINGS)}")
+    catalog = catalog or load_catalog()
+    account_filter = account_filter or AccountFilter()
+    questionnaire = questionnaire or Questionnaire()
+
+    months_in_data = sorted({r["month"] for r in scan.get("costs", [])})
+    n_months = max(len(months_in_data), 1)
+    all_accounts = {a["id"]: a for a in scan.get("accounts", [])}
+    in_scope = {aid: a for aid, a in all_accounts.items() if account_filter.matches(a["name"])}
+    # Keep scan-wide issues, and account issues only for accounts the filter kept.
+    issues: list[dict] = [
+        i
+        for i in scan.get("issues", [])
+        if not i.get("account_id") or i["account_id"] in in_scope or i["account_id"] not in all_accounts
+    ]
+
+    sp = _aggregate(scan.get("costs", []), in_scope, catalog)
+    issues += _spend_issues(sp, n_months)
+    total_monthly = sum(sum(s.values()) for s in sp.per_account.values()) / n_months
+    inventory = scan.get("inventory") or {}
+    accounts_out, services_agg = _accounts(
+        in_scope, sp, n_months, catalog, questionnaire, WEIGHTINGS[weighting][1], inventory
+    )
+    scores = _scores_by_weighting(accounts_out, total_monthly)
+    ou_score = scores[weighting]
+    by_rating = _by_rating(accounts_out, total_monthly)
+    tiers = _tiers(accounts_out, services_agg, total_monthly, catalog)
+    services_out = _services(services_agg, sp, months_in_data, n_months, total_monthly)
+
     estimate = build_estimate(questionnaire, accounts_out, total_monthly)
     summary = {
         "score": round(ou_score, 1) if ou_score is not None else None,
@@ -362,13 +417,13 @@ def build_report(
         "annual_spend": round(total_monthly * 12, 2),
         "accounts_in_scope": len(in_scope),
         "accounts_with_spend": sum(1 for a in accounts_out if a["monthly_spend"] > 0),
-        "accounts_excluded": excluded_count,
+        "accounts_excluded": len(all_accounts) - len(in_scope),
         "accounts_total": len(all_accounts),
-        "high_risk_pct": round(high_pct, 1),
+        "high_risk_pct": round(sum(t["pct"] for t in tiers if t["tier"] >= 4), 1),
         "high_risk_monthly": round(sum(t["monthly_spend"] for t in tiers if t["tier"] >= 4), 2),
         "services": len(services_out),
-        "unclassified_services": len(unclassified),
-        "excluded_billing_monthly": round(excluded_spend / n_months, 2),
+        "unclassified_services": len(sp.unclassified),
+        "excluded_billing_monthly": round(sp.excluded / n_months, 2),
         "top_lockin_services": [s for s in services_out if s["tier"] >= 4][:5],
         # "Bespoke" = AWS-only services (High/Critical tiers) with material spend in scope.
         "bespoke_services": sum(
@@ -376,31 +431,20 @@ def build_report(
         ),
         "weighting": weighting,
         "weighting_label": WEIGHTINGS[weighting][0],
-        "score_by_weighting": {k: (round(v, 1) if v is not None else None) for k, v in scores_by_weighting.items()},
-        "score_by_spend": _round(scores_by_weighting["spend"]),
-        "rating_by_spend": rating(scores_by_weighting["spend"]),
-        "score_by_accounts": _round(scores_by_weighting["equal"]),
-        "rating_by_accounts": rating(scores_by_weighting["equal"]),
-        "accounts_rated": rated,
+        "score_by_weighting": {k: _round(v) for k, v in scores.items()},
+        "score_by_spend": _round(scores["spend"]),
+        "rating_by_spend": rating(scores["spend"]),
+        "score_by_accounts": _round(scores["equal"]),
+        "rating_by_accounts": rating(scores["equal"]),
+        "accounts_rated": sum(b["accounts"] for b in by_rating.values()),
         "accounts_by_rating": list(by_rating.values()),
         "portable_accounts": by_rating["Low"]["accounts"] + by_rating["Moderate"]["accounts"],
         "high_risk_accounts": by_rating["High"]["accounts"] + by_rating["Critical"]["accounts"],
         "high_risk_accounts_spend_pct": round(by_rating["High"]["pct_spend"] + by_rating["Critical"]["pct_spend"], 1),
     }
-    growth = _growth(months_in_data, trend, cat_trend, cat_lockin, services_out)
+    growth = _growth(months_in_data, sp.trend, sp.cat_trend, sp.cat_lockin, services_out)
     summary["growth"] = {k: growth[k] for k in ("months", "first_month", "last_month", "total", "lockin")}
-    # The services whose monthly spend rose most, so growth names its causes.
-    summary["growth"]["top_rises"] = [
-        {
-            "display": s["display"],
-            "category": s["category"],
-            "tier": s["tier"],
-            "change": s["change"],
-            "product": max(s["products"], key=lambda p: p.get("change", 0))["name"] if s.get("products") else None,
-        }
-        for s in sorted(services_out, key=lambda s: -s.get("change", 0))[:3]
-        if s.get("change", 0) >= 1
-    ]
+    summary["growth"]["top_rises"] = _top_rises(services_out)
     estimate["empty"] = total_monthly <= 0
     if estimate["empty"]:  # nothing to move: no "$0–$0" ranges for a caller to show by mistake
         estimate["ranges"] = dict.fromkeys(estimate["ranges"])
@@ -423,7 +467,7 @@ def build_report(
             "identity": scan.get("identity"),
             "org": scan.get("org"),
             "ou": scan.get("ou"),
-            "period": period,
+            "period": scan.get("period") or {"months": 1},
             "months_in_data": months_in_data,
             "filter": account_filter.to_dict(),
             "catalog_version": catalog.version,
@@ -436,7 +480,9 @@ def build_report(
         "tiers": tiers,
         "accounts": accounts_out,
         "services": services_out,
-        "trend": [{"month": m, "tier_spend": {t: round(trend[m][t], 2) for t in range(1, 6)}} for m in months_in_data],
+        "trend": [
+            {"month": m, "tier_spend": {t: round(sp.trend[m][t], 2) for t in range(1, 6)}} for m in months_in_data
+        ],
         "growth": growth,
         "estimate": estimate,
         "issues": issues,
@@ -487,6 +533,21 @@ def _month(m: str) -> str:
         return str(m)
 
 
+_NO_SPEND_SUMMARY = {
+    "headline": "No in-scope spend was found, so this report cannot rate exit risk.",
+    "context": "",
+    "bottom_line": "No in-scope spend was found, so this report cannot rate exit risk.",
+    "findings": [],
+    "findings_rich": [],
+    "exit": "",
+    "exit_facts": [],
+    "actions": ["Widen the account filter or scan an OU that has spend, then re-run the report."],
+    "actions_rich": [{"lead": "Widen the scope.", "text": "Change the account filter or scan an OU that has spend."}],
+    "confidence": "Low",
+    "confidence_reasons": ["No spend in scope."],
+}
+
+
 def _executive_summary(
     summary: dict, accounts: list[dict], est: dict, q: Questionnaire, scan: dict, deep_scan: bool
 ) -> dict:
@@ -496,30 +557,34 @@ def _executive_summary(
     is set in bold, and plain strings for JSON and CLI readers.
     """
     if summary["score"] is None:
-        return {
-            "headline": "No in-scope spend was found, so this report cannot rate exit risk.",
-            "context": "",
-            "bottom_line": "No in-scope spend was found, so this report cannot rate exit risk.",
-            "findings": [],
-            "findings_rich": [],
-            "exit": "",
-            "exit_facts": [],
-            "actions": ["Widen the account filter or scan an OU that has spend, then re-run the report."],
-            "actions_rich": [
-                {"lead": "Widen the scope.", "text": "Change the account filter or scan an OU that has spend."}
-            ],
-            "confidence": "Low",
-            "confidence_reasons": ["No spend in scope."],
-        }
-    s = summary
-    by_spend, by_acc = s["score_by_spend"], s["score_by_accounts"]
-    n, port, hi = s["accounts_rated"], s["portable_accounts"], s["high_risk_accounts"]
-    lockin = [x["display"] for x in s["top_lockin_services"][:3]]
-    d = est["duration"]
-    empty = est.get("empty")
-    defaults = not q.confirmed
+        return copy.deepcopy(_NO_SPEND_SUMMARY)
+    defaults, empty = not q.confirmed, bool(est.get("empty"))
+    headline = _headline(summary, est, defaults)
+    context = _context(summary)
+    findings = _findings(summary, accounts)
+    exit_facts, exit_line = _exit(est, q, defaults)
+    actions = _actions(summary, accounts, defaults, deep_scan)
+    confidence, reasons = _confidence(summary, scan, defaults, deep_scan)
+    plain = lambda x: f"{x['lead']} {x['text']}"  # noqa: E731
+    return {
+        "headline": headline,
+        "context": context,
+        "bottom_line": f"{headline} {context}",
+        "findings": [plain(f) for f in findings],
+        "findings_rich": findings,
+        "exit": exit_line,
+        "exit_facts": exit_facts,
+        "provisional": defaults and not empty,
+        "actions": [plain(a) for a in actions[:5]],
+        "actions_rich": actions[:5],
+        "confidence": confidence,
+        "confidence_reasons": reasons,
+    }
 
-    # Headline: rating, what kind of exit it is, and what it would take - one sentence.
+
+def _headline(s: dict, est: dict, defaults: bool) -> str:
+    """Rating, what kind of exit it is, and what it would take: one sentence."""
+    by_spend, empty = s["score_by_spend"], est.get("empty")
     if by_spend >= 55:
         kind = "leaving AWS would be a re-engineering programme, not a migration"
     elif by_spend >= 40:
@@ -538,7 +603,14 @@ def _executive_summary(
         headline += (
             " Cost and time are not yet estimated for your organisation: answer the delivery questions in section 5."
         )
+    return headline
 
+
+def _context(s: dict) -> str:
+    """Both scores, and whether risk is concentrated in a few accounts or spread across many."""
+    by_spend, by_acc = s["score_by_spend"], s["score_by_accounts"]
+    n, port, hi = s["accounts_rated"], s["portable_accounts"], s["high_risk_accounts"]
+    lockin = [x["display"] for x in s["top_lockin_services"][:3]]
     gap = by_spend - by_acc
     scores = f"Scores {int(by_spend + 0.5)}/100 by spend and {int(by_acc + 0.5)}/100 by number of accounts."
     if gap >= 5:
@@ -558,8 +630,11 @@ def _executive_summary(
             f"Risk is spread in line with spend; {port} of {_plural(n, 'account')} ({100 * port / n:.0f}%) "
             f"{'is' if port == 1 else 'are'} broadly portable."
         )
-    context = f"{scores} {shape}"
+    return f"{scores} {shape}"
 
+
+def _findings(s: dict, accounts: list[dict]) -> list[dict]:
+    n, port, hi = s["accounts_rated"], s["portable_accounts"], s["high_risk_accounts"]
     # Name the bespoke services with what they cost and how widely they are used, not just a count.
     bespoke = [x for x in s["top_lockin_services"] if x["monthly_spend"] >= MATERIAL_TIER_SPEND]
     named = [
@@ -597,64 +672,67 @@ def _executive_summary(
                 "text": f"{_join([a['name'] for a in top])} carry {share:.0f}% of the spend at risk (spend x risk).",
             }
         )
-    g = s.get("growth") or {}
-    if g.get("total") and g["total"]["pct"] is not None and g["lockin"]["pct"] is not None:
-        t, lk = g["total"]["pct"], g["lockin"]["pct"]
-        rises = [
-            (f"{x['product']} via {x['display'].split(' (')[0]}" if x.get("product") else x["display"], x["change"])
-            for x in g.get("top_rises", [])
-        ]
-        pace = "faster than" if lk > t + 1 else "more slowly than" if lk < t - 1 else "in line with"
-        verb = lambda v: f"grew {v:.0f}%" if v >= 0 else f"fell {-v:.0f}%"  # noqa: E731
-        findings.append(
+    growth = _growth_finding(s.get("growth") or {})
+    return findings + ([growth] if growth else [])
+
+
+def _growth_finding(g: dict) -> dict | None:
+    if not (g.get("total") and g["total"]["pct"] is not None and g["lockin"]["pct"] is not None):
+        return None
+    t, lk = g["total"]["pct"], g["lockin"]["pct"]
+    rises = [
+        (f"{x['product']} via {x['display'].split(' (')[0]}" if x.get("product") else x["display"], x["change"])
+        for x in g.get("top_rises", [])
+    ]
+    pace = "faster than" if lk > t + 1 else "more slowly than" if lk < t - 1 else "in line with"
+    verb = lambda v: f"grew {v:.0f}%" if v >= 0 else f"fell {-v:.0f}%"  # noqa: E731
+    return {
+        "lead": f"Spend {verb(t)}",
+        "text": f"from {_month(g['first_month'])} to {_month(g['last_month'])}; High/Critical spend "
+        f"{verb(lk)}, so lock-in is growing {pace} the estate."
+        + (f" Biggest monthly rises: {_join([f'{x[0]} +{_money(x[1])}' for x in rises])}." if rises else ""),
+    }
+
+
+def _exit(est: dict, q: Questionnaire, defaults: bool) -> tuple[list[dict], str]:
+    """The exit as tiles (window, cost, effort, target) and as one sentence; nothing when there is no spend."""
+    if est.get("empty"):
+        return [], ""
+    rg, target = est["ranges"], TARGET_LABELS[q.target]
+    pct = rg.get("pct_of_annual_spend")
+    facts = [
+        {"label": "Exit window", "value": rg["duration"], "note": f"bound by {est['duration']['constrained_by']}"},
+        {
+            "label": "One-off cost",
+            "value": rg["cost"],
+            "note": (f"{pct} of a year's AWS spend; " if pct else "") + "engineering and parallel running",
+        },
+        {"label": "Engineering", "value": rg["effort"], "note": "plus parallel running"},
+        {"label": "Target", "value": target, "note": "assumed exit destination"},
+    ]
+    for f in facts[:3]:
+        f["provisional"] = defaults
+    line = (
+        f"Exit window: roughly {rg['duration']} to move everything to {target}. One-off cost: {rg['cost']}"
+        + (f", {pct} of a year's AWS spend" if pct else "")
+        + f"; {rg['effort']} of engineering plus parallel running."
+    )
+    return facts, line
+
+
+def _actions(s: dict, accounts: list[dict], defaults: bool, deep_scan: bool) -> list[dict]:
+    top, _ = _pace_setters(accounts)
+    lockin = [x["display"] for x in s["top_lockin_services"][:3]]
+    actions = []
+    if defaults:
+        actions.append(
             {
-                "lead": f"Spend {verb(t)}",
-                "text": f"from {_month(g['first_month'])} to {_month(g['last_month'])}; High/Critical spend "
-                f"{verb(lk)}, so lock-in is growing {pace} the estate."
-                + (f" Biggest monthly rises: {_join([f'{x[0]} +{_money(x[1])}' for x in rises])}." if rises else ""),
+                "lead": "Answer the delivery questions in section 5",
+                "text": "(CI/CD, Terraform, team size, day rate). Until then the cost and time figures use default "
+                "answers, not your organisation's.",
             }
         )
-
-    target = TARGET_LABELS[q.target]
-    exit_facts = (
-        []
-        if empty
-        else [
-            {
-                "label": "Exit window",
-                "value": rg["duration"],
-                "note": f"bound by {d['constrained_by']}",
-            },
-            {
-                "label": "One-off cost",
-                "value": rg["cost"],
-                "note": (
-                    f"{rg['pct_of_annual_spend']} of a year's AWS spend; " if rg.get("pct_of_annual_spend") else ""
-                )
-                + "engineering and parallel running",
-            },
-            {
-                "label": "Engineering",
-                "value": rg["effort"],
-                "note": "plus parallel running",
-            },
-            {"label": "Target", "value": target, "note": "assumed exit destination"},
-        ]
-    )
-    for f in exit_facts[:3]:
-        f["provisional"] = defaults
-    exit_line = (
-        ""
-        if empty
-        else (
-            f"Exit window: roughly {rg['duration']} to move everything to {target}. One-off cost: {rg['cost']}"
-            + (f", {rg['pct_of_annual_spend']} of a year's AWS spend" if rg.get("pct_of_annual_spend") else "")
-            + f"; {rg['effort']} of engineering plus parallel running."
-        )
-    )
-
-    actions = []
-    if top and (hi or gap >= 5):
+    if top and (s["high_risk_accounts"] or s["score_by_spend"] - s["score_by_accounts"] >= 5):
         actions.append(
             {
                 "lead": "Plan the hardest accounts first.",
@@ -670,15 +748,6 @@ def _executive_summary(
                 "unless the business case says otherwise.",
             }
         )
-    if defaults:
-        actions.insert(
-            0,
-            {
-                "lead": "Answer the delivery questions in section 5",
-                "text": "(CI/CD, Terraform, team size, day rate). Until then the cost and time figures use default "
-                "answers, not your organisation's.",
-            },
-        )
     if not deep_scan:
         actions.append(
             {
@@ -689,7 +758,10 @@ def _executive_summary(
     actions.append(
         {"lead": "Re-run this review quarterly", "text": "and track both scores; a rising score means new lock-in."}
     )
+    return actions
 
+
+def _confidence(s: dict, scan: dict, defaults: bool, deep_scan: bool) -> tuple[str, list[str]]:
     reasons, level = [], 3
     if scan.get("mode") == "demo":
         reasons.append("Synthetic demo data.")
@@ -707,21 +779,7 @@ def _executive_summary(
         reasons.append(f"{_plural(s['unclassified_services'], 'service')} not in the catalog, scored as Moderate.")
     if not reasons:
         reasons.append("Full scan, answered questionnaire, every service classified.")
-    plain = lambda x: f"{x['lead']} {x['text']}"  # noqa: E731
-    return {
-        "headline": headline,
-        "context": context,
-        "bottom_line": f"{headline} {context}",
-        "findings": [plain(f) for f in findings],
-        "findings_rich": findings,
-        "exit": exit_line,
-        "exit_facts": exit_facts,
-        "provisional": defaults and not empty,
-        "actions": [plain(a) for a in actions[:5]],
-        "actions_rich": actions[:5],
-        "confidence": {1: "Low", 2: "Medium", 3: "High"}[level],
-        "confidence_reasons": reasons,
-    }
+    return {1: "Low", 2: "Medium", 3: "High"}[level], reasons
 
 
 def _pace_setters(accounts: list[dict]) -> tuple[list[dict], float]:
