@@ -21,11 +21,11 @@ rules require a documented, credible and tested exit strategy:
 
 | Regulation | What it expects |
 |---|---|
-| EU **DORA** (Art. 28) | Exit strategies for ICT third-party services supporting critical or important functions, tested and documented |
-| **EBA** Guidelines on outsourcing | Documented exit plans, with an assessment of how complex and costly exit would be |
-| UK **PRA SS2/21** | Stressed exit plans for material outsourcing, including alternative providers and timelines |
-| **APRA CPS 230** | Exit plans for material service providers, so critical operations continue if the provider fails or the arrangement ends |
-| **SARB Prudential Authority Directive 3/2018** and Guidance Note G5/2018 (cloud computing and offshoring of data) | Exit and contingency arrangements for material cloud usage |
+| EU [**DORA**](https://eur-lex.europa.eu/eli/reg/2022/2554/oj) (Art. 28) | Exit strategies for ICT third-party services supporting critical or important functions, tested and documented |
+| [**EBA** Guidelines on outsourcing](https://www.eba.europa.eu/sites/default/files/document_library/875331/EBA%20GL%202019%2002%20-%20CT%20GLs%20on%20outsourcing%20arrangements_0.pdf) (EBA/GL/2019/02) | Documented exit plans, with an assessment of how complex and costly exit would be |
+| UK [**PRA SS2/21**](https://www.bankofengland.co.uk/prudential-regulation/publication/2021/march/outsourcing-and-third-party-risk-management-ss) | Stressed exit plans for material outsourcing, including alternative providers and timelines |
+| [**APRA CPS 230**](https://www.apra.gov.au/operational-risk-management) | Exit plans for material service providers, so critical operations continue if the provider fails or the arrangement ends |
+| **SARB Prudential Authority** [Directive 3/2018](https://www.resbank.co.za/en/home/publications/publication-detail-pages/prudential-authority/pa-deposit-takers/banks-directives/2018/8749) and [Guidance Note G5/2018](https://www.resbank.co.za/en/home/publications/publication-detail-pages/prudential-authority/pa-deposit-takers/banks-guidance-notes/2018/8747) (cloud computing and offshoring of data) | Exit and contingency arrangements for material cloud usage |
 
 This framework proposes **Regulatory Risk as the seventh pillar**: the measured degree to which your
 architecture keeps you free to exit, change providers, or bring workloads back in house. Like the
