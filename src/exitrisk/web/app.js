@@ -30,10 +30,6 @@
     if (abs >= 1e3) return `${sym}${(v / 1e3).toFixed(1)}k`;
     return `${sym}${v.toFixed(0)}`;
   }
-  // Half-up to 0.1 year, the same as the Python report text (toFixed would give 9.35 -> 9.3).
-  const years = (m) => (m == null ? "–" : m < 24 ? `${Math.round(m)} months` : `${(Math.round(m / 1.2) / 10).toFixed(1)} years`);
-  // "6.3–10.9 years": one unit for both ends when they share it.
-  const yearsRange = (lo, hi) => { const a = years(lo), b = years(hi); return a.split(" ")[1] === b.split(" ")[1] ? `${a.split(" ")[0]}–${b}` : `${a}–${b}`; };
   const num = (v, d = 0) => (v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
   const pct = (v, d = 0) => (v == null ? "–" : `${Number(v).toFixed(d)}%`);
   const plural = (n, word, many) => `${num(n)} ${Math.round(n) === 1 ? word : many || word + "s"}`;
@@ -209,7 +205,7 @@
   }
 
   function renderSummary(r) {
-    const s = r.summary, e = r.estimate, cur = e.cost.currency;
+    const s = r.summary, e = r.estimate;
     $("#heroScore").textContent = s.score_by_spend == null ? "–" : Math.round(s.score_by_spend);
     ratingBadge($("#heroRating"), s.rating_by_spend, s.score_by_spend == null ? "No spend in scope" : s.rating_by_spend);
     $("#heroScoreAcc").textContent = s.score_by_accounts == null ? "–" : Math.round(s.score_by_accounts);
@@ -232,10 +228,10 @@
       tile("Spend growth", s.growth?.total?.pct == null ? "–" : `${s.growth.total.pct > 0 ? "+" : ""}${num(s.growth.total.pct, 1)}%`,
         s.growth?.total ? `${month(s.growth.first_month)} → ${month(s.growth.last_month)} · High/Critical ${s.growth.lockin.pct > 0 ? "+" : ""}${num(s.growth.lockin.pct, 1)}%` : "needs 2+ months of history"),
       ...(e.empty ? [tile("Indicative exit cost", "–", "No spend in scope"), tile("Exit window (time to leave AWS)", "–", "No spend in scope"), tile("Engineering effort", "–", "No spend in scope")] : [
-        tile("Exit cost, % of annual AWS spend", e.cost.pct_of_annual_spend == null ? money(e.cost.total, cur) : `${num(e.cost.pct_of_annual_spend)}%`,
-          `${money(e.cost.total, cur)} one-off · range ${money(e.cost.low, cur)}–${money(e.cost.high, cur)}`, e.provisional),
-        tile("Exit window (time to leave AWS)", years(e.duration.calendar_months), `${num(e.duration.calendar_months)} months · range ${yearsRange(e.duration.low_months, e.duration.high_months)}`, e.provisional),
-        tile("Engineering effort, person-months", num(e.effort.person_months), `team capacity ${num(e.team.capacity_fte, 1)} FTE`, e.provisional),
+        // Ranges only: a single figure would claim precision an early-stage estimate does not have.
+        tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend` : "engineering and parallel running", e.provisional),
+        tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, e.provisional),
+        tile("Engineering effort", e.ranges.effort, `team capacity ${num(e.team.capacity_fte, 1)} FTE`, e.provisional),
       ]),
     ].join("");
     const x = s.executive;
@@ -530,7 +526,7 @@
   }
 
   function renderEstimate(r) {
-    const e = r.estimate, cur = e.cost.currency;
+    const e = r.estimate;
     $("#estEmpty").hidden = !e.empty;
     $("#estBody").hidden = !!e.empty;
     const prov = e.provisional;
@@ -538,9 +534,9 @@
       ? `<span class="prov-tag">Provisional</span> Using default answers. Change any answer, or confirm these, to estimate for your organisation.`
       : `<span class="ok-tag">✓ Your answers</span> The estimate uses the answers below.`;
     $("#estTiles").innerHTML = [
-      tile("Total exit cost (indicative)", money(e.cost.total, cur), `${e.cost.pct_of_annual_spend == null ? "" : `${num(e.cost.pct_of_annual_spend)}% of annual AWS spend · `}${money(e.cost.labour, cur)} engineering + ${money(e.cost.parallel_run, cur)} parallel run`, prov),
-      tile("Exit window (time to leave AWS)", years(e.duration.calendar_months), `${num(e.duration.calendar_months)} months · bound by ${e.duration.constrained_by}`, prov),
-      tile("Engineering effort, person-months", num(e.effort.person_months), `${num(e.effort.total_weeks)} engineer-weeks · ${plural(e.effort.material_accounts, "material account")}`, prov),
+      tile("Total exit cost (indicative)", e.ranges.cost, `${e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend · ` : ""}about ${Math.round(100 * e.cost.labour / Math.max(e.cost.total, 1))}% engineering, the rest parallel running`, prov),
+      tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, prov),
+      tile("Engineering effort", e.ranges.effort, plural(e.effort.material_accounts, "material account"), prov),
     ].join("");
 
     const WPM = 4.33; // weeks per month
@@ -550,9 +546,9 @@
     const stepM = [1, 3, 6, 12, 24].find((st) => totalMonths / st <= 6) || 36; // at most ~6 ticks, so labels never collide
     const ticks = [];
     for (let mo = 0; mo <= totalMonths + 0.01; mo += stepM) ticks.push(mo);
-    const dur = (wk) => (wk < 9 ? plural(Math.round(wk), "week") : plural(Math.round(wk / WPM), "month"));
+    const dur = (wk) => `~${wk < 9 ? plural(Math.round(wk), "week") : plural(Math.round(wk / WPM), "month")}`;
     const tickLabel = (mo) => (mo === 0 ? "Start" : stepM >= 12 ? `Year ${mo / 12}` : `Month ${mo}`);
-    $("#gantt").innerHTML = e.waves.map((w) => `<div class="g-row"><div>${esc(w.name)}<div class="hint">${dur(w.weeks)}${w.effort_weeks ? ` · ${num(w.effort_weeks / WPM)} person-months` : ""}</div></div>
+    $("#gantt").innerHTML = e.waves.map((w) => `<div class="g-row"><div>${esc(w.name)}<div class="hint">${dur(w.weeks)}</div></div>
       <div class="g-track" title="months ${num(w.start / WPM)}–${num((w.start + w.weeks) / WPM)}"><div class="g-bar" style="left:${(100 * w.start / total).toFixed(2)}%;width:${Math.max(0.8, 100 * w.weeks / total).toFixed(2)}%;background:${waveColor(w)}"></div></div></div>`).join("") +
       `<div class="g-axis"><div></div><div class="g-ticks">${ticks.map((t, i) => `<span class="${i === 0 ? "first" : ""}" style="left:${(100 * t * WPM / total).toFixed(2)}%">${tickLabel(t)}</span>`).join("")}</div></div>`;
 

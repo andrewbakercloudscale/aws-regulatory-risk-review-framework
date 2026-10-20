@@ -483,18 +483,6 @@ def _month(m: str) -> str:
         return str(m)
 
 
-def _span(months: float) -> str:
-    # Half-up rounding, matching the console (Python's format rounds 6.25 to 6.2).
-    return (
-        f"{math.floor(months + 0.5):.0f} months" if months < 24 else f"{math.floor(months / 1.2 + 0.5) / 10:.1f} years"
-    )
-
-
-def _span_range(lo: float, hi: float) -> str:
-    a, b = _span(lo), _span(hi)
-    return f"{a.split()[0]}–{b}" if a.split()[1] == b.split()[1] else f"{a}–{b}"
-
-
 def _executive_summary(
     summary: dict, accounts: list[dict], est: dict, q: Questionnaire, scan: dict, deep_scan: bool
 ) -> dict:
@@ -523,7 +511,7 @@ def _executive_summary(
     by_spend, by_acc = s["score_by_spend"], s["score_by_accounts"]
     n, port, hi = s["accounts_rated"], s["portable_accounts"], s["high_risk_accounts"]
     lockin = [x["display"] for x in s["top_lockin_services"][:3]]
-    d, c = est["duration"], est["cost"]
+    d = est["duration"]
     empty = est.get("empty")
     defaults = not q.confirmed
 
@@ -534,12 +522,11 @@ def _executive_summary(
         kind = "an exit is feasible but needs significant re-engineering"
     else:
         kind = "an exit is feasible, and most workloads would move with modest change"
-    pct_annual = f" ({c['pct_of_annual_spend']:.0f}% of a year's AWS spend)" if c.get("pct_of_annual_spend") else ""
+    rg = est.get("ranges", {})
+    pct_annual = f" ({rg['pct_of_annual_spend']} of a year's AWS spend)" if rg.get("pct_of_annual_spend") else ""
     # Cost and time only reach the headline once the delivery questions are answered: with default
-    # answers they describe a made-up organisation, not this one.
-    take = (
-        "" if empty or defaults else f": about {_span(d['calendar_months'])} and {_money(c['total'], cur)}{pct_annual}"
-    )
+    # answers they describe a made-up organisation, not this one. Always as ranges, never one figure.
+    take = "" if empty or defaults else f": roughly {rg['duration']} and {rg['cost']}{pct_annual}"
     headline = f"Exit risk is {s['rating_by_spend']}. {kind[0].upper() + kind[1:]}{take}."
     if defaults and not empty:
         headline += (
@@ -547,7 +534,7 @@ def _executive_summary(
         )
 
     gap = by_spend - by_acc
-    scores = f"Scores {by_spend:.0f}/100 by spend and {by_acc:.0f}/100 by number of accounts."
+    scores = f"Scores {int(by_spend + 0.5)}/100 by spend and {int(by_acc + 0.5)}/100 by number of accounts."
     if gap >= 5:
         shape = (
             f"Risk is concentrated: {_plural(hi, 'account')} ({s['high_risk_accounts_spend_pct']:.0f}% of spend)"
@@ -629,20 +616,20 @@ def _executive_summary(
         else [
             {
                 "label": "Exit window",
-                "value": _span(d["calendar_months"]),
-                "note": f"range {_span_range(d['low_months'], d['high_months'])}",
+                "value": rg["duration"],
+                "note": f"bound by {d['constrained_by']}",
             },
             {
                 "label": "One-off cost",
-                "value": _money(c["total"], cur),
+                "value": rg["cost"],
                 "note": (
-                    f"{c['pct_of_annual_spend']:.0f}% of a year's AWS spend; " if c.get("pct_of_annual_spend") else ""
+                    f"{rg['pct_of_annual_spend']} of a year's AWS spend; " if rg.get("pct_of_annual_spend") else ""
                 )
-                + f"range {_money(c['low'], cur)}–{_money(c['high'], cur)}",
+                + "engineering and parallel running",
             },
             {
                 "label": "Engineering",
-                "value": _plural(est["effort"]["person_months"], "person-month"),
+                "value": rg["effort"],
                 "note": "plus parallel running",
             },
             {"label": "Target", "value": target, "note": "assumed exit destination"},
@@ -654,12 +641,9 @@ def _executive_summary(
         ""
         if empty
         else (
-            f"Exit window: about {d['calendar_months']:.0f} months (~{d['calendar_months'] / 12:.1f} years; range "
-            f"{d['low_months']:.0f}–{d['high_months']:.0f} months) to move everything to {target}. One-off cost: "
-            f"{_money(c['total'], cur)}"
-            + (f", {c['pct_of_annual_spend']:.0f}% of a year's AWS spend" if c.get("pct_of_annual_spend") else "")
-            + f" (range {_money(c['low'], cur)}–{_money(c['high'], cur)}), "
-            f"{est['effort']['person_months']:,.0f} person-months of engineering plus parallel running."
+            f"Exit window: roughly {rg['duration']} to move everything to {target}. One-off cost: {rg['cost']}"
+            + (f", {rg['pct_of_annual_spend']} of a year's AWS spend" if rg.get("pct_of_annual_spend") else "")
+            + f"; {rg['effort']} of engineering plus parallel running."
         )
     )
 
@@ -737,7 +721,6 @@ def _executive_summary(
 def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire) -> list[str]:
     if summary["score"] is None:
         return ["No in-scope spend was found, so no exit-risk score could be calculated."]
-    cur = q.currency
     lines = [
         f"The in-scope estate scores {int(summary['score_by_spend'] + 0.5)}/100 ({summary['rating_by_spend']}) "
         f"for exit difficulty weighted by spend, and {int(summary['score_by_accounts'] + 0.5)}/100 "
@@ -765,10 +748,7 @@ def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire)
             "spend at risk; they set the pace of any exit."
         )
     lines.append(
-        f"A full exit to {TARGET_LABELS[q.target]} is estimated at {est['effort']['person_months']:,.0f} "
-        f"person-months over ~{est['duration']['calendar_months']:.0f} months "
-        f"({est['duration']['low_months']:.0f}–{est['duration']['high_months']:.0f}), costing about "
-        f"{_money(est['cost']['total'], cur)} ({_money(est['cost']['low'], cur)}–{_money(est['cost']['high'], cur)}) "
-        "in engineering and parallel running."
+        f"A full exit to {TARGET_LABELS[q.target]} would take roughly {est['ranges']['duration']} and "
+        f"{est['ranges']['effort']}, costing roughly {est['ranges']['cost']} in engineering and parallel running."
     )
     return lines

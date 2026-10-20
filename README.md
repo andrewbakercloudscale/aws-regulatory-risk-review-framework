@@ -41,8 +41,8 @@ other pillars, it is a design property you can measure, track and improve:
   needed. Choosing a proprietary service can still be the right call; this makes it a known,
   priced choice rather than an accident.
 
-The aim is not to discourage AWS. It is to replace "we are locked in" (fear) with "38/100, with three accounts holding 57% of the spend at risk and about 3.3 years to exit"
-(a fact a board can govern).
+The aim is not to discourage AWS. It is to replace "we are locked in" (fear) with "38/100, with three accounts holding 57% of the spend at risk and roughly 2.5–5 years to
+exit" (a fact a board can govern).
 
 ![Dashboard overview](docs/images/dashboard-overview.png)
 

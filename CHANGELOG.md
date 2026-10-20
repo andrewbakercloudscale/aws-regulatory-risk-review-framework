@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- **Exit cost, effort and time are quoted as approximate ranges, never single figures** (e.g.
+  "$7m–$16m", "2.5–5 years", "300–700 person-months"), rounded outward, everywhere: key figures,
+  bottom line, findings, section 5 and the PDF. JSON keeps the midpoints and adds `estimate.ranges`.
+
+### Fixed
+- The bottom line could say 38/100 while the score tile said 39/100 (38.5 rounded two ways); both
+  now round half up.
+
 ### Documentation
 - README explains why regulated entities need this: Regulatory Risk as the proposed seventh pillar of
   the AWS Well-Architected Framework, and the exit-plan rules it supports (DORA, EBA, PRA, APRA, SARB).

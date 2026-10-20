@@ -50,6 +50,9 @@ PARALLEL_RUN_OVERLAP = 0.5
 SIZE_MULT_MIN, SIZE_MULT_MAX = 0.25, 8.0
 REFERENCE_MONTHLY_SPEND = 1000.0
 WEEKS_PER_MONTH = 4.33
+# Early-stage estimation cone: the report quotes ranges, never a single figure.
+COST_RANGE = (0.75, 1.5)
+DURATION_RANGE = (0.8, 1.4)
 
 # Resource counts that evidence a "typical workload" of a service, for the deep scan.
 TYPICAL_COUNTS = {
@@ -89,6 +92,54 @@ class Questionnaire(BaseModel):
     confirmed: bool = False
 
 
+def _round_step(v: float) -> float:
+    """A coarse step for ``v`` (1-2-5 style), so ranges read as approximations: 7m, 16m, 300."""
+    mag = 10 ** math.floor(math.log10(v))
+    lead = v / mag
+    return mag / 5 if lead < 2 else mag / 2 if lead < 5 else mag
+
+
+def _rough(lo: float, hi: float) -> tuple[float, float]:
+    """Widen [lo, hi] outward to round numbers: never narrower than the estimate."""
+    if hi <= 0:
+        return 0.0, 0.0
+    lo_step = _round_step(lo) if lo > 0 else _round_step(hi)
+    hi_step = _round_step(hi)
+    return max(math.floor(lo / lo_step) * lo_step, lo_step), math.ceil(hi / hi_step) * hi_step
+
+
+def _short(v: float) -> str:
+    for div, unit in ((1e9, "bn"), (1e6, "m"), (1e3, "k")):
+        if v >= div:
+            return f"{v / div:,.3g}{unit}"
+    return f"{v:,.0f}"
+
+
+def money_range(lo: float, hi: float, currency: str = "USD") -> str:
+    """'$7m–$15m'."""
+    sym = "$" if currency == "USD" else f"{currency} "
+    a, b = _rough(lo, hi)
+    return f"{sym}{_short(a)}–{sym}{_short(b)}"
+
+
+def duration_range(lo_months: float, hi_months: float) -> str:
+    """'9–15 months' (quarters) or '2.5–5 years' (half-years)."""
+    if hi_months < 24:
+        a = max(math.floor(lo_months / 3) * 3, 1)
+        b = max(math.ceil(hi_months / 3) * 3, a + 1)
+        return f"{a}–{b} months"
+    a = max(math.floor(lo_months / 6) / 2, 0.5)
+    b = math.ceil(hi_months / 6) / 2
+    return f"{a:g}–{b:g} years"
+
+
+def count_range(lo: float, hi: float) -> str:
+    """'300–700'."""
+    a, b = _rough(lo, hi)
+    fmt = lambda x: f"{x:,.0f}" if x >= 10 else f"{x:g}"  # noqa: E731
+    return f"{fmt(a)}–{fmt(b)}"
+
+
 def size_multiplier(monthly_spend: float, count: int | None = None, typical: int | None = None) -> float:
     """sqrt scaling: 4x the spend is ~2x the work. Clamped so tiny and huge lines stay sane."""
     spend_mult = math.sqrt(max(monthly_spend, 0.0) / REFERENCE_MONTHLY_SPEND)
@@ -112,6 +163,7 @@ class Estimate:
     cost: dict
     waves: list
     assumptions: list
+    ranges: dict
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -188,6 +240,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
         }
     )
 
+    annual_fx = monthly_spend * 12 * q.fx_per_usd
     return Estimate(
         inputs=q.model_dump(),
         factors={
@@ -220,16 +273,16 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "effort_bound_weeks": round(effort_bound, 1),
             "critical_path_weeks": round(critical_path, 1),
             "constrained_by": "team capacity" if effort_bound >= critical_path else "critical path",
-            "low_months": round(calendar_weeks * 0.8 / WEEKS_PER_MONTH, 1),
-            "high_months": round(calendar_weeks * 1.4 / WEEKS_PER_MONTH, 1),
+            "low_months": round(calendar_weeks * DURATION_RANGE[0] / WEEKS_PER_MONTH, 1),
+            "high_months": round(calendar_weeks * DURATION_RANGE[1] / WEEKS_PER_MONTH, 1),
         },
         cost={
             "currency": q.currency,
             "labour": round(labour),
             "parallel_run": round(parallel),
             "total": round(total_cost),
-            "low": round(total_cost * 0.75),
-            "high": round(total_cost * 1.5),
+            "low": round(total_cost * COST_RANGE[0]),
+            "high": round(total_cost * COST_RANGE[1]),
             # One-off exit cost against a year of the AWS bill being exited, in the same currency.
             "pct_of_annual_spend": round(100 * total_cost / (monthly_spend * 12 * q.fx_per_usd), 1)
             if monthly_spend > 0
@@ -256,6 +309,23 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "Excluded: target-cloud run cost after exit, licence changes, early-termination of AWS commitments "
             "(EDP, Savings Plans, RIs), and data-transfer-out fees (AWS waives egress for customers leaving AWS on "
             "request to AWS Support, since March 2024).",
-            "Range shown is −25% / +50% on cost and −20% / +40% on duration (early-stage estimation cone).",
+            "Figures are quoted as ranges, widened to round numbers: −25% / +50% on cost and effort, "
+            "−20% / +40% on duration (early-stage estimation cone). The model's single figures are "
+            "planning midpoints, not forecasts.",
         ],
+        ranges={
+            "cost": money_range(total_cost * COST_RANGE[0], total_cost * COST_RANGE[1], q.currency),
+            "duration": duration_range(
+                calendar_weeks * DURATION_RANGE[0] / WEEKS_PER_MONTH,
+                calendar_weeks * DURATION_RANGE[1] / WEEKS_PER_MONTH,
+            ),
+            "effort": count_range(total / WEEKS_PER_MONTH * COST_RANGE[0], total / WEEKS_PER_MONTH * COST_RANGE[1])
+            + " person-months",
+            "pct_of_annual_spend": (
+                count_range(100 * total_cost * COST_RANGE[0] / annual_fx, 100 * total_cost * COST_RANGE[1] / annual_fx)
+                + "%"
+            )
+            if annual_fx > 0
+            else None,
+        },
     ).to_dict()

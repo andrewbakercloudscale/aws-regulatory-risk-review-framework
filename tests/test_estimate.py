@@ -1,7 +1,7 @@
 import pytest
 
 from exitrisk.demo import build_demo_scan
-from exitrisk.estimate import Questionnaire, size_multiplier
+from exitrisk.estimate import Questionnaire, count_range, duration_range, money_range, size_multiplier
 from exitrisk.scoring import build_report
 
 
@@ -54,3 +54,16 @@ def test_questionnaire_validation():
         Questionnaire(cicd="sometimes")
     with pytest.raises(ValueError):
         Questionnaire(cloud_team_size=0)
+
+
+def test_ranges_are_rounded_outward_and_never_a_single_figure():
+    assert money_range(7.44e6, 14.88e6) == "$7m–$16m"
+    assert money_range(74e3, 151e3, "ZAR") == "ZAR 70k–ZAR 160k"
+    assert duration_range(31.4, 55.0) == "2.5–5 years"
+    assert duration_range(7.2, 13.1) == "6–15 months"
+    assert count_range(343, 687) == "300–700"
+    est = build_report(build_demo_scan(), questionnaire=Questionnaire(confirmed=True))["estimate"]
+    r = est["ranges"]
+    assert r["cost"].count("–") == 1 and r["duration"].count("–") == 1 and r["effort"].endswith("person-months")
+    lo, hi = (float(x.strip("$m")) * 1e6 for x in r["cost"].split("–"))
+    assert lo <= est["cost"]["low"] and hi >= est["cost"]["high"]

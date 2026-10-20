@@ -24,8 +24,9 @@ Figures below are from the synthetic demo organisation (made-up numbers, 12 mont
    estate-wide problem.
 3. **Where** — "Three accounts carry 57% of the spend at risk (spend × risk): the data platform (Redshift and Glue), card
    processing (DynamoDB and Lambda) and the contact centre (Amazon Connect)."
-4. **What leaving would take** — "About 3.3 years and $9.9m (range $7.4m–$14.9m), with our current team
-   and delivery maturity." Cost and time appear only once the delivery questions in section 5 are
+4. **What leaving would take** — "Roughly 2.5–5 years and $7m–$16m, with our current team and
+   delivery maturity." The report gives ranges, never a single figure: at this stage a point
+   estimate would claim precision it does not have. Cost and time appear only once the delivery questions in section 5 are
    answered; until then they are marked provisional.
 
 ## Questions to expect, and where the answer is

@@ -164,7 +164,7 @@ def test_executive_summary_flags_concentration_and_default_answers():
     assert "9 of 10 accounts (90%) are broadly portable" in x["context"]
     assert any("big-prd" in a for a in x["actions"])
     assert "default answers" in x["actions"][0]  # answering the questions comes first
-    assert x["confidence"] in {"Medium", "Low"} and x["exit"].startswith("Exit window: about ")
+    assert x["confidence"] in {"Medium", "Low"} and x["exit"].startswith("Exit window: roughly ")
     assert "of a year's AWS spend" in x["exit"] and all("account(s)" not in f for f in x["findings"])
 
 

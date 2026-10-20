@@ -161,6 +161,11 @@ total         = labour + parallel run;   range −25% / +50%;   duration range �
 % of annual   = total / (monthly AWS spend × 12 × FX)                    one-off exit cost vs a year of the bill
 ```
 
+**The report quotes ranges, never single figures.** Cost, effort and duration are shown as the
+range above, widened outward to round numbers (e.g. "$7m–$16m", "2.5–5 years", "300–700
+person-months"). The model's single figures are planning midpoints and appear only in the JSON
+output; an early-stage estimate quoted to the nearest $100k would claim precision it does not have.
+
 The calendar duration is reported as the **exit window**: how long it would take to leave AWS.
 
 The asymmetric ranges reflect that early estimates of migrations are far more often under than over.
