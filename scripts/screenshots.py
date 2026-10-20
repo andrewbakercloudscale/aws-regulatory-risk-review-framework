@@ -129,8 +129,22 @@ def main() -> int:
         page.locator("#sec-appendix .cat-group").first.screenshot(path=str(OUT / "appendix-catalog.png"))
         print("wrote", OUT / "appendix-catalog.png")
 
+        # The scan dialog loads the OU tree from AWS; serve a canned one so the shot needs no credentials.
+        def ou(i, name, children=()):
+            return {"id": i, "name": name, "children": list(children)}
+
+        tree = ou(
+            "r-demo", "Root", [ou("ou-demo-prod", "Prod"), ou("ou-demo-npr", "Non-Prod"), ou("ou-demo-sbx", "Sandbox")]
+        )
+        org = {"id": "o-demo00000", "management_account_id": "111111111111"}
+        page.route(
+            "**/api/org",
+            lambda route: route.fulfill(json={"tree": tree, "org": org}),
+        )
         page.click("#btnNewScan")
         page.wait_for_selector("#scanDialog[open]")
+        page.wait_for_selector("#sOu option[value='ou-demo-prod']", state="attached")
+        page.select_option("#sOu", "ou-demo-prod")
         page.check("#sInventory")
         page.fill("input[name=role_name]", "ExitRiskReadOnly")
         page.wait_for_timeout(200)
