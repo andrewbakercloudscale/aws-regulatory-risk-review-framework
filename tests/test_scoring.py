@@ -69,10 +69,12 @@ def test_no_spend_gives_no_score():
     "score,label",
     [
         (0, "Low"),
-        (24.9, "Low"),
+        (24.4, "Low"),
+        (24.5, "Moderate"),  # displayed as 25, so rated as 25: the label always matches the number shown
         (25, "Moderate"),
-        (54.9, "Elevated"),
-        (69.9, "High"),
+        (54.4, "Elevated"),
+        (69.4, "High"),
+        (69.5, "Critical"),
         (70, "Critical"),
         (100, "Critical"),
     ],
@@ -258,3 +260,25 @@ def test_accounts_rank_by_spend_at_risk():
     assert [a["name"] for a in r["accounts"]] == ["small-prod", "big-prod"]
     assert r["accounts"][0]["spend_at_risk"] == 19000 and r["accounts"][0]["rank"] == 1
     assert r["accounts"][1]["spend_at_risk"] == 10000
+
+
+def test_aws_spend_is_quoted_in_usd_whatever_the_labour_currency():
+    q = Questionnaire(currency="ZAR", fx_per_usd=18.5)
+    x = build_report(build_demo_scan(), questionnaire=q)["summary"]["executive"]
+    text = " ".join(x["findings"])
+    assert "ZAR" not in text.split("Exit")[0]
+    assert "$" in text
+
+
+def test_one_account_reads_as_one_account():
+    costs = [{"month": "2026-01", "account_id": "1", "service": "Amazon Simple Storage Service", "amount": 5000}]
+    s = build_report(_scan(costs, [{"id": "1", "name": "a"}]))["summary"]
+    text = " ".join([*s["narrative"], *s["executive"]["findings"]])
+    assert "1 of 1 account is portable" in text
+    assert "1 accounts" not in text
+    assert "The 0 High" not in text
+
+
+def test_empty_estimate_has_no_ranges():
+    r = build_report(build_demo_scan(), AccountFilter(include="no-such-account"))
+    assert set(r["estimate"]["ranges"].values()) == {None}

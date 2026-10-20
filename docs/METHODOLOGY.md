@@ -178,8 +178,9 @@ The asymmetric ranges reflect that early estimates of migrations are far more of
   Database, Babelfish, Serverless v2 scaling) and commercial engines (Oracle, SQL Server licensing) are
   visible in the deep scan's engine breakdown.
 - **Not in the estimate:** target-cloud run cost after exit; licence changes; early termination of AWS
-  commitments (EDP, Savings Plans, RIs — let them run off); data-transfer-out fees (AWS waives egress for
-  customers leaving AWS on request to AWS Support, since March 2024); organisational change.
+  commitments (EDP, Savings Plans, RIs — let them run off); data-transfer-out fees (since March 2024 AWS
+  credits egress for customers leaving AWS, on request to AWS Support and subject to approval; the move
+  must complete within about 60 days, so a multi-year exit pays egress outside that window); organisational change.
 - **Catalog tiers are expert judgement.** They are published, versioned and open to challenge through
   pull requests; quote the catalog version with any score.
 - **Indicative only.** The estimate is an order-of-magnitude figure to support an executive decision and

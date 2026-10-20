@@ -11,6 +11,8 @@ import json
 import re
 from dataclasses import asdict, dataclass
 
+from botocore.exceptions import BotoCoreError, ClientError
+
 from .aws_session import BOTO_CONFIG, assume_role_session, make_session
 from .collectors.cost import month_window
 from .issues import describe_exception
@@ -58,6 +60,10 @@ class Check:
 
 def _fail(check_id: str, label: str, exc: Exception, needs: str, fix: str = "") -> Check:
     code, msg, hint = describe_exception(exc)
+    # AWS errors are the expected outcome of a check; anything else is a bug and needs its traceback.
+    log.warning(
+        "access check %s failed: %s %s", check_id, code, msg, exc_info=not isinstance(exc, (ClientError, BotoCoreError))
+    )
     return Check(check_id, label, "fail", f"{code}: {msg}", fix or hint, needs)
 
 

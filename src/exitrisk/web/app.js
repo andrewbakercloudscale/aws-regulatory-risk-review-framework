@@ -168,14 +168,24 @@
     $("#empty").hidden = true;
     $("#viewTabs").hidden = false;
     $("#content").hidden = state.view === "multiregion";
-    renderCover(r);
-    renderSummary(r);
-    renderProfile(r);
-    renderAccounts(r);
-    renderServices(r);
-    renderEstimate(r);
-    renderIssues(r);
-    renderAppendix(r);
+    try {
+      renderCover(r);
+      renderSummary(r);
+      renderProfile(r);
+      renderAccounts(r);
+      renderServices(r);
+      renderEstimate(r);
+      renderIssues(r);
+      renderAppendix(r);
+    } catch (e) {
+      // A rendering bug must not leave a half-drawn report that looks complete, or hang the PDF export.
+      console.error("render failed", e);
+      const msg = `The report could not be drawn (${e.message}). Reload the page; if it persists, open the log and report it.`;
+      $("#filterError").textContent = msg;
+      toast(msg, 8000);
+      if (PRINT) { document.body.dataset.error = msg; document.body.dataset.ready = "1"; }
+      return;
+    }
     $("#footer").textContent = `Generated ${new Date(r.meta.generated_at).toLocaleString()} by aws-regulatory-risk-review-framework v${r.meta.tool_version} · catalog ${r.meta.catalog_version} · scan ${r.meta.scan_id}`;
     if (state.view !== "multiregion") document.body.dataset.ready = "1";
   }
@@ -540,7 +550,7 @@
     $("#qStatus").innerHTML = prov
       ? `<span class="prov-tag">Provisional</span> Using default answers. Change any answer, or confirm these, to estimate for your organisation.`
       : `<span class="ok-tag">✓ Your answers</span> The estimate uses the answers below.`;
-    $("#estTiles").innerHTML = [
+    $("#estTiles").innerHTML = e.empty ? "" : [
       tile("Total exit cost (indicative)", e.ranges.cost, `${e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend · ` : ""}about ${Math.round(100 * e.cost.labour / Math.max(e.cost.total, 1))}% engineering, the rest parallel running`, prov),
       tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, prov),
       tile("Engineering effort", e.ranges.effort, plural(e.effort.material_accounts, "material account"), prov),

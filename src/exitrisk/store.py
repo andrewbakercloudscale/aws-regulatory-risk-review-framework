@@ -11,6 +11,9 @@ import threading
 from datetime import datetime
 
 from .config import settings
+from .logging_config import get_logger
+
+log = get_logger("store")
 
 _ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9]{4,8}$")
 _lock = threading.Lock()
@@ -59,7 +62,8 @@ def list_scans() -> list[dict]:
         try:
             with path.open(encoding="utf-8") as fh:
                 s = json.load(fh)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning("skipping unreadable scan file %s: %s", path.name, exc)
             continue
         out.append(
             {

@@ -17,6 +17,25 @@ from .logging_config import configure_logging, get_logger, run_id_var
 log = get_logger("cli")
 
 
+class UsageError(Exception):
+    """A problem with what the user passed; reported as one line, without a traceback."""
+
+
+def _answers(path: str | None, what: str) -> dict | None:
+    """Read a --questionnaire / --multiregion answers file as a JSON object, marked as confirmed."""
+    if not path:
+        return None
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise UsageError(f"cannot read the {what} file {path}: {exc.strerror or exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise UsageError(f"the {what} file {path} is not valid JSON (line {exc.lineno}, column {exc.colno})") from exc
+    if not isinstance(data, dict):
+        raise UsageError(f'the {what} file {path} must hold a JSON object of answers, e.g. {{"target": "azure"}}')
+    return {"confirmed": True, **data}
+
+
 def _serve(args) -> int:
     import uvicorn
 
@@ -88,16 +107,14 @@ def _report(args) -> int:
 
     scan = store.load_scan(args.scan_id)
     if args.questionnaire:
-        q = Questionnaire(**{"confirmed": True, **json.loads(Path(args.questionnaire).read_text())})
+        q = Questionnaire(**_answers(args.questionnaire, "questionnaire"))
     else:  # no answers given: use the exit target chosen when the scan was started
         q = Questionnaire(target=(scan.get("params") or {}).get("target") or "azure")
     flt = AccountFilter(include=args.include or "", exclude=args.exclude or "", mode=args.mode)
     if args.view == "multiregion":
         from .multiregion import MultiRegionAnswers, build_multiregion
 
-        mq = MultiRegionAnswers(
-            **({"confirmed": True, **json.loads(Path(args.multiregion).read_text())} if args.multiregion else {})
-        )
+        mq = MultiRegionAnswers(**(_answers(args.multiregion, "multi-region answers") or {}))
         report = build_multiregion(scan, flt, q, mq)
     else:
         report = build_report(scan, flt, q, weighting=args.weighting)
@@ -113,6 +130,7 @@ def _report(args) -> int:
 def _pdf(args) -> int:
     """Render the dashboard's print layout to PDF with headless Chromium (pip install '.[pdf]')."""
     try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
         from playwright.sync_api import sync_playwright
     except ImportError:
         log.error(
@@ -133,6 +151,14 @@ def _pdf(args) -> int:
         if server.started:
             break
         time.sleep(0.1)
+    else:
+        server.should_exit = True
+        log.error(
+            "the report server did not start on 127.0.0.1:%s within 10s; is the port in use? Try --port %s",
+            args.port,
+            args.port + 1,
+        )
+        return 1
     query = urllib.parse.urlencode(
         {
             k: v
@@ -143,13 +169,9 @@ def _pdf(args) -> int:
                 "mode": args.mode,
                 "weighting": args.weighting,
                 "min_rating": getattr(args, "min_rating", None),
-                "q": json.dumps({"confirmed": True, **json.loads(Path(args.questionnaire).read_text())})
-                if args.questionnaire
-                else None,
+                "q": json.dumps(_answers(args.questionnaire, "questionnaire")) if args.questionnaire else None,
                 "view": "multiregion" if args.view == "multiregion" else None,
-                "mr": json.dumps({"confirmed": True, **json.loads(Path(args.multiregion).read_text())})
-                if args.multiregion
-                else None,
+                "mr": json.dumps(_answers(args.multiregion, "multi-region answers")) if args.multiregion else None,
                 "print": "1",
             }.items()
             if v
@@ -161,7 +183,16 @@ def _pdf(args) -> int:
             page = browser.new_page(viewport={"width": 1000, "height": 1400})  # ~A4 width
             page.on("console", lambda m: m.type == "error" and log.error("page: %s", m.text))
             page.goto(f"http://127.0.0.1:{args.port}/?{query}")
-            page.wait_for_selector("body[data-ready='1']", timeout=30000)
+            try:
+                page.wait_for_selector("body[data-ready='1']", timeout=30000)
+            except PlaywrightTimeout:
+                log.error(
+                    "the report page did not finish loading within 30s (scan %s); check the page errors above "
+                    "and the console log, or open the same report in the web console",
+                    args.scan_id,
+                )
+                browser.close()
+                return 1
             failed = page.get_attribute("body", "data-error")
             if failed:
                 log.error("the report could not be built: %s (see the log above)", failed)
@@ -265,6 +296,12 @@ def main(argv: list[str] | None = None) -> int:
         return args.fn(args)
     except KeyboardInterrupt:
         return 130
+    except UsageError as exc:
+        log.error("%s", exc)
+        return 2
+    except store.ScanNotFound as exc:
+        log.error("no scan with id %s in %s; scan ids are the file names there", exc.args[0], settings.scans_dir)
+        return 2
     except Exception as exc:
         log.exception("%s failed: %s", args.cmd, exc)
         return 1

@@ -16,6 +16,7 @@ import uuid
 from importlib import resources
 from typing import Annotated
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +36,13 @@ from .scanner import ScanParams, get_job, start_scan
 from .scoring import build_report
 
 log = get_logger("server")
+
+
+def _aws_error(exc: Exception) -> bool:
+    """AWS errors are expected (expired sign-in, missing permission); anything else is logged with a traceback."""
+    return isinstance(exc, (ClientError, BotoCoreError))
+
+
 WEB_DIR = resources.files("exitrisk").joinpath("web")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
 
@@ -158,7 +166,7 @@ def create_app(allow_remote: bool = False) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         except Exception as exc:
             code, msg, hint = describe_exception(exc)
-            log.warning("SSO call %s failed: %s %s", fn.__name__, code, msg)
+            log.warning("SSO call %s failed: %s %s", fn.__name__, code, msg, exc_info=not _aws_error(exc))
             return JSONResponse({"error": msg, "code": code, "hint": hint}, status_code=502)
 
     @app.get("/api/sso/sessions")
@@ -216,7 +224,7 @@ def create_app(allow_remote: bool = False) -> FastAPI:
             return out
         except Exception as exc:
             code, msg, hint = describe_exception(exc)
-            log.warning("OU tree unavailable for profile %s: %s %s", q.profile, code, msg)
+            log.warning("OU tree unavailable for profile %s: %s %s", q.profile, code, msg, exc_info=not _aws_error(exc))
             return JSONResponse({"error": msg, "code": code, "hint": hint}, status_code=502)
 
     @app.post("/api/access-check")

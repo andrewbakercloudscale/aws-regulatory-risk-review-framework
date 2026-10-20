@@ -6,6 +6,35 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-20
+
+Exit analysis review ahead of wider circulation.
+
+### Fixed
+- AWS spend in the executive summary (named bespoke services, "N others", biggest monthly rises) is always
+  quoted in USD; it was labelled with the labour currency when that was not USD.
+- Ratings follow the score as displayed (whole number, rounded half up), so a 39.5 can no longer show as
+  "Moderate · 40".
+- Single-account and no-High/Critical wording: "1 of 1 account is portable", no "The 0 High or Critical
+  accounts hold 0%", no "across 1 accounts".
+- The headline no longer says "most workloads would move with modest change" when the exit costs half a
+  year's AWS spend or more.
+- An empty scope has no cost/time ranges (they were "$0–$0" internally).
+- Egress: the exclusion now states AWS's conditions (request to AWS Support, approval, move completed
+  within about 60 days) instead of an unconditional waiver.
+- README: 116 classified services (not 120); APRA CPS 230 and SARB citations corrected (PA Directive
+  3/2018 and Guidance Note G5/2018).
+
+### Improved
+- The dashboard catches rendering errors: a clear message and toast instead of a half-drawn report; PDF
+  export fails with that message instead of hanging.
+- CLI: unreadable or invalid `--questionnaire` / `--multiregion` files, unknown scan ids, a report server
+  that does not start, and a PDF page that does not finish loading all give one clear line and exit code,
+  not a traceback.
+- Logging: failed access checks are logged; unexpected (non-AWS) errors in access checks, SSO and OU-tree
+  calls are logged with their traceback; unreadable scan files are logged instead of skipped silently.
+- Executive summary and narrative share one "accounts that set the pace" helper.
+
 ## [0.3.1] - 2026-10-20
 
 ### Added

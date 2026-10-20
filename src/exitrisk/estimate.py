@@ -307,8 +307,9 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "(target ramps up as AWS ramps down)"
             + (f", converted at {q.fx_per_usd:g} {q.currency}/USD." if q.currency != "USD" else "."),
             "Excluded: target-cloud run cost after exit, licence changes, early-termination of AWS commitments "
-            "(EDP, Savings Plans, RIs), and data-transfer-out fees (AWS waives egress for customers leaving AWS on "
-            "request to AWS Support, since March 2024).",
+            "(EDP, Savings Plans, RIs), and data-transfer-out fees (since March 2024 AWS credits egress for "
+            "customers leaving AWS, on request to AWS Support and subject to approval, for a move completed within "
+            "about 60 days; budget egress for any data moved outside that window).",
             "Figures are quoted as ranges, widened to round numbers: −25% / +50% on cost and effort, "
             "−20% / +40% on duration (early-stage estimation cone). The model's single figures are "
             "planning midpoints, not forecasts.",

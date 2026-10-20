@@ -24,15 +24,15 @@ rules require a documented, credible and tested exit strategy:
 | EU **DORA** (Art. 28) | Exit strategies for ICT third-party services supporting critical or important functions, tested and documented |
 | **EBA** Guidelines on outsourcing | Documented exit plans, with an assessment of how complex and costly exit would be |
 | UK **PRA SS2/21** | Stressed exit plans for material outsourcing, including alternative providers and timelines |
-| **APRA CPS 230** | Exit plans for material service providers, covering how long exit takes and how much it costs |
-| **SARB Directive 3/2018** and Joint Standard on cloud | Exit and contingency arrangements for material cloud usage |
+| **APRA CPS 230** | Exit plans for material service providers, so critical operations continue if the provider fails or the arrangement ends |
+| **SARB Prudential Authority Directive 3/2018** and Guidance Note G5/2018 (cloud computing and offshoring of data) | Exit and contingency arrangements for material cloud usage |
 
 This framework proposes **Regulatory Risk as the seventh pillar**: the measured degree to which your
 architecture keeps you free to exit, change providers, or bring workloads back in house. Like the
 other pillars, it is a design property you can measure, track and improve:
 
 - **Measure** it: a spend-weighted 0–100 exit-risk score per OU and per account, from your own billing
-  data, against an open [catalog](docs/SERVICE_CATALOG.md) of 120 AWS services ranked by portability.
+  data, against an open [catalog](docs/SERVICE_CATALOG.md) of 116 AWS services ranked by portability.
 - **Explain** it: which services (Connect, Redshift, DynamoDB, Lambda…) and which accounts drive the
   score, why each service is hard to move, the migration path, and how long it typically takes.
 - **Plan** it: indicative effort, duration and cost of a full exit, adjusted for your delivery maturity
@@ -50,7 +50,7 @@ exit" (a fact a board can govern).
 
 - **Scores every account** by the spend-weighted exit difficulty of the AWS services it uses.
   EKS, EC2 and Postgres/Aurora score low; DynamoDB, Lambda, Step Functions, Redshift and Connect score
-  high. 120 services are classified in an open, reviewable [catalog](docs/SERVICE_CATALOG.md).
+  high. 116 services are classified in an open, reviewable [catalog](docs/SERVICE_CATALOG.md).
 - **Two headline scores: by spend and by number of accounts.** Weighted by spend, a small account full
   of proprietary services is flagged without distorting the number; counted per account, one very
   large account (e.g. a contact centre on Connect) cannot set the whole picture. The gap between the
