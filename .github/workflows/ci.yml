@@ -40,6 +40,9 @@ jobs:
       - name: Install
         run: |
           pip install -e '.[dev]'
+          # The runner's preinstalled Microsoft apt source sometimes returns 403 and fails apt-get;
+          # Chromium's system libraries do not need it.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources
           playwright install --with-deps chromium
       - name: Render dashboard and PDF (fails on any browser console error)
         run: python scripts/screenshots.py
