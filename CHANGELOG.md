@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-20
+
 ### Added
 - **Scan several OUs at once.** The scan dialog's OU list is now a tick-box tree (nesting indented,
   account count per OU); ticking a parent covers its children; nothing ticked scans the whole
