@@ -190,3 +190,8 @@ The asymmetric ranges reflect that early estimates of migrations are far more of
 Each scan is stored as JSON (`~/.exitrisk/scans/<id>.json`) with the raw Cost Explorer lines, accounts,
 inventory and issues. `exitrisk report <id> --include prod --questionnaire answers.json` regenerates
 the full report deterministically; the report footer carries the tool version, catalog version and scan id.
+
+## Multi-region
+
+The cost of a second region (run, build, staff, region choice, failover risks) has its own model: see
+[MULTI_REGION.md](MULTI_REGION.md).

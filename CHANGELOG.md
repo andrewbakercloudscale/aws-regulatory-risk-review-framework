@@ -6,6 +6,21 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-20
+
+### Added
+- **Multi-region view** (new tab): what a second AWS region would cost to run (infrastructure,
+  replication traffic, AWS Support uplift, extra staff), cost and time to achieve, and which region
+  to use (service parity, latency, price, data residency). Choose **Recover within 3 hours**
+  (systemic risk event) or **On demand: instant**; pick the accounts (sorted by spend); each
+  account lists its services' multi-region risks (e.g. EC2: manual failover). Figures are ranges and
+  provisional until the answers are confirmed. See docs/MULTI_REGION.md.
+- Scans collect spend by region (Cost Explorer `REGION` grouping; no new permission).
+- `data/regions.yaml` (regions, service classes, failover notes) and `data/region_services.json`
+  (AWS regional services list; refresh with `scripts/refresh_region_services.py`).
+- CLI: `exitrisk report|pdf --view multiregion --multiregion answers.json`; API `POST /api/multiregion`.
+- Sample multi-region PDF and screenshots.
+
 ### Changed
 - **Exit cost, effort and time are quoted as approximate ranges, never single figures** (e.g.
   "$7m–$16m", "2.5–5 years", "300–700 person-months"), rounded outward, everywhere: key figures,

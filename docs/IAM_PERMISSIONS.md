@@ -13,7 +13,7 @@ profile uses in the **management (payer) account**:
 | `organizations:DescribeOrganization` | Organisation id and management account id for the report header |
 | `organizations:ListRoots`, `ListOrganizationalUnitsForParent` | Build the OU tree for the OU picker (with `ListAccountsForParent` for the account count per OU) |
 | `organizations:ListAccountsForParent` | Accounts under the chosen OU, recursively, with names (for the name filter) |
-| `ce:GetCostAndUsage` | Amortised spend by account × service × month |
+| `ce:GetCostAndUsage` | Amortised spend by account × service × month, and by region (multi-region view) |
 
 Cost Explorer must be enabled in the management account (Billing console → Cost Explorer). Each
 `GetCostAndUsage` request costs US$0.01; a scan makes two per 100 accounts plus pagination.

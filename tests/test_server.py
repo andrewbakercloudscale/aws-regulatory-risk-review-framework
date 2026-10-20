@@ -67,3 +67,14 @@ def test_static_assets_revalidate_so_upgrades_take_effect():
     c = client()
     assert c.get("/").headers["cache-control"] == "no-store"
     assert c.get("/static/app.js").headers["cache-control"] == "no-cache"
+
+
+def test_multiregion_endpoint():
+    c = client()
+    scan_id = c.post("/api/scans/demo", headers=H).json()["id"]
+    body = {"scan_id": scan_id, "multiregion": {"recovery": "instant", "residency": "same_continent"}}
+    r = c.post("/api/multiregion", headers=H, json=body)
+    assert r.status_code == 200
+    assert r.json()["answers"]["recovery"] == "instant" and r.json()["summary"]["recommended"]
+    bad = {"scan_id": scan_id, "multiregion": {"recovery": "sometime"}}
+    assert c.post("/api/multiregion", headers=H, json=bad).status_code == 422

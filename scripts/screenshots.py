@@ -129,6 +129,27 @@ def main() -> int:
         page.locator("#sec-appendix .cat-group").first.screenshot(path=str(OUT / "appendix-catalog.png"))
         print("wrote", OUT / "appendix-catalog.png")
 
+        # Multi-region view: the cost of a second region for the production accounts.
+        page.goto(base + "&include=prod&view=multiregion")
+        page.wait_for_selector("body[data-ready='1']")
+        page.wait_for_timeout(700)
+        page.add_style_tag(content=".topbar { position: static !important; }")
+        shoot(page, "#mr-summary", "multiregion-summary.png")
+        shoot(page, "#mr-questions", "multiregion-choices.png")
+        page.locator("#mrAcctTable details").first.evaluate("d => d.open = true")
+        page.wait_for_timeout(200)
+        box = page.locator("#mr-accounts").bounding_box()
+        box["y"] += page.evaluate("() => window.scrollY")  # full-page clips use page, not viewport, coordinates
+        page.screenshot(
+            path=str(OUT / "multiregion-accounts.png"),
+            full_page=True,
+            clip={"x": box["x"], "y": box["y"], "width": box["width"], "height": min(box["height"], 1100)},
+        )
+        print("wrote", OUT / "multiregion-accounts.png")
+        shoot(page, "#mr-region", "multiregion-region.png")
+        shoot(page, "#mr-run", "multiregion-run.png")
+        shoot(page, "#mr-build", "multiregion-build.png")
+
         # The scan dialog loads the OU tree from AWS; serve a canned one so the shot needs no credentials.
         def ou(i, name, accounts, children=()):
             return {"id": i, "name": name, "accounts": accounts, "children": list(children)}
@@ -179,6 +200,18 @@ def main() -> int:
         pp.emulate_media(media="print")
         pp.wait_for_timeout(500)
         pdf = ROOT / "docs" / "sample-report.pdf"
+        pp.pdf(
+            path=str(pdf),
+            format="A4",
+            print_background=True,
+            margin={"top": "14mm", "bottom": "14mm", "left": "12mm", "right": "12mm"},
+        )
+        print("wrote", pdf)
+        pp.goto(base + "&include=prod&print=1&view=multiregion")
+        pp.wait_for_selector("body[data-ready='1']")
+        pp.emulate_media(media="print")
+        pp.wait_for_timeout(500)
+        pdf = ROOT / "docs" / "sample-multiregion.pdf"
         pp.pdf(
             path=str(pdf),
             format="A4",

@@ -61,6 +61,10 @@ exit" (a fact a board can govern).
   regex, plus exclusions, e.g. `prod, prd` excluding `sandbox`.
 - **Estimates the exit**: engineer effort, calendar duration and cost, adjusted by a questionnaire on
   the page — standard CI/CD? Terraform up to date? How big is the core cloud team?
+- **Costs a second region** (Multi-region tab): extra cost to run, cost and time to achieve, extra
+  staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
+  instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs
+  manual failover). See [MULTI_REGION.md](docs/MULTI_REGION.md).
 - **Exports a board-ready PDF** with charts, an executive narrative, a data-quality section, and an
   appendix explaining every service's tier, recommended migration path and typical duration.
 - **Never fails silently**: every AWS API error becomes an issue on the report with a fix, and is
@@ -152,6 +156,18 @@ exitrisk catalog                                                        # list s
 
 ![Appendix](docs/images/appendix-catalog.png)
 
+**Multi-region** — The cost of a second region: run, build, people, and where to put it.
+
+![Multi-region summary](docs/images/multiregion-summary.png)
+
+**Multi-region accounts** — Sorted by spend; choose which go multi-region; each service's failover risk.
+
+![Multi-region accounts](docs/images/multiregion-accounts.png)
+
+**Second region** — Candidates ranked by service parity, latency and price.
+
+![Second region](docs/images/multiregion-region.png)
+
 **Getting started** — Connect, check access, scan.
 
 ![Getting started](docs/images/getting-started.png)
@@ -172,7 +188,8 @@ exitrisk catalog                                                        # list s
 
 ![Dark mode](docs/images/dashboard-dark.png)
 
-A complete sample report generated from the demo data: [docs/sample-report.pdf](docs/sample-report.pdf).
+Complete sample reports generated from the demo data: [exit risk](docs/sample-report.pdf),
+[multi-region](docs/sample-multiregion.pdf).
 
 ## How the score works
 
@@ -198,6 +215,7 @@ Full detail, including the estimate model and its limitations: [docs/METHODOLOGY
 | Document | For |
 |---|---|
 | [METHODOLOGY.md](docs/METHODOLOGY.md) | Scoring, weighting and estimate formulas; assumptions; limitations |
+| [MULTI_REGION.md](docs/MULTI_REGION.md) | The multi-region view: run and build cost, staff, region choice, failover risks |
 | [SERVICE_CATALOG.md](docs/SERVICE_CATALOG.md) | Every service's tier, rationale, migration path, equivalents, duration |
 | [IAM_PERMISSIONS.md](docs/IAM_PERMISSIONS.md) | Exact permissions; StackSet / Terraform for the member role |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, data flow, security model, logging and error handling |
