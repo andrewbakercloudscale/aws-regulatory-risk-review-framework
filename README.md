@@ -32,7 +32,7 @@ architecture keeps you free to exit, change providers, or bring workloads back i
 other pillars, it is a design property you can measure, track and improve:
 
 - **Measure** it: a spend-weighted 0–100 exit-risk score per OU and per account, from your own billing
-  data, against an open [catalog](docs/SERVICE_CATALOG.md) of 112 AWS services ranked by portability.
+  data, against an open [catalog](docs/SERVICE_CATALOG.md) of 120 AWS services ranked by portability.
 - **Explain** it: which services (Connect, Redshift, DynamoDB, Lambda…) and which accounts drive the
   score, why each service is hard to move, the migration path, and how long it typically takes.
 - **Plan** it: indicative effort, duration and cost of a full exit, adjusted for your delivery maturity
@@ -50,7 +50,7 @@ exit" (a fact a board can govern).
 
 - **Scores every account** by the spend-weighted exit difficulty of the AWS services it uses.
   EKS, EC2 and Postgres/Aurora score low; DynamoDB, Lambda, Step Functions, Redshift and Connect score
-  high. 112 services are classified in an open, reviewable [catalog](docs/SERVICE_CATALOG.md).
+  high. 120 services are classified in an open, reviewable [catalog](docs/SERVICE_CATALOG.md).
 - **Two headline scores: by spend and by number of accounts.** Weighted by spend, a small account full
   of proprietary services is flagged without distorting the number; counted per account, one very
   large account (e.g. a contact centre on Connect) cannot set the whole picture. The gap between the
