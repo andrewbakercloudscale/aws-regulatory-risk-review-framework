@@ -33,6 +33,16 @@ def available_profiles() -> list[str]:
         return []
 
 
+def profile_accounts() -> dict[str, str]:
+    """Account id per profile where the config states it (SSO profiles carry sso_account_id)."""
+    try:
+        profiles = botocore.session.Session().full_config.get("profiles", {})
+    except Exception:
+        log.exception("could not read AWS profiles")
+        return {}
+    return {name: str(cfg["sso_account_id"]) for name, cfg in profiles.items() if cfg.get("sso_account_id")}
+
+
 def make_session(profile: str | None, region: str | None = None) -> boto3.Session:
     return boto3.Session(profile_name=profile or None, region_name=region)
 

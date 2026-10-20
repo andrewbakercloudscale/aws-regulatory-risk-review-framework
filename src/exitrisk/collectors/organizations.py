@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import boto3
@@ -39,16 +40,22 @@ def list_ou_tree(session: boto3.Session) -> dict:
     client = _client(session)
     root = client.list_roots()["Roots"][0]
     tree = {"id": root["Id"], "name": "Root", "path": "Root", "children": []}
-    stack = [tree]
     paginator = client.get_paginator("list_organizational_units_for_parent")
-    while stack:
-        node = stack.pop()
+
+    def expand(node: dict) -> list[dict]:
         for page in paginator.paginate(ParentId=node["id"]):
             for ou in page["OrganizationalUnits"]:
                 child = {"id": ou["Id"], "name": ou["Name"], "path": f"{node['path']} / {ou['Name']}", "children": []}
                 node["children"].append(child)
-                stack.append(child)
         node["children"].sort(key=lambda c: c["name"].lower())
+        return node["children"]
+
+    # One level at a time, siblings in parallel: a 10-OU tree takes ~3 round trips instead of ~11.
+    # Few workers, because Organizations throttles hard (botocore retries what does get throttled).
+    level = [tree]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        while level:
+            level = [child for children in pool.map(expand, level) for child in children]
     return tree
 
 

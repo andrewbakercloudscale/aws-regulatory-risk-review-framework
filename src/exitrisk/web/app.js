@@ -9,6 +9,8 @@
   const PRINT = params.get("print") === "1";
   const LS_Q = "exitrisk.questionnaire.v1";
   const LS_THEME = "exitrisk.theme";
+  const LS_ORG_PROFILE = "exitrisk.orgProfile"; // last profile that could read the OU tree
+  const MGMT_RE = /mgmt|management|payer|master|org/i;
   const state = { scanId: null, report: null, catalog: null, options: null, charts: {}, pollTimer: null };
 
   // ------------------------------------------------------------------ utils
@@ -567,35 +569,51 @@
     $("#sTarget").innerHTML = Object.entries(state.options.target).map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
     $("#sTarget").value = $("#qForm").target.value || "azure";
     try {
-      const { profiles } = await api("/api/profiles");
-      $("#sProfile").innerHTML = profiles.length ? profiles.map((p) => `<option>${esc(p)}</option>`).join("") : `<option value="">(no profiles found - default credential chain)</option>`;
-      if (typeof selectProfile === "string" && profiles.includes(selectProfile)) $("#sProfile").value = selectProfile;
+      const profiles = await fillProfiles($("#sProfile"), typeof selectProfile === "string" ? selectProfile : null);
       if (profiles.length) loadOus();
     } catch (e) { $("#scanError").textContent = e.message; }
     dlg.showModal();
   }
 
   function flattenOus(node, depth = 0, out = []) {
-    out.push({ id: node.id, label: `${"  ".repeat(depth)}${depth ? "└ " : ""}${node.name}` });
+    // Non-breaking spaces: a <select> collapses ordinary ones, which flattened nested OUs.
+    out.push({ id: node.id, label: `${"\u00a0\u00a0\u00a0\u00a0".repeat(Math.max(0, depth - 1))}${depth ? "└ " : ""}${node.name}` });
     node.children.forEach((c) => flattenOus(c, depth + 1, out));
     return out;
   }
 
-  async function loadOus() {
-    $("#sOu").innerHTML = `<option value="">Organization root (all accounts)</option>`;
-    $("#ouStatus").textContent = "Loading organizational units… approve Touch ID if prompted.";
+  async function loadOus(ev) {
+    const refresh = ev?.currentTarget?.id === "btnLoadOus";
+    $("#sOu").innerHTML = `<option value="">Loading organizational units…</option>`;
+    $("#sOu").disabled = true;
+    $("#ouStatus").innerHTML = `<span class="spin" aria-hidden="true"></span> Loading organizational units (a few seconds)… approve Touch ID if prompted.`;
     $("#btnLoadOus").disabled = true;
     const seq = (state.ouSeq = (state.ouSeq || 0) + 1); // a later profile change wins over a slow earlier reply
     try {
-      const { tree, org } = await api("/api/org", { method: "POST", body: { profile: $("#sProfile").value || null } });
+      const { tree, org } = await api("/api/org", { method: "POST", body: { profile: $("#sProfile").value || null, refresh } });
       if (seq !== state.ouSeq) return;
       $("#sOu").innerHTML = flattenOus(tree).map((o) => `<option value="${o.id === tree.id ? "" : esc(o.id)}">${esc(o.label)}${o.id === tree.id ? " (all accounts)" : ""}</option>`).join("");
       const n = flattenOus(tree).length - 1;
       $("#ouStatus").textContent = `${n} OU(s) in organization ${org.id} · management account ${org.management_account_id}`;
+      state.mgmtAccount = org.management_account_id;
+      try { if ($("#sProfile").value) localStorage.setItem(LS_ORG_PROFILE, $("#sProfile").value); } catch { /* ignore */ }
     } catch (e) {
       if (seq !== state.ouSeq) return;
-      $("#ouStatus").textContent = `OUs unavailable with this profile (${e.code || e.message}) - the scan covers what the profile can see. Use Check access to see why.`;
-    } finally { $("#btnLoadOus").disabled = false; }
+      $("#sOu").innerHTML = `<option value="">Organization root (all accounts)</option>`;
+      const cur = $("#sProfile").value;
+      const others = [...$("#sProfile").options].map((o) => o.value).filter((v) => v && v !== cur);
+      const known = others.filter((v) => state.profileAccounts?.[v] && state.mgmtAccount && state.profileAccounts[v] === state.mgmtAccount);
+      const likely = known.length ? known : others.filter((v) => MGMT_RE.test(v));
+      const denied = /AccessDenied|NotInUse|AWSOrganizationsNotInUse/i.test(e.code || e.message);
+      $("#ouStatus").innerHTML = (denied
+        ? `<strong>${esc(cur || "This profile")}</strong> cannot list OUs (${esc(e.code || e.message)}): it is probably not in the organisation's <strong>management account</strong>. `
+        : `OUs unavailable with this profile (${esc(e.code || e.message)}). `) +
+        (likely.length ? `Try ${likely.map((v) => `<a href="#" class="ou-try" data-p="${esc(v)}">${esc(v)}</a>`).join(" or ")}. ` : "Pick a management-account profile, or sign in with SSO and choose the management account. ") +
+        "Without OUs the scan covers only what this profile can see.";
+      $("#ouStatus").querySelectorAll(".ou-try").forEach((a) => a.addEventListener("click", (ev) => {
+        ev.preventDefault(); $("#sProfile").value = a.dataset.p; loadOus();
+      }));
+    } finally { if (seq === state.ouSeq) { $("#btnLoadOus").disabled = false; $("#sOu").disabled = false; } }
   }
 
   async function startScan() {
@@ -797,10 +815,20 @@
 
   // ------------------------------------------------------------------ access check
   async function fillProfiles(sel, want) {
-    const { profiles } = await api("/api/profiles");
+    const { profiles, accounts } = await api("/api/profiles");
+    state.profileAccounts = accounts || {};
     sel.innerHTML = profiles.length ? profiles.map((p) => `<option>${esc(p)}</option>`).join("") : `<option value="">(no profiles found - default credential chain)</option>`;
-    if (want && profiles.includes(want)) sel.value = want;
+    const pick = preferredProfile(profiles, want);
+    if (pick) sel.value = pick;
     return profiles;
+  }
+
+  // The profile most likely to see the whole organisation: the one asked for, the last one that
+  // could read the OU tree, else one whose name suggests the management account.
+  function preferredProfile(profiles, want) {
+    let remembered = null;
+    try { remembered = localStorage.getItem(LS_ORG_PROFILE); } catch { /* storage may be unavailable */ }
+    return [want, remembered, profiles.find((p) => MGMT_RE.test(p))].find((p) => typeof p === "string" && profiles.includes(p)) || null;
   }
 
   async function openAccessDialog(profile, autoRun) {
@@ -809,6 +837,7 @@
     $("#aVerdict").hidden = true;
     $("#aAdmin").hidden = true;
     $("#btnAccessScan").hidden = true;
+    $("#aSwitch").hidden = true;
     $("#aError").textContent = "";
     try { await fillProfiles($("#aProfile"), typeof profile === "string" ? profile : null); }
     catch (e) { $("#aError").textContent = e.message; }
@@ -832,6 +861,19 @@
       $("#aAdmin").hidden = !needsAdmin || r.checks[0].status !== "ok";
       $("#aAdminText").value = r.admin_request;
       $("#btnAccessScan").hidden = !(r.ready || r.partial);
+      if (r.management_account_id) state.mgmtAccount = r.management_account_id;
+      if (r.ready) {
+        try { localStorage.setItem(LS_ORG_PROFILE, $("#aProfile").value); } catch { /* ignore */ }
+        api("/api/org", { method: "POST", body: { profile: $("#aProfile").value || null } }).catch(() => {}); // warm the OU list for the scan dialog
+      }
+      // Member account but a local profile points at the management account: offer a one-click switch.
+      const mgmtProfile = r.management_account_id && r.account_id !== r.management_account_id &&
+        Object.entries(state.profileAccounts || {}).find(([, acct]) => acct === r.management_account_id)?.[0];
+      $("#aSwitch").hidden = !mgmtProfile;
+      if (mgmtProfile) {
+        $("#aSwitch").innerHTML = `<strong>${esc(mgmtProfile)}</strong> on this machine is in the management account ${esc(r.management_account_id)}. <button type="button" class="btn primary" id="btnASwitch">Use ${esc(mgmtProfile)} and re-check</button>`;
+        $("#btnASwitch").addEventListener("click", () => { $("#aProfile").value = mgmtProfile; runAccessCheck(); });
+      }
     } catch (e) { $("#aError").textContent = e.message; }
     finally { $("#btnAccessRun").disabled = false; $("#aBusy").textContent = ""; }
   }

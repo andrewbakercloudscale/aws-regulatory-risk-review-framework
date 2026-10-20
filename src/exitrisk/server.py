@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__, preflight, sso, store
-from .aws_session import available_profiles, make_session
+from .aws_session import available_profiles, make_session, profile_accounts
 from .catalog import load_catalog
 from .collectors import organizations
 from .demo import create_demo_scan
@@ -37,8 +37,12 @@ WEB_DIR = resources.files("exitrisk").joinpath("web")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
 
 
+OU_CACHE_SECONDS = 900
+
+
 class OUQuery(BaseModel):
     profile: str | None = None
+    refresh: bool = False  # bypass the cache (the ↻ button)
 
 
 class AccessCheckRequest(BaseModel):
@@ -132,7 +136,7 @@ def create_app(allow_remote: bool = False) -> FastAPI:
 
     @app.get("/api/profiles")
     def profiles():
-        return {"profiles": available_profiles()}
+        return {"profiles": available_profiles(), "accounts": profile_accounts()}
 
     def sso_call(fn, *args):
         try:
@@ -184,13 +188,19 @@ def create_app(allow_remote: bool = False) -> FastAPI:
             "defaults": Questionnaire().model_dump(),
         }
 
+    ou_cache: dict[str, tuple[float, dict]] = {}  # profile -> (when, OU tree); OUs rarely change
+
     @app.post("/api/org")
     def org(q: OUQuery):
         """Read the OU tree. With aws-cli-zsp this call is where Touch ID is first requested."""
         try:
+            hit = ou_cache.get(q.profile or "")
+            if hit and not q.refresh and time.monotonic() - hit[0] < OU_CACHE_SECONDS:
+                return hit[1]
             session = make_session(q.profile)
-            tree = organizations.list_ou_tree(session)
-            return {"tree": tree, "org": organizations.describe_org(session)}
+            out = {"tree": organizations.list_ou_tree(session), "org": organizations.describe_org(session)}
+            ou_cache[q.profile or ""] = (time.monotonic(), out)
+            return out
         except Exception as exc:
             code, msg, hint = describe_exception(exc)
             log.warning("OU tree unavailable for profile %s: %s %s", q.profile, code, msg)

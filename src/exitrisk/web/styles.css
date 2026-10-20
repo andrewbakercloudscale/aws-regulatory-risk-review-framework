@@ -288,3 +288,8 @@ h3.sub { margin: 4px 0 10px; font-size: 13px; color: var(--ink-2); text-transfor
 .growth-head { margin: 0 0 12px; font-size: 14.5px; }
 .growth-head .up { color: var(--t5); font-weight: 600; }
 .growth-head .down { color: var(--t1); font-weight: 600; }
+.switch-hint { margin: 10px 0; padding: 10px 14px; border-left: 4px solid var(--accent); background: var(--surface-2); border-radius: 6px; font-size: 13.5px; }
+.switch-hint .btn { margin-top: 8px; display: block; }
+.spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }

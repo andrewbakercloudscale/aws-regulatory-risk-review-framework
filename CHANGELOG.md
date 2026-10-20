@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-20
+
 ### Changed
 - **Two headline scores: exit risk by spend and by number of accounts**, side by side with a one-line
   reading of the gap (concentrated vs widespread). Spend stays the default weighting for contributions;
@@ -25,6 +27,16 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   `summary.executive`. Replaces the "Key messages" list.
 - Breadth view: accounts per rating vs share of spend (section 3), "Portable accounts X of N" KPI tile and
   a key message counting portable vs High/Critical accounts.
+
+### Fixed
+- **OU picker with a member-account profile**: the scan dialog now preselects the profile that last read
+  the OU tree (else one named like *mgmt/management/payer*), and when OUs are denied it explains why and
+  links the local profile that is in the management account.
+- **Check access** offers a one-click switch to the local profile in the management account when the
+  selected one is a member account (profiles map to accounts via `sso_account_id`).
+- **OU list was slow and looked flat**: the tree is read level by level in parallel, cached per profile
+  for 15 minutes (↻ refreshes; a passing access check warms it), shows a loading state, and nested OUs
+  are indented under their parent.
 
 ### Fixed
 - Billing lines of one service (e.g. Connect, Contact Lens, Connect telephony) are merged per account: they no
