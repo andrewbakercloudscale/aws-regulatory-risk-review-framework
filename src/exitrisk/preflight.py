@@ -148,17 +148,21 @@ def run_checks(profile: str | None, role_name: str | None = None) -> dict:
             TimePeriod={"Start": start, "End": end},
             Granularity="MONTHLY",
             Metrics=["AmortizedCost"],
-            GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}],
+            # Region too, so the one paid call also proves the multi-region view's data is readable.
+            GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}, {"Type": "DIMENSION", "Key": "REGION"}],
         )
-        n = len(resp["ResultsByTime"][0].get("Groups", [])) if resp["ResultsByTime"] else 0
+        groups = resp["ResultsByTime"][0].get("Groups", []) if resp["ResultsByTime"] else []
+        n = len({g["Keys"][0] for g in groups})
+        n_regions = len({g["Keys"][1] for g in groups if g["Keys"][1] not in ("global", "NoRegion", "")})
         ctx["cost_accounts"] = n
+        ctx["cost_regions"] = n_regions
         few = n <= 1 and ctx.get("management_account_id") not in (None, ctx["account_id"])
         checks.append(
             Check(
                 "cost",
                 "Read Cost Explorer",
                 "warn" if few else "ok",
-                f"Spend visible for {n} account(s) in {start[:7]} (this check cost US$0.01).",
+                f"Spend visible for {n} account(s) in {n_regions} region(s) in {start[:7]} (this check cost US$0.01).",
                 "A member account sees only its own spend; use the management account." if few else "",
             )
         )

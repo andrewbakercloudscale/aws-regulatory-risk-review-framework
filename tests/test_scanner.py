@@ -104,3 +104,52 @@ def test_several_ous_scan_each_account_once(monkeypatch):
 
     with pytest.raises(scanner.ScanFailed, match="ou-zzz"):
         scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(ou_ids=["ou-zzz"])))
+
+
+def _single_account(monkeypatch):
+    monkeypatch.setattr(scanner, "make_session", lambda profile: object())
+    monkeypatch.setattr(scanner, "caller_identity", lambda s: {"account_id": "123456789012", "arn": "arn:x"})
+
+    def no_org(_s):
+        raise ClientError({"Error": {"Code": "AWSOrganizationsNotInUseException", "Message": "no org"}}, "Describe")
+
+    monkeypatch.setattr(scanner.organizations, "describe_org", no_org)
+    monkeypatch.setattr(
+        scanner.cost,
+        "fetch_costs",
+        lambda s, ids, m: (
+            [{"month": "2026-09", "account_id": ids[0], "service": "AWS Lambda", "amount": 10.0}],
+            {"start": "2026-09-01", "end": "2026-10-01", "months": 1},
+        ),
+    )
+
+
+def test_spend_by_region_is_saved(monkeypatch):
+    _single_account(monkeypatch)
+    rows = [{"account_id": "123456789012", "service": "AWS Lambda", "region": "eu-west-1", "monthly": 10.0}]
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: rows)
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
+    assert doc["region_costs"] == rows
+    assert store.load_scan(doc["id"])["region_costs"] == rows
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ClientError({"Error": {"Code": "AccessDeniedException", "Message": "denied"}}, "GetCostAndUsage"),
+        KeyError("Groups"),  # a bug, not an AWS refusal: still never fails the scan
+    ],
+)
+def test_spend_by_region_failure_is_an_issue_not_a_failed_scan(monkeypatch, caplog, error):
+    _single_account(monkeypatch)
+
+    def boom(*_a):
+        raise error
+
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", boom)
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
+    assert doc["status"] == "complete" and not doc["region_costs"]
+    issue = next(i for i in doc["issues"] if "spend by region" in i["message"])
+    assert issue["severity"] == "warning" and "one region" in issue["hint"]
+    if isinstance(error, KeyError):
+        assert any(r.exc_info for r in caplog.records if "unexpected" in r.getMessage())

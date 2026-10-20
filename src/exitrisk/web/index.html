@@ -327,6 +327,12 @@
   </div>
 
   <!-- ================================================================ Multi-region view -->
+  <div id="mrError" class="card mr-error no-print" role="alert" hidden>
+    <h2>The multi-region estimate could not be calculated</h2>
+    <p id="mrErrorText" class="error-text"></p>
+    <p id="mrErrorHint" class="muted"></p>
+    <p><button type="button" class="btn primary" id="btnMrRetry">Try again</button> <button type="button" class="btn ghost" id="btnMrLog">Open the log</button></p>
+  </div>
   <div id="mrContent" hidden>
     <section class="cover">
       <div class="eyebrow">Resilience review</div>

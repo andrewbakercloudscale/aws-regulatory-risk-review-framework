@@ -271,13 +271,17 @@ def run_scan(job: ScanJob) -> dict:
     try:
         data["region_costs"] = cost.fetch_region_costs(session, [a.id for a in accounts], p.months)
     except Exception as exc:  # optional data: never fail a scan for it
+        if not isinstance(exc, (ClientError, BotoCoreError)):
+            log.exception("spend by region failed with an unexpected error")  # a bug: keep the traceback
         code, msg, hint = describe_exception(exc)
         job.add_issue(
             Issue(
                 "warning",
                 "cost",
                 f"spend by region unavailable: {msg}",
-                hint or "The multi-region view will assume all spend runs in one region.",
+                " ".join(
+                    x for x in (hint, "Until then the multi-region view assumes all spend runs in one region.") if x
+                ),
                 error_code=code,
             )
         )

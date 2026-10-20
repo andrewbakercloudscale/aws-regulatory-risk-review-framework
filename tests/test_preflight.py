@@ -49,7 +49,9 @@ def _org(mgmt):
 
 def _ce(n):
     groups = [
-        {"Keys": [str(i).zfill(12)], "Metrics": {"AmortizedCost": {"Amount": "1", "Unit": "USD"}}} for i in range(n)
+        {"Keys": [str(i).zfill(12), region], "Metrics": {"AmortizedCost": {"Amount": "1", "Unit": "USD"}}}
+        for i in range(n)
+        for region in ("eu-west-1", "global")
     ]
     return {"ResultsByTime": [{"Groups": groups}]}
 
@@ -79,6 +81,8 @@ def test_management_account_with_full_access_is_ready(monkeypatch):
     r = preflight.run_checks("p")
     assert r["ready"] and r["permission_set"] == "CTO-Read"
     assert [c["status"] for c in r["checks"]] == ["ok", "ok", "ok", "ok", "ok", "skip"]
+    cost = next(c for c in r["checks"] if c["id"] == "cost")
+    assert "40 account(s) in 1 region(s)" in cost["detail"]  # one call proves the multi-region data too
 
 
 def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):

@@ -125,6 +125,22 @@ Bottom-up, like the exit estimate:
   regional spend is in the primary region and says so. Re-scan for the real split.
 - The demo estate runs production 90% in London (eu-west-2) and 10% in Ireland.
 
+## When something is wrong
+
+- **Data notes** at the top of the view say what the estimate had to assume, and are logged once per
+  scan: no spend-by-region data (older scan, or Cost Explorer refused it), an unknown primary region
+  (choose it in section 2), spend in a region this version does not know, services with no
+  multi-region profile, a second region that cannot be used, or an AWS regional services list more
+  than 180 days old.
+- **A failed calculation** shows a panel in place with the error, the request id and **Try again** /
+  **Open the log**, never a blank tab. A failed PDF export exits non-zero with the reason.
+- **Check access** proves the region data is readable with the same Cost Explorer call it already
+  makes (grouped by account and region), at no extra cost.
+- **A failure reading spend by region** never fails the scan: it becomes a warning on the Data quality
+  section; an unexpected (non-AWS) error is also logged with its traceback.
+- Every calculation logs one line: scan, recovery target, accounts chosen, primary and second
+  region, run cost, build weeks and time taken.
+
 ## CLI
 
 ```bash

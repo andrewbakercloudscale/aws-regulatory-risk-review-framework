@@ -109,3 +109,60 @@ def test_latency_and_support_helpers():
     assert support_fee(100_000, "enterprise") == 15_000
     assert support_fee(1_000_000, "enterprise") == 15_000 + 24_500 + 25_000
     assert support_fee(100_000, "none") == 0
+
+
+def _notes(r):
+    return " ".join(n["text"] for n in r["notes"])
+
+
+def test_data_problems_become_notes_on_the_page():
+    costs = [
+        {"month": "2026-09", "account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "amount": 900},
+        {"month": "2026-09", "account_id": "1", "service": "Some Brand New Service", "amount": 50},
+    ]
+    rc = [
+        {"account_id": "1", "service": costs[0]["service"], "region": "xx-moon-1", "monthly": 100},
+        {"account_id": "1", "service": costs[0]["service"], "region": "eu-west-1", "monthly": 800},
+    ]
+    r = build_multiregion(_scan(costs, rc), mq=MultiRegionAnswers(secondary="eu-west-1"))
+    text = _notes(r)
+    assert "xx-moon-1" in text  # a region this version does not know: said, not silently mispriced
+    assert "no multi-region profile" in text
+    assert "is not usable here" in text  # the chosen second region is the primary
+    assert r["summary"]["primary"] == "eu-west-1"
+    assert all(n["level"] in ("warning", "info") for n in r["notes"])
+
+
+def test_scan_without_region_data_explains_what_it_assumed():
+    costs = [{"month": "2026-09", "account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "amount": 5}]
+    text = _notes(build_multiregion(_scan(costs)))
+    assert "no spend-by-region data" in text and "Primary region" in text
+    assert "Primary region" not in _notes(build_multiregion(_scan(costs), mq=MultiRegionAnswers(primary="eu-west-1")))
+
+
+def test_old_availability_list_is_flagged():
+    from datetime import date
+
+    from exitrisk.multiregion import _availability_age_days
+
+    assert _availability_age_days({"availability_fetched": "2026-01-01"}, date(2026, 10, 1)) == 273
+    assert _availability_age_days({"availability_fetched": "not a date"}) is None
+
+
+def test_notes_are_logged_once_per_scan(caplog):
+    costs = [{"month": "2026-09", "account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "amount": 5}]
+    scan = _scan(costs)
+    scan["id"] = "20260101-000000-once"
+    with caplog.at_level("INFO", logger="exitrisk.multiregion"):
+        build_multiregion(scan)
+        build_multiregion(scan)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert sum("no spend-by-region data" in m for m in msgs) == 1
+    assert sum(m.startswith("multi-region 20260101-000000-once: rto_3h") for m in msgs) == 2  # one summary per run
+
+
+def test_no_accounts_selected_is_a_clean_empty_estimate():
+    r = build_multiregion(build_demo_scan(12), mq=MultiRegionAnswers(accounts=[]))
+    s = r["summary"]
+    assert s["accounts_selected"] == 0 and s["run"]["annual_total"] == 0 and s["staff"]["fte"] == 0
+    assert s["ranges"]["run_annual"] == "–" and "Pick at least one account" in s["executive"]["headline"]

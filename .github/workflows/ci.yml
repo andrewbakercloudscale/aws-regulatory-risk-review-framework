@@ -44,6 +44,8 @@ jobs:
           # Chromium's system libraries do not need it.
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources
           playwright install --with-deps chromium
+      - name: Browser tests (multi-region choices, selection, error panel and retry)
+        run: pytest -q tests/test_ui_multiregion.py
       - name: Render dashboard and PDF (fails on any browser console error)
         run: python scripts/screenshots.py
       - uses: actions/upload-artifact@v4
@@ -52,3 +54,4 @@ jobs:
           path: |
             docs/images/*.png
             docs/sample-report.pdf
+            docs/sample-multiregion.pdf

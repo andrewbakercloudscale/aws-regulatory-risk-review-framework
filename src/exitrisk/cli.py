@@ -162,6 +162,11 @@ def _pdf(args) -> int:
             page.on("console", lambda m: m.type == "error" and log.error("page: %s", m.text))
             page.goto(f"http://127.0.0.1:{args.port}/?{query}")
             page.wait_for_selector("body[data-ready='1']", timeout=30000)
+            failed = page.get_attribute("body", "data-error")
+            if failed:
+                log.error("the report could not be built: %s (see the log above)", failed)
+                browser.close()
+                return 1
             page.emulate_media(media="print")
             page.pdf(
                 path=args.out,

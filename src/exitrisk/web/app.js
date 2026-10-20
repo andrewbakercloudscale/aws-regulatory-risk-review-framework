@@ -69,6 +69,8 @@
       const err = new Error(msg);
       err.hint = body?.hint;
       err.code = body?.code;
+      err.status = res.status;
+      err.requestId = body?.request_id || res.headers.get("X-Request-Id");
       console.error("api error", path, res.status, msg);
       throw err;
     }
@@ -145,6 +147,7 @@
     } catch (e) {
       $("#filterError").textContent = e.message;
       toast(e.message);
+      if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
       return;
     }
     const url = new URL(location.href);
@@ -640,6 +643,7 @@
     for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
     $("#content").hidden = state.view !== "exit" || !state.report;
     $("#mrContent").hidden = state.view !== "multiregion" || !state.mr;
+    if (state.view !== "multiregion") $("#mrError").hidden = true;
     if (!PRINT) {
       const url = new URL(location.href);
       if (state.view === "multiregion") url.searchParams.set("view", "multiregion"); else url.searchParams.delete("view");
@@ -691,8 +695,26 @@
       const mr = await api("/api/multiregion", { method: "POST", body });
       if (seq !== state.mrSeq) return; // a newer request superseded this one
       state.mr = mr;
-    } catch (e) { toast(e.message); return; }
+    } catch (e) {
+      if (seq !== state.mrSeq) return;
+      showMrError(e);
+      return;
+    }
+    $("#mrError").hidden = true;
     renderMr();
+  }
+
+  // A failed calculation must say so in place, not leave a blank tab behind a toast.
+  function showMrError(e) {
+    console.error("multi-region failed", e);
+    const ref = e.requestId ? ` (request ${e.requestId})` : "";
+    $("#mrErrorText").textContent = `${e.message}${ref}`;
+    $("#mrErrorHint").textContent = e.hint || (e.status >= 500
+      ? "This is a bug in the console. Open the Log for the details, and report it with the log lines."
+      : "Check the choices in section 2 and try again.");
+    $("#mrError").hidden = state.view !== "multiregion";
+    if (state.mr) toast(`Multi-region not updated: ${e.message}`);
+    if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
   }
 
   function fillMrForm(m) {
@@ -733,8 +755,7 @@
       ["Recovery target", m.labels.recovery[m.answers.recovery]],
       ["Data residency", m.labels.residency[m.answers.residency]],
     ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
-    const notes = [];
-    if (!s.has_region_data) notes.push(`This scan has no spend-by-region data (scans made before this version did not collect it), so all spend is assumed to run in ${s.primary_name}. Run a new scan for the real split.`);
+    const notes = (m.notes || []).map((n) => n.text);
     if (!s.secondary) notes.push("No AWS region meets the data-residency rule. Relax the rule in section 2 to see candidates.");
     $("#mrCoverage").hidden = !notes.length;
     $("#mrCoverage").innerHTML = notes.map((n) => `<p>${esc(n)}</p>`).join("");
@@ -847,6 +868,8 @@
   }
 
   function bindMultiRegion() {
+    $("#btnMrRetry").addEventListener("click", () => loadMultiRegion());
+    $("#btnMrLog").addEventListener("click", () => $("#btnLogs").click());
     for (const b of document.querySelectorAll(".vtab")) b.addEventListener("click", () => setView(b.dataset.view));
     $("#mrForm").addEventListener("change", (ev) => {
       const el = ev.target;

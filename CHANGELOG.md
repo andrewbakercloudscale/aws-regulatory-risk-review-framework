@@ -6,6 +6,27 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-20
+
+### Added
+- Multi-region data notes: the view says (and logs once per scan) what it had to assume: no
+  spend-by-region data, unknown primary region, regions this version does not know, services with
+  no multi-region profile, an unusable second region, an old AWS regional services list.
+- A failed multi-region calculation shows an error panel with the request id, **Try again** and
+  **Open the log**, instead of a blank tab and a toast. PDF export exits non-zero with the reason
+  when the report cannot be built, instead of waiting 30 seconds.
+- Check access confirms spend by region is readable (same call, no extra cost).
+- One structured log line per multi-region calculation; unexpected errors reading spend by region
+  are logged with a traceback.
+- Browser tests for the multi-region tab (choices, account selection, error panel and retry), run in CI.
+
+### Fixed
+- Spend in a region missing from the region table could silently make US East the primary region.
+
+### Changed
+- The multi-region model is split into small, tested steps (no change to any figure: verified
+  against the previous version on 20 scenarios).
+
 ## [0.3.0] - 2026-10-20
 
 ### Added

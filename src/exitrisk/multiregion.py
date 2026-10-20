@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date
 from functools import lru_cache
 from importlib import resources
 
 import yaml
 from pydantic import BaseModel, Field
 
-from .catalog import Catalog, load_catalog
+from .catalog import Catalog, ServiceInfo, load_catalog
 from .estimate import (
     CICD_FACTORS,
     COST_RANGE,
@@ -37,6 +40,9 @@ from .estimate import (
     size_multiplier,
 )
 from .filtering import AccountFilter
+from .logging_config import get_logger
+
+log = get_logger("multiregion")
 
 RECOVERY = {
     "rto_3h": "Recover within 3 hours of a region-wide event",
@@ -90,6 +96,7 @@ COUNTRY_NAMES = {
     "IN": "India", "HK": "Hong Kong", "TW": "Taiwan", "JP": "Japan", "KR": "South Korea", "SG": "Singapore",
     "AU": "Australia", "ID": "Indonesia", "MY": "Malaysia", "NZ": "New Zealand", "TH": "Thailand",
 }  # fmt: skip
+AVAILABILITY_MAX_AGE_DAYS = 180  # older than this, the regional services list misses new launches
 SEVERITY_ORDER = {"Low": 0, "Moderate": 1, "High": 2, "Critical": 3}
 FAILOVER_LABELS = {
     "native": "AWS replicates and fails over",
@@ -120,6 +127,25 @@ def load_region_data() -> dict:
     cfg["availability_version"] = avail.get("source_version", "")
     cfg["availability_fetched"] = avail.get("fetched", "")
     return cfg
+
+
+def _availability_age_days(cfg: dict, today: date | None = None) -> int | None:
+    try:
+        fetched = date.fromisoformat(str(cfg.get("availability_fetched", ""))[:10])
+    except ValueError:
+        return None
+    return ((today or date.today()) - fetched).days
+
+
+_logged: set[tuple[str, str]] = set()
+
+
+def _log_once(scan_id: str, note: dict) -> None:
+    """The view recalculates on every change in the page: log each data note once per scan."""
+    key = (scan_id, note["text"])
+    if key not in _logged:
+        _logged.add(key)
+        (log.warning if note["level"] == "warning" else log.info)("multi-region %s: %s", scan_id, note["text"])
 
 
 def latency_ms(a: dict, b: dict, regions: dict | None = None) -> float:
@@ -185,25 +211,34 @@ def _money(v: float, cur: str = "USD") -> str:
     return f"{sym}{v:,.0f}"
 
 
-def build_multiregion(
-    scan: dict,
-    account_filter: AccountFilter | None = None,
-    q: Questionnaire | None = None,
-    mq: MultiRegionAnswers | None = None,
-    catalog: Catalog | None = None,
-) -> dict:
-    catalog = catalog or load_catalog()
-    account_filter = account_filter or AccountFilter()
-    q = q or Questionnaire()
-    mq = mq or MultiRegionAnswers()
-    cfg = load_region_data()
-    regions, classes, avail = cfg["regions"], cfg["classes"], cfg["availability"]
-    ri = RECOVERY_INDEX[mq.recovery]
+@dataclass
+class _Line:
+    """One slice of monthly spend: an account's service in one region."""
 
-    accounts = {a["id"]: a for a in scan.get("accounts", []) if account_filter.matches(a["name"])}
+    account: str
+    info: ServiceInfo
+    cls: str  # service class in data/regions.yaml
+    regional: str | None  # name in the AWS regional services table, "global", or None if unmapped
+    region: str | None  # None until the primary region is known
+    monthly: float  # USD
+
+
+@dataclass
+class _Totals:
+    """What the selected accounts add up to, for people and build effort."""
+
+    service_weeks: float = 0.0
+    material: int = 0
+    data_monthly: float = 0.0
+
+
+def _note(notes: list[dict], level: str, text: str) -> None:
+    notes.append({"level": level, "text": text})
+
+
+def _spend_lines(scan: dict, accounts: dict, catalog: Catalog, cfg: dict, notes: list[dict]) -> tuple[list, int]:
+    """Split each account's monthly spend per service across the regions it runs in."""
     n_months = max(len({r["month"] for r in scan.get("costs", [])}), 1)
-
-    # Monthly spend per account and catalog service, exactly as the exit report counts it.
     spend: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for r in scan.get("costs", []):
         if r["account_id"] not in accounts or r["amount"] <= 0:
@@ -212,93 +247,123 @@ def build_multiregion(
         if not info.excluded:
             spend[r["account_id"]][info.service] += r["amount"] / n_months
 
-    # Region shares per (account, service) from the scan's region lines.
-    region_rows = scan.get("region_costs") or []
-    has_region_data = bool(region_rows)
     shares: dict[tuple, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    for r in region_rows:
+    for r in scan.get("region_costs") or []:
         if r["account_id"] in accounts:
             region = "global" if r["region"] in GLOBAL_REGIONS else r["region"]
             shares[(r["account_id"], catalog.lookup(r["service"]).service)][region] += r["monthly"]
 
-    def service_cfg(info) -> tuple[str, str | None]:
-        entry = cfg["services"].get(info.service) or {}
-        cls = entry.get("class") or cfg["category_classes"].get(info.category, "compute")
-        return cls, entry.get("regional")
-
-    # Where the in-scope spend runs today, to find the primary region.
-    by_region: dict[str, float] = defaultdict(float)
-    lines = []  # (account, service info, class, regional name, region, monthly)
+    unmapped: dict[str, float] = defaultdict(float)
+    lines = []
     for aid, svcs in spend.items():
         for svc, monthly in svcs.items():
             info = catalog.lookup(svc)
-            cls, regional = service_cfg(info)
+            entry = cfg["services"].get(info.service)
+            if entry is None:
+                unmapped[info.display] += monthly
+            entry = entry or {}
+            cls = entry.get("class") or cfg["category_classes"].get(info.category, "compute")
+            regional = entry.get("regional")
             split = shares.get((aid, svc))
             total = sum(split.values()) if split else 0.0
             parts = {k: monthly * v / total for k, v in split.items()} if total > 0 else {None: monthly}
             for region, m in parts.items():
-                lines.append([aid, info, cls, regional, region, m])
+                if cls == "global" or regional == "global":
+                    region = "global"
+                lines.append(_Line(aid, info, cls, regional, region, m))
+    if unmapped:
+        names = ", ".join(sorted(unmapped, key=lambda k: -unmapped[k])[:5])
+        _note(
+            notes,
+            "warning",
+            f"{len(unmapped)} service(s) have no multi-region profile ({names}): costed by their catalog "
+            "category, and their availability in other regions is not verified.",
+        )
+    return lines, n_months
+
+
+def _primary_region(lines: list[_Line], mq: MultiRegionAnswers, regions: dict, notes: list[dict]) -> tuple:
+    """(primary, detected): the region with most spend, unless the user chose one."""
     known: dict[str, float] = defaultdict(float)
-    for line in lines:
-        if line[2] == "global" or line[3] == "global":
-            line[4] = "global"
-        if line[4] not in (None, "global"):
-            known[line[4]] += line[5]
+    unknown: dict[str, float] = defaultdict(float)
+    for ln in lines:
+        if ln.region not in (None, "global"):
+            (known if ln.region in regions else unknown)[ln.region] += ln.monthly
+    if unknown:
+        _note(
+            notes,
+            "warning",
+            f"Spend in region(s) this version does not know ({', '.join(sorted(unknown))}): priced at "
+            "the primary region's rates and not offered as a second region. Upgrade exitrisk for them.",
+        )
     detected = max(known, key=known.get) if known else None
-    primary = mq.primary if mq.primary in regions else detected if detected in regions else "us-east-1"
-    for line in lines:
-        if line[4] is None:
-            line[4] = primary  # no region data for this line: assume it runs in the primary region
-        by_region[line[4]] += line[5]
-    regional_by_region = {k: v for k, v in by_region.items() if k != "global"}
+    if mq.primary in regions:
+        primary = mq.primary
+    elif detected:
+        primary = detected
+    else:
+        primary = "us-east-1"
+        if lines:
+            _note(
+                notes,
+                "warning",
+                "The primary region is unknown, so US East (N. Virginia) is assumed: choose the right one "
+                "under Primary region in section 2.",
+            )
+    for ln in lines:
+        if ln.region is None:
+            ln.region = primary  # no region data for this line: assume it runs in the primary region
+    return primary, detected
 
-    # Which accounts go multi-region.
-    chosen = set(mq.accounts) & set(accounts) if mq.accounts is not None else set(accounts)
-    sel = [ln for ln in lines if ln[0] in chosen and ln[4] != "global"]
-    sel_monthly = sum(ln[5] for ln in lines if ln[0] in chosen)
-    regional_monthly = sum(ln[5] for ln in sel)
-    src_spend: dict[str, float] = defaultdict(float)
+
+def _availability(avail: dict, regional: str | None, region: str) -> str:
+    if regional == "global":
+        return "global"
+    if regional is None or regional not in avail:
+        return "unverified"
+    return "available" if region in avail[regional] else "missing"
+
+
+def _run_cost(sel: list[_Line], region: str, regions: dict, classes: dict, ri: int) -> tuple[float, dict, float]:
+    """Monthly USD in ``region``: (infrastructure, by class, replication transfer)."""
+    price = regions[region]["price"]
+    infra, by_class, replicated = 0.0, defaultdict(float), 0.0
     for ln in sel:
-        src_spend[ln[4]] += ln[5]
+        src_price = regions.get(ln.region, {}).get("price", 1.0)
+        c = ln.monthly * classes[ln.cls]["run"][ri] * price / src_price
+        infra += c
+        by_class[ln.cls] += c
+        if ln.cls in ("data", "storage", "analytics"):
+            replicated += ln.monthly
+    return infra, dict(by_class), replicated * TRANSFER_PCT[ri]
 
-    def availability(regional: str | None, region: str) -> str:
-        if regional == "global":
-            return "global"
-        if regional is None or regional not in avail:
-            return "unverified"
-        return "available" if region in avail[regional] else "missing"
 
-    def run_cost(region: str) -> tuple[float, dict, float]:
-        """Monthly USD: (infra, by class, replication transfer)."""
-        price = regions[region]["price"]
-        infra, by_class, replicated = 0.0, defaultdict(float), 0.0
-        for _, _, cls, _, src, m in sel:
-            src_price = regions.get(src, {}).get("price", 1.0)
-            c = m * classes[cls]["run"][ri] * price / src_price
-            infra += c
-            by_class[cls] += c
-            if cls in ("data", "storage", "analytics"):
-                replicated += m
-        return infra, dict(by_class), replicated * TRANSFER_PCT[ri]
-
-    # Service totals in the selection, for parity.
+def _service_totals(sel: list[_Line]) -> dict[str, dict]:
     svc_spend: dict[str, dict] = {}
-    for aid, info, cls, regional, _src, m in sel:
+    for ln in sel:
         s = svc_spend.setdefault(
-            info.service,
-            {"service": info.service, "display": info.display, "class": cls, "regional": regional,
+            ln.info.service,
+            {"service": ln.info.service, "display": ln.info.display, "class": ln.cls, "regional": ln.regional,
              "monthly_spend": 0.0, "accounts": set()},
         )  # fmt: skip
-        s["monthly_spend"] += m
-        s["accounts"].add(aid)
+        s["monthly_spend"] += ln.monthly
+        s["accounts"].add(ln.account)
+    return svc_spend
 
+
+def _candidates(
+    sel: list[_Line], svc_spend: dict, by_region: dict, primary: str, mq: MultiRegionAnswers, cfg: dict
+) -> list[dict]:
+    """Every other region, scored on service parity, latency and price; residency-allowed first."""
+    regions, avail, ri = cfg["regions"], cfg["availability"], RECOVERY_INDEX[mq.recovery]
     p = regions[primary]
     weights = SCORE_WEIGHTS[mq.recovery]
-    candidates = []
+    regional_total = max(sum(v for k, v in by_region.items() if k != "global"), 1e-9)
+    out = []
     for code, r in regions.items():
         if code == primary:
             continue
-        status = {k: availability(s["regional"], code) for k, s in svc_spend.items()}
+        status = {k: _availability(avail, s["regional"], code) for k, s in svc_spend.items()}
         avail_spend = sum(s["monthly_spend"] for k, s in svc_spend.items() if status[k] in ("available", "global"))
         missing = [svc_spend[k] for k in status if status[k] == "missing"]
         missing_spend = sum(s["monthly_spend"] for s in missing)
@@ -306,8 +371,8 @@ def build_multiregion(
         parity = 100 * avail_spend / checked if checked else 100.0
         rtt = round(latency_ms(p, r, regions) / 5) * 5
         price_ratio = r["price"] / p["price"]
-        existing = 100 * by_region.get(code, 0.0) / max(sum(regional_by_region.values()), 1e-9)
-        infra, _, transfer = run_cost(code)
+        existing = 100 * by_region.get(code, 0.0) / regional_total
+        infra, _, transfer = _run_cost(sel, code, regions, cfg["classes"], ri)
         score = (
             weights[0] * (parity / 100) ** 6  # a missing service is a re-architecture: penalise steeply
             + weights[1] * max(0.0, 1 - max(rtt - 10, 0) / 250)
@@ -320,7 +385,7 @@ def build_multiregion(
             notes.append(f"~{rtt:.0f} ms is too far for synchronous replication")
         if existing >= 1:
             notes.append(f"{existing:.0f}% of spend already runs here")
-        candidates.append(
+        out.append(
             {
                 "region": code,
                 "name": r["name"],
@@ -338,64 +403,55 @@ def build_multiregion(
                 "notes": notes,
             }
         )
-    candidates.sort(key=lambda c: (not c["residency_ok"], -c["score"]))
-    allowed = [c for c in candidates if c["residency_ok"]]
-    recommended = allowed[0]["region"] if allowed else None
-    secondary = mq.secondary if mq.secondary in regions and mq.secondary != primary else recommended
-    target = next((c for c in candidates if c["region"] == secondary), None)
+    out.sort(key=lambda c: (not c["residency_ok"], -c["score"]))
+    return out
 
-    # ------------------------------------------------------------------ the selected second region
-    cur, fx = q.currency, q.fx_per_usd
-    if target:
-        infra, by_class, transfer = run_cost(secondary)
-        status = {k: availability(s["regional"], secondary) for k, s in svc_spend.items()}
-    else:
-        infra, by_class, transfer, status = 0.0, {}, 0.0, {}
 
-    # AWS Support is billed on the payer's whole bill: price the uplift on top of the scan's total.
-    scan_monthly = sum(r["amount"] for r in scan.get("costs", []) if r["amount"] > 0) / n_months
-    support = support_fee(scan_monthly + infra + transfer, mq.support_plan) - support_fee(scan_monthly, mq.support_plan)
-
-    # Per-account risks and build effort.
+def _account_risks(
+    accounts: dict, lines: list[_Line], chosen: set, secondary: str | None, mq: MultiRegionAnswers,
+    q: Questionnaire, cfg: dict,
+) -> tuple[list[dict], _Totals]:  # fmt: skip
+    """Per account: each service's failover risk and build effort, sorted by spend."""
+    regions, classes, ri = cfg["regions"], cfg["classes"], RECOVERY_INDEX[mq.recovery]
     risk_cfg = cfg.get("risks") or {}
-    acct_out = []
-    service_weeks = 0.0
-    material = 0
-    data_monthly = 0.0
+    by_account: dict[str, list[_Line]] = defaultdict(list)
+    for ln in lines:
+        by_account[ln.account].append(ln)
+    totals = _Totals()
+    out = []
     for aid, acct in accounts.items():
-        a_lines = [ln for ln in lines if ln[0] == aid]
-        a_monthly = sum(ln[5] for ln in a_lines)
-        a_regional = defaultdict(float)
-        a_cls = {}
-        for _, info, cls, regional, src, m in a_lines:
-            if src != "global":
-                a_regional[info.service] += m
-                a_cls[info.service] = (info, cls, regional)
+        a_lines = by_account.get(aid, [])
+        a_regional: dict[str, float] = defaultdict(float)
+        a_info: dict[str, _Line] = {}
+        for ln in a_lines:
+            if ln.region != "global":
+                a_regional[ln.info.service] += ln.monthly
+                a_info[ln.info.service] = ln
         risks = []
         weeks = 0.0
         for svc, m in sorted(a_regional.items(), key=lambda kv: -kv[1]):
-            info, cls, regional = a_cls[svc]
+            ln = a_info[svc]
             rc = risk_cfg.get(svc) or {}
-            failover = rc.get("failover") or classes[cls]["failover"]
-            note = rc.get("note") or classes[cls]["note"]
-            st = availability(regional, secondary) if secondary else "unverified"
+            failover = rc.get("failover") or classes[ln.cls]["failover"]
+            note = rc.get("note") or classes[ln.cls]["note"]
+            st = _availability(cfg["availability"], ln.regional, secondary) if secondary else "unverified"
             if st == "missing":
                 failover = "missing"
                 note = f"Not offered in {regions[secondary]['name']}: re-architect onto another service there. " + note
             w = 0.0
             if m >= q.materiality:
-                w = classes[cls]["build_weeks"][ri] * size_multiplier(m)
+                w = classes[ln.cls]["build_weeks"][ri] * size_multiplier(m)
                 if st == "missing":
-                    w += info.effort_weeks * size_multiplier(m) * MISSING_SERVICE_FACTOR
+                    w += ln.info.effort_weeks * size_multiplier(m) * MISSING_SERVICE_FACTOR
                 elif st == "unverified":
                     w *= UNVERIFIED_FACTOR
             weeks += w
-            if cls != "global" and m >= 1:
+            if ln.cls != "global" and m >= 1:
                 risks.append(
                     {
-                        "service": info.display,
+                        "service": ln.info.display,
                         "monthly_spend": round(m, 2),
-                        "class": cls,
+                        "class": ln.cls,
                         "failover": failover,
                         "failover_label": FAILOVER_LABELS[failover],
                         "severity": _severity(failover, mq.recovery),
@@ -405,18 +461,17 @@ def build_multiregion(
                 )
         risks.sort(key=lambda x: (-SEVERITY_ORDER[x["severity"]], -x["monthly_spend"]))
         selected = aid in chosen
-        is_material = sum(a_regional.values()) >= q.materiality
         if selected:
-            service_weeks += weeks
-            material += 1 if is_material else 0
-            data_monthly += sum(m for s, m in a_regional.items() if a_cls[s][1] in ("data", "analytics"))
+            totals.service_weeks += weeks
+            totals.material += 1 if sum(a_regional.values()) >= q.materiality else 0
+            totals.data_monthly += sum(m for s, m in a_regional.items() if a_info[s].cls in ("data", "analytics"))
         worst = max((SEVERITY_ORDER[r["severity"]] for r in risks if r["monthly_spend"] >= q.materiality), default=None)
-        acct_out.append(
+        out.append(
             {
                 "id": aid,
                 "name": acct["name"],
                 "ou_path": acct.get("ou_path", ""),
-                "monthly_spend": round(a_monthly, 2),
+                "monthly_spend": round(sum(ln.monthly for ln in a_lines), 2),
                 "regional_spend": round(sum(a_regional.values()), 2),
                 "selected": selected,
                 "readiness": next((k for k, v in SEVERITY_ORDER.items() if v == worst), "Low") if risks else None,
@@ -425,34 +480,110 @@ def build_multiregion(
                 "risks": risks,
             }
         )
-    acct_out.sort(key=lambda a: -a["monthly_spend"])
+    out.sort(key=lambda a: -a["monthly_spend"])
+    return out, totals
 
-    # ------------------------------------------------------------------ people
-    team = q.cloud_team_size
-    fte_parts = {
-        "Platform and SRE: on-call and operations for two regions": STAFF_TEAM_UPLIFT[ri] * team,
+
+def _people(q: Questionnaire, ri: int, totals: _Totals, any_selected: bool) -> tuple[dict, float]:
+    """Extra FTE to run two regions, by role, and the total."""
+    parts = {
+        "Platform and SRE: on-call and operations for two regions": STAFF_TEAM_UPLIFT[ri] * q.cloud_team_size,
         "Resilience: DR testing, failover rehearsals, regulator evidence": STAFF_RESILIENCE[ri],
-        "Workload operations across multi-region accounts": STAFF_PER_25_ACCOUNTS[ri] * material / 25,
+        "Workload operations across multi-region accounts": STAFF_PER_25_ACCOUNTS[ri] * totals.material / 25,
         "Data replication and database operations": STAFF_DATA[ri]
-        * min(math.sqrt(max(data_monthly, 0) / 100_000), 3.0),
+        * min(math.sqrt(max(totals.data_monthly, 0) / 100_000), 3.0),
     }
-    fte = max(sum(fte_parts.values()), STAFF_FLOOR[ri]) if sel else 0.0
+    fte = max(sum(parts.values()), STAFF_FLOOR[ri]) if any_selected else 0.0
+    return parts, fte
+
+
+def build_multiregion(
+    scan: dict,
+    account_filter: AccountFilter | None = None,
+    q: Questionnaire | None = None,
+    mq: MultiRegionAnswers | None = None,
+    catalog: Catalog | None = None,
+) -> dict:
+    started = time.perf_counter()
+    catalog = catalog or load_catalog()
+    account_filter = account_filter or AccountFilter()
+    q = q or Questionnaire()
+    mq = mq or MultiRegionAnswers()
+    cfg = load_region_data()
+    regions, classes = cfg["regions"], cfg["classes"]
+    ri = RECOVERY_INDEX[mq.recovery]
+    notes: list[dict] = []
+
+    accounts = {a["id"]: a for a in scan.get("accounts", []) if account_filter.matches(a["name"])}
+    has_region_data = bool(scan.get("region_costs"))
+    if not has_region_data:
+        _note(
+            notes,
+            "warning",
+            "This scan has no spend-by-region data (scans made before v0.3.0 did not collect it, or the "
+            "scan could not read it), so all spend is assumed to run in the primary region. Run a new scan.",
+        )
+    stale = _availability_age_days(cfg)
+    if stale is not None and stale > AVAILABILITY_MAX_AGE_DAYS:
+        _note(
+            notes,
+            "info",
+            f"The AWS regional services list is {stale} days old: upgrade exitrisk, or run "
+            "scripts/refresh_region_services.py, for services launched since.",
+        )
+    lines, n_months = _spend_lines(scan, accounts, catalog, cfg, notes)
+    primary, detected = _primary_region(lines, mq, regions, notes)
+    by_region: dict[str, float] = defaultdict(float)
+    for ln in lines:
+        by_region[ln.region] += ln.monthly
+
+    # Which accounts go multi-region.
+    chosen = set(mq.accounts) & set(accounts) if mq.accounts is not None else set(accounts)
+    if mq.accounts is not None and len(chosen) < len(set(mq.accounts)):
+        log.info("multi-region: %d chosen account(s) are not in scope", len(set(mq.accounts)) - len(chosen))
+    sel = [ln for ln in lines if ln.account in chosen and ln.region != "global"]
+    sel_monthly = sum(ln.monthly for ln in lines if ln.account in chosen)
+    regional_monthly = sum(ln.monthly for ln in sel)
+    svc_spend = _service_totals(sel)
+
+    candidates = _candidates(sel, svc_spend, by_region, primary, mq, cfg)
+    allowed = [c for c in candidates if c["residency_ok"]]
+    recommended = allowed[0]["region"] if allowed else None
+    secondary = mq.secondary if mq.secondary in regions and mq.secondary != primary else recommended
+    if mq.secondary and secondary != mq.secondary:
+        _note(notes, "warning", f"Second region {mq.secondary!r} is not usable here; using the recommended one.")
+    target = next((c for c in candidates if c["region"] == secondary), None)
+
+    # ------------------------------------------------------------------ cost to run
+    cur, fx = q.currency, q.fx_per_usd
+    if target:
+        infra, by_class, transfer = _run_cost(sel, secondary, regions, classes, ri)
+        status = {k: _availability(cfg["availability"], s["regional"], secondary) for k, s in svc_spend.items()}
+    else:
+        infra, by_class, transfer, status = 0.0, {}, 0.0, {}
+    # AWS Support is billed on the payer's whole bill: price the uplift on top of the scan's total.
+    scan_monthly = sum(r["amount"] for r in scan.get("costs", []) if r["amount"] > 0) / n_months
+    support = support_fee(scan_monthly + infra + transfer, mq.support_plan) - support_fee(scan_monthly, mq.support_plan)
+
+    acct_out, totals = _account_risks(accounts, lines, chosen, secondary, mq, q, cfg)
+    fte_parts, fte = _people(q, ri, totals, bool(sel))
     fte_cost = mq.fte_annual_cost or q.day_rate * WORKING_DAYS
     staff_annual = fte * fte_cost  # in ``cur``
 
-    # ------------------------------------------------------------------ build
+    # ------------------------------------------------------------------ cost and time to build
+    material = totals.material
     factor = CICD_FACTORS[q.cicd] * IAC_FACTORS[q.iac] * (REGULATED_FACTOR if q.regulated else 1.0)
     existing_pct = target["existing_pct"] if target else 0.0
     lz = (LANDING_ZONE_WEEKS[ri] + LANDING_ZONE_PER_ACCOUNT * material) * (
         0.5 if existing_pct >= EXISTING_FOOTPRINT_PCT else 1.0
     )
-    delivery = (service_weeks + ACCOUNT_WEEKS[ri] * material) * factor
+    delivery = (totals.service_weeks + ACCOUNT_WEEKS[ri] * material) * factor
     dr = (DR_PROGRAMME_WEEKS[ri] + DR_PER_ACCOUNT * material) * (REGULATED_FACTOR if q.regulated else 1.0)
     pmo = (delivery + lz + dr) * PMO_PCT
     base = delivery + lz + dr + pmo
     contingency = base * q.contingency_pct / 100
     total_weeks = base + contingency if sel else 0.0
-    capacity = max(team * mq.allocation_pct / 100 + q.app_engineers_fte, 0.5)
+    capacity = max(q.cloud_team_size * mq.allocation_pct / 100 + q.app_engineers_fte, 0.5)
     effort_bound = total_weeks / (capacity * PRODUCTIVE_PCT)
     calendar_weeks = math.ceil(max(effort_bound, CRITICAL_PATH_WEEKS[ri]) + REHEARSAL_WEEKS) if sel else 0
     infra_annual_fx = (infra + transfer) * 12 * fx
@@ -462,6 +593,7 @@ def build_multiregion(
     build_cost = labour + ramp
     run_annual = infra_annual_fx + support_annual_fx + staff_annual
     sel_annual_fx = sel_monthly * 12 * fx
+    p = regions[primary]
 
     def mr(lo: float, hi: float) -> str:
         return money_range(lo, hi, cur) if hi > 0 else "–"
@@ -553,7 +685,7 @@ def build_multiregion(
             "total_weeks": round(total_weeks, 1),
             "parts": [
                 {"part": "Second-region landing zone", "weeks": round(lz, 1)},
-                {"part": "Workloads made multi-region", "weeks": round(service_weeks * factor, 1)},
+                {"part": "Workloads made multi-region", "weeks": round(totals.service_weeks * factor, 1)},
                 {
                     "part": "Per-account failover, DNS, IAM, pipelines",
                     "weeks": round(ACCOUNT_WEEKS[ri] * material * factor, 1),
@@ -576,7 +708,15 @@ def build_multiregion(
         "ranges": ranges,
     }
     summary["executive"] = _executive(summary, candidates, mq, q, p)
+    for n in notes:
+        _log_once(scan.get("id", ""), n)
+    log.info(
+        "multi-region %s: %s %d/%d account(s), %s -> %s, run %.0f %s/yr, build %.0f weeks, %d note(s), %.0f ms",
+        scan.get("id", "?"), mq.recovery, len(chosen), len(accounts), primary, secondary or "none",
+        run_annual, cur, total_weeks, len(notes), (time.perf_counter() - started) * 1000,
+    )  # fmt: skip
     return {
+        "notes": notes,
         "answers": mq.model_dump(),
         "labels": {"recovery": RECOVERY, "residency": RESIDENCY, "support_plan": SUPPORT_PLANS},
         "regions": {k: v["name"] for k, v in regions.items()},
