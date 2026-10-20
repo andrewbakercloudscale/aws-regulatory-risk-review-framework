@@ -1,7 +1,7 @@
 """Generate docs/SERVICE_CATALOG.md from the YAML catalog (CI fails if it is stale).
 
-    python scripts/gen_catalog_doc.py          # write
-    python scripts/gen_catalog_doc.py --check  # exit 1 if docs/SERVICE_CATALOG.md is out of date
+python scripts/gen_catalog_doc.py          # write
+python scripts/gen_catalog_doc.py --check  # exit 1 if docs/SERVICE_CATALOG.md is out of date
 """
 
 from __future__ import annotations
@@ -17,7 +17,10 @@ from exitrisk.catalog import load_catalog  # noqa: E402
 OUT = ROOT / "docs" / "SERVICE_CATALOG.md"
 TIER_TEXT = {
     1: "Commodity infrastructure or an open standard. Lift-and-shift; configuration moves, code does not change.",
-    2: "Managed flavour of an open engine or de-facto standard API. Data and configuration migrate; little code change.",
+    2: (
+        "Managed flavour of an open engine or de-facto standard API. "
+        "Data and configuration migrate; little code change."
+    ),
     3: "AWS-specific API with a close equivalent on every major cloud. Code changes at the integration points.",
     4: "Proprietary programming or data model. The workload must be redesigned, not just re-pointed.",
     5: "No equivalent outside AWS. Rebuild, re-platform or replace with a product; often a business change.",
@@ -47,14 +50,21 @@ def render() -> str:
     for t in range(1, 6):
         lines.append(f"| {t} | {cat.tier_label(t)} | {cat.tier_score(t):g} | {TIER_TEXT[t]} |")
     services = [s for s in cat.services if not s.excluded]
-    lines += ["", f"{len(services)} services classified. Unknown services score as tier 3 and are flagged on the "
-              "report's data-quality panel.", ""]
+    lines += [
+        "",
+        f"{len(services)} services classified. Unknown services score as tier 3 and are flagged on the "
+        "report's data-quality panel.",
+        "",
+    ]
     for t in (5, 4, 3, 2, 1):
         group = sorted((s for s in services if s.tier == t), key=lambda s: (s.category, s.display))
-        lines += [f"## Tier {t} - {cat.tier_label(t)} ({len(group)})", "",
-                  "| Service | Category | Why this tier | Recommended migration path | Azure | Google Cloud | "
-                  "Cloud-neutral | Typical duration | Eng-weeks / workload |",
-                  "|---|---|---|---|---|---|---|---|---|"]
+        lines += [
+            f"## Tier {t} - {cat.tier_label(t)} ({len(group)})",
+            "",
+            "| Service | Category | Why this tier | Recommended migration path | Azure | Google Cloud | "
+            "Cloud-neutral | Typical duration | Eng-weeks / workload |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
         for s in group:
             tg = s.targets
             lines.append(
@@ -64,8 +74,12 @@ def render() -> str:
             )
         lines.append("")
     excluded = [s for s in cat.services if s.excluded]
-    lines += ["## Billing lines excluded from scoring", "",
-              "These are not workloads: " + ", ".join(f"{s.display} ({cell(s.why)})" for s in excluded), ""]
+    lines += [
+        "## Billing lines excluded from scoring",
+        "",
+        "These are not workloads: " + ", ".join(f"{s.display} ({cell(s.why)})" for s in excluded),
+        "",
+    ]
     return "\n".join(lines)
 
 
