@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  IAM Identity Center permission set for aws-regulatory-risk-review-framework (read-only:
+  Organizations structure and Cost Explorer spend). Deploy in the Identity Center
+  administration account. Optionally assigns it to a user or group in the management account.
+
+Parameters:
+  InstanceArn:
+    Type: String
+    Description: IAM Identity Center instance ARN (Settings > Instance ARN, arn:aws:sso:::instance/ssoins-...)
+  PermissionSetName:
+    Type: String
+    Default: ExitRiskReadOnly
+  ManagementAccountId:
+    Type: String
+    Default: ""
+    Description: Optional - management account to assign the permission set in
+  PrincipalId:
+    Type: String
+    Default: ""
+    Description: Optional - Identity Store user or group id to assign
+  PrincipalType:
+    Type: String
+    Default: GROUP
+    AllowedValues: [USER, GROUP]
+
+Conditions:
+  Assign: !And
+    - !Not [!Equals [!Ref PrincipalId, ""]]
+    - !Not [!Equals [!Ref ManagementAccountId, ""]]
+
+Resources:
+  PermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      InstanceArn: !Ref InstanceArn
+      Name: !Ref PermissionSetName
+      Description: Read-only Organizations and Cost Explorer access for the AWS exit-risk review
+      SessionDuration: PT4H
+      # Same document as iam/management-account-policy.json (a test keeps them identical).
+      InlinePolicy:
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "ReadOrganizationStructure",
+              "Effect": "Allow",
+              "Action": [
+                "organizations:DescribeOrganization",
+                "organizations:ListRoots",
+                "organizations:ListOrganizationalUnitsForParent",
+                "organizations:ListAccountsForParent"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "ReadCostAndUsage",
+              "Effect": "Allow",
+              "Action": "ce:GetCostAndUsage",
+              "Resource": "*"
+            },
+            {
+              "Sid": "OptionalDeepScanAssumeMemberRole",
+              "Effect": "Allow",
+              "Action": "sts:AssumeRole",
+              "Resource": "arn:aws:iam::*:role/ExitRiskReadOnly"
+            }
+          ]
+        }
+
+  Assignment:
+    Type: AWS::SSO::Assignment
+    Condition: Assign
+    Properties:
+      InstanceArn: !Ref InstanceArn
+      PermissionSetArn: !GetAtt PermissionSet.PermissionSetArn
+      PrincipalId: !Ref PrincipalId
+      PrincipalType: !Ref PrincipalType
+      TargetId: !Ref ManagementAccountId
+      TargetType: AWS_ACCOUNT
+
+Outputs:
+  PermissionSetArn:
+    Value: !GetAtt PermissionSet.PermissionSetArn

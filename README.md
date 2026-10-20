@@ -32,18 +32,32 @@ management (payer) account; the optional deep scan counts resources through a li
 
 ## Quick start
 
-```bash
-git clone https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework.git
-cd aws-regulatory-risk-review-framework
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e .            # add '.[pdf]' and run `playwright install chromium` for scripted PDFs
+**1. Install** (Python 3.10+; one command, no virtual environment to manage):
 
+```bash
+uv tool install git+https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework
+# or: pipx install git+https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework
 exitrisk serve              # opens http://127.0.0.1:8740
 ```
 
-In the console, **Load demo data** shows a synthetic 21-account bank with no AWS access needed. For a
-real estate, click **New scan**, pick an AWS profile in the management account, optionally an OU, and
-start. Then type `prod` in the filter bar, answer the questionnaire in section 5, and **Export PDF**.
+**2. Follow the three steps on the first screen:**
+
+| Step | What happens |
+|---|---|
+| **Connect to AWS** | **AWS sign-in** for SSO / IAM Identity Center (paste your portal's start URL once), or any AWS CLI profile already on the machine, including aws-cli-zsp. Use the **management (payer) account**. |
+| **Check access** | Tests the five read-only calls a scan needs and shows ✓ / ✗ with the fix for each. If anything is missing it writes the **request to send your AWS administrator**: your identity, the account, the policy, ready to copy or download. |
+| **Scan and report** | Seconds for hundreds of accounts. Type `prod` in the filter bar, answer the questionnaire in section 5, **Export PDF**. |
+
+No AWS access yet? **Load demo data** shows a synthetic 21-account bank.
+
+**What your AWS administrator grants** (read-only, in the management account): an IAM Identity Center
+permission set with [this inline policy](iam/management-account-policy.json) — or the AWS-managed
+`AWSOrganizationsReadOnlyAccess` + `AWSBillingReadOnlyAccess` — ready-made in
+[Terraform](iam/identity-center/terraform/main.tf) and [CloudFormation](iam/identity-center/cloudformation/permission-set.yaml).
+Details: [docs/IAM_PERMISSIONS.md](docs/IAM_PERMISSIONS.md).
+
+For development: `git clone …`, `python3 -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'`.
+Scripted PDFs need `pip install '.[pdf]'` and `playwright install chromium`.
 
 ### Credentials, including aws-cli-zsp
 
@@ -77,6 +91,7 @@ exitrisk catalog                                                        # list s
 | ![Accounts](docs/images/accounts.png) **Accounts** — risk vs spend; ranking by weighted contribution | ![Services](docs/images/services.png) **Services** — what drives lock-in |
 | ![Estimate](docs/images/estimate.png) **Exit estimate** — questionnaire, timeline, effort | ![Issues](docs/images/issues.png) **Data quality** — what the report does not cover |
 | ![Appendix](docs/images/appendix-catalog.png) **Appendix** — tier, rationale, migration path, duration | ![Dark mode](docs/images/dashboard-dark.png) **Dark mode** |
+| ![Getting started](docs/images/getting-started.png) **Getting started** — connect, check access, scan | ![Check access](docs/images/access-check.png) **Check access** — ✓/✗ per permission and the request for your AWS admin |
 | ![AWS sign-in](docs/images/sso-sign-in.png) **AWS sign-in** — SSO / Identity Center from the header | ![New scan](docs/images/new-scan-dialog.png) **New scan** — profile, OU, deep scan |
 
 A complete sample report generated from the demo data: [docs/sample-report.pdf](docs/sample-report.pdf).

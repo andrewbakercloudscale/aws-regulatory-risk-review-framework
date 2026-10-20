@@ -680,9 +680,69 @@
     try {
       const { profile } = await api("/api/sso/profile", { method: "POST", body: { session: s.name, account_id: $("#ssoAccount").value, role: $("#ssoRole").value } });
       $("#ssoDialog").close();
-      await openScanDialog(profile);
       toast(`Using profile ${profile}`);
+      await openAccessDialog(profile, true);
     } catch (e) { $("#ssoError").textContent = e.message; }
+  }
+
+  // ------------------------------------------------------------------ access check
+  async function fillProfiles(sel, want) {
+    const { profiles } = await api("/api/profiles");
+    sel.innerHTML = profiles.length ? profiles.map((p) => `<option>${esc(p)}</option>`).join("") : `<option value="">(no profiles found - default credential chain)</option>`;
+    if (want && profiles.includes(want)) sel.value = want;
+    return profiles;
+  }
+
+  async function openAccessDialog(profile, autoRun) {
+    for (const d of ["#scanDialog", "#ssoDialog"]) if ($(d).open) $(d).close();
+    $("#aChecks").innerHTML = "";
+    $("#aVerdict").hidden = true;
+    $("#aAdmin").hidden = true;
+    $("#btnAccessScan").hidden = true;
+    $("#aError").textContent = "";
+    try { await fillProfiles($("#aProfile"), typeof profile === "string" ? profile : null); }
+    catch (e) { $("#aError").textContent = e.message; }
+    $("#accessDialog").showModal();
+    if (autoRun) runAccessCheck();
+  }
+
+  async function runAccessCheck() {
+    $("#btnAccessRun").disabled = true;
+    $("#aBusy").textContent = "Checking… approve Touch ID if prompted.";
+    $("#aError").textContent = "";
+    try {
+      const r = await api("/api/access-check", { method: "POST", body: { profile: $("#aProfile").value || null, role_name: $("#aRole").value || null } });
+      const icon = { ok: "✓", fail: "✗", warn: "!", skip: "–" };
+      $("#aChecks").innerHTML = r.checks.map((c) => `<li class="${esc(c.status)}"><span class="ic" aria-label="${esc(c.status)}">${icon[c.status] || "?"}</span><strong>${esc(c.label)}</strong>
+        ${c.detail ? `<span class="d">${esc(c.detail)}</span>` : ""}${c.fix ? `<span class="f">→ ${esc(c.fix)}</span>` : ""}</li>`).join("");
+      $("#aVerdict").textContent = r.verdict;
+      $("#aVerdict").hidden = false;
+      $("#aVerdict").style.color = r.ready ? "#2f9e5b" : r.partial ? "#b7791f" : css("--sev-critical");
+      const needsAdmin = r.checks.some((c) => c.status === "fail" && c.needs) || !r.ready;
+      $("#aAdmin").hidden = !needsAdmin || r.checks[0].status !== "ok";
+      $("#aAdminText").value = r.admin_request;
+      $("#btnAccessScan").hidden = !(r.ready || r.partial);
+    } catch (e) { $("#aError").textContent = e.message; }
+    finally { $("#btnAccessRun").disabled = false; $("#aBusy").textContent = ""; }
+  }
+
+  async function copyAdmin() {
+    try { await navigator.clipboard.writeText($("#aAdminText").value); toast("Copied - paste it into an email or ticket"); }
+    catch { $("#aAdminText").select(); document.execCommand("copy"); toast("Copied"); }
+  }
+
+  function saveAdmin() {
+    const url = URL.createObjectURL(new Blob([$("#aAdminText").value], { type: "text/plain" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: "aws-access-request-exit-risk-review.txt" });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function refreshGettingStarted() {
+    try {
+      const { profiles } = await api("/api/profiles");
+      $("#gsProfiles").textContent = profiles.length ? `or use one of ${profiles.length} AWS profile(s) on this machine` : "No AWS CLI profiles found - sign in with SSO";
+    } catch { /* the step still works without the count */ }
   }
 
   // ------------------------------------------------------------------ boot
@@ -725,6 +785,16 @@
     });
     $("#btnNewScan").addEventListener("click", () => openScanDialog());
     $("#btnSso").addEventListener("click", openSsoDialog);
+    $("#btnGsSso").addEventListener("click", openSsoDialog);
+    $("#btnGsCheck").addEventListener("click", () => openAccessDialog());
+    $("#btnGsScan").addEventListener("click", () => openScanDialog());
+    $("#lnkDemo").addEventListener("click", (e) => { e.preventDefault(); $("#btnDemo").click(); });
+    $("#btnScanCheck").addEventListener("click", () => openAccessDialog($("#sProfile").value, true));
+    $("#btnAccessRun").addEventListener("click", runAccessCheck);
+    $("#btnAdminCopy").addEventListener("click", copyAdmin);
+    $("#btnAdminSave").addEventListener("click", saveAdmin);
+    $("#btnAccessScan").addEventListener("click", () => { const p = $("#aProfile").value; $("#accessDialog").close(); openScanDialog(p); });
+    refreshGettingStarted();
     $("#lnkSso").addEventListener("click", openSsoDialog);
     $("#ssoSession").addEventListener("change", showSsoState);
     $("#ssoAccount").addEventListener("change", () => loadSsoRoles($("#ssoRole").value));

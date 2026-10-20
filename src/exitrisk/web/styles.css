@@ -239,3 +239,19 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 #btnSso { display: inline-flex; align-items: center; gap: 8px; }
 #btnSso .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 #btnSso.signed-in .dot { background: #2f9e5b; }
+
+.steps { list-style: none; padding: 0; margin: 28px 0 18px; display: grid; gap: 14px; text-align: left; }
+.steps h3 { margin: 0 0 6px; display: flex; align-items: center; gap: 10px; color: var(--ink); }
+.steps p { margin: 0 0 12px; }
+.steps .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.step-n { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--ink); color: var(--surface); font-size: 13px; }
+.empty { max-width: 720px; }
+.checks { list-style: none; padding: 0; margin: 8px 0 12px; }
+.checks li { display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.checks .ic { font-weight: 700; }
+.checks .ok .ic { color: #2f9e5b; } .checks .fail .ic { color: var(--sev-critical); } .checks .warn .ic { color: #b7791f; } .checks .skip .ic { color: var(--muted); }
+.checks .d { grid-column: 2; color: var(--ink-2); word-break: break-word; }
+.checks .f { grid-column: 2; color: var(--ink); }
+.verdict { font-weight: 600; margin: 10px 0 4px; }
+#aAdminText { width: 100%; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 8px; box-sizing: border-box; }
+.subpanel h3 { margin: 0 0 4px; font-size: 14px; }

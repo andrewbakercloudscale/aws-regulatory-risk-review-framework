@@ -10,6 +10,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 - **AWS sign-in (IAM Identity Center / SSO) in the console header**: add a portal by start URL (region
   auto-detected), approve on AWS's page, pick account and role, and scan. Tokens are written to the AWS
   CLI's SSO cache in its own format; profiles are added to `~/.aws/config` only on request.
+- **Getting started** first screen (connect → check access → scan) and a **Check access** dialog that
+  makes each read-only call a scan needs, shows the fix for each failure, and writes the request for
+  the AWS administrator (copy or download).
+- IAM Identity Center permission set in Terraform and CloudFormation (`iam/identity-center/`).
+- Install with `uv tool install` / `pipx install` from GitHub.
 - Report banner explaining partial views (member-account fallback) and filters that match no account.
 
 ### Changed

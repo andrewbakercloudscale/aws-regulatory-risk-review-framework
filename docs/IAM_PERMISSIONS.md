@@ -23,6 +23,29 @@ account only, and the report says so on its data-quality panel. A member account
 [delegated administrator](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_delegate_policies.html)
 for Organizations, with Cost Explorer access to linked accounts, also works.
 
+### With IAM Identity Center (SSO) — the usual setup
+
+Most organisations grant access through permission sets rather than IAM users. Ask the Identity
+Center administrator to create a permission set, assign it to you **in the management account**, and
+attach either:
+
+- the inline policy [`iam/management-account-policy.json`](../iam/management-account-policy.json)
+  (least privilege), or
+- the AWS-managed policies `AWSOrganizationsReadOnlyAccess` and `AWSBillingReadOnlyAccess` (broader
+  read-only, often already approved).
+
+Ready to apply in the Identity Center administration account:
+[Terraform](../iam/identity-center/terraform/main.tf) (`management_account_id`, optional
+`principal_id`) or [CloudFormation](../iam/identity-center/cloudformation/permission-set.yaml).
+An existing read-only permission set that already includes these actions (many organisations have a
+"ReadOnly" or "CTO-Read" set) works as it is.
+
+### Check before you scan
+
+**Check access** in the console (or on the first screen) makes each call above once and shows
+✓ / ✗ with the fix. When something is refused it writes the request for your administrator: your
+identity, the management account id, the missing actions, and the policy, ready to copy or download.
+
 ## 2. Deep scan (member accounts)
 
 Adds resource counts per account (Lambda functions, DynamoDB tables, state machines, CloudFormation

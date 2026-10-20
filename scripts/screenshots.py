@@ -36,15 +36,51 @@ def main() -> int:
     import uvicorn
     from playwright.sync_api import sync_playwright
 
+    from exitrisk import preflight
     from exitrisk.demo import create_demo_scan
     from exitrisk.server import create_app
 
-    scan_id = create_demo_scan(6)["id"]
+    def example_access_check(profile, role_name=None):
+        # A canned result (a member account, refused OU access) so the screenshot needs no AWS.
+        arn = "arn:aws:sts::222222222222:assumed-role/AWSReservedSSO_ReadOnly_0123456789abcdef/analyst@example.com"
+        C = preflight.Check
+        checks = [
+            C("identity", "Sign in to AWS", "ok", f"{arn} in account 222222222222"),
+            C(
+                "organization",
+                "Management account",
+                "warn",
+                "Organization o-example; management account 111111111111",
+                "You are in member account 222222222222. Sign in to management account 111111111111 "
+                "(or an Organizations delegated administrator) for the whole estate.",
+            ),
+            C(
+                "ou_tree",
+                "Read the OU tree",
+                "fail",
+                "AccessDeniedException: You don't have permissions to access this resource.",
+                "The caller lacks permission for this API. See docs/IAM_PERMISSIONS.md.",
+                "organizations:ListRoots, organizations:ListOrganizationalUnitsForParent",
+            ),
+            C("accounts", "List accounts", "skip", "Needs the OU tree."),
+            C(
+                "cost",
+                "Read Cost Explorer",
+                "warn",
+                "Spend visible for 1 account(s) (this check cost US$0.01).",
+                "A member account sees only its own spend; use the management account.",
+            ),
+            C("deep_scan", "Deep scan role (optional)", "skip", "No member role given."),
+        ]
+        ctx = {"profile": profile, "role_name": None, "account_id": "222222222222", "arn": arn}
+        ctx.update(permission_set="ReadOnly", org_id="o-example", management_account_id="111111111111")
+        return preflight._result(checks, ctx)
+
+    preflight.run_checks = example_access_check
     server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=PORT, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()
     while not server.started:
         time.sleep(0.1)
-    base = f"http://127.0.0.1:{PORT}/?scan={scan_id}"
     OUT.mkdir(parents=True, exist_ok=True)
     errors: list[str] = []
 
@@ -58,6 +94,24 @@ def main() -> int:
         page = ctx.new_page()
         page.on("console", lambda m: m.type == "error" and errors.append(m.text))
         page.on("pageerror", lambda e: errors.append(str(e)))
+
+        # First run: no scans yet, so the getting-started steps show.
+        page.goto(f"http://127.0.0.1:{PORT}/")
+        page.wait_for_selector("body[data-ready='1']")
+        page.wait_for_timeout(300)
+        shoot(page, "#empty", "getting-started.png")
+        page.click("#btnGsCheck")
+        page.wait_for_selector("#accessDialog[open]")
+        page.click("#btnAccessRun")
+        page.wait_for_selector("#aAdmin:not([hidden])")
+        page.wait_for_timeout(200)
+        page.set_viewport_size({"width": 1360, "height": 1500})
+        shoot(page, "#accessDialog", "access-check.png")
+        page.set_viewport_size({"width": 1360, "height": 900})
+        page.keyboard.press("Escape")
+
+        scan_id = create_demo_scan(6)["id"]
+        base = f"http://127.0.0.1:{PORT}/?scan={scan_id}"
 
         page.goto(base + "&include=prod")
         page.wait_for_selector("body[data-ready='1']")

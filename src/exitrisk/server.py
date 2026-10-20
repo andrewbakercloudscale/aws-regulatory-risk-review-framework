@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, sso, store
+from . import __version__, preflight, sso, store
 from .aws_session import available_profiles, make_session
 from .catalog import load_catalog
 from .collectors import organizations
@@ -39,6 +39,11 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
 
 class OUQuery(BaseModel):
     profile: str | None = None
+
+
+class AccessCheckRequest(BaseModel):
+    profile: str | None = Field(None, max_length=128)
+    role_name: str | None = Field(None, max_length=64, pattern=r"^[\w+=,.@-]*$")
 
 
 class ScanRequest(BaseModel):
@@ -188,6 +193,11 @@ def create_app(allow_remote: bool = False) -> FastAPI:
             code, msg, hint = describe_exception(exc)
             log.warning("OU tree unavailable for profile %s: %s %s", q.profile, code, msg)
             return JSONResponse({"error": msg, "code": code, "hint": hint}, status_code=502)
+
+    @app.post("/api/access-check")
+    def access_check(req: AccessCheckRequest):
+        """Make each read-only call a scan needs and say what to fix. Never raises: failures are results."""
+        return preflight.run_checks(req.profile, req.role_name or None)
 
     @app.post("/api/scans")
     def create_scan(req: ScanRequest):

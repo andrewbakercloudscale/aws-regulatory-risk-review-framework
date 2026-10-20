@@ -50,8 +50,26 @@
 
 <main id="report" class="report">
   <div id="empty" class="empty">
-    <h1>No scan loaded</h1>
-    <p>Run a <strong>New scan</strong> against your AWS Organization (read-only; uses your local AWS profile, including aws-cli-zsp), or <strong>Load demo data</strong> to explore the dashboard with a synthetic estate.</p>
+    <h1>Get started</h1>
+    <p>Three steps to a board-ready AWS exit-risk report. Everything is read-only.</p>
+    <ol class="steps">
+      <li class="card">
+        <h3><span class="step-n">1</span> Connect to AWS</h3>
+        <p>Sign in through your organisation's AWS access portal (SSO), or use an AWS CLI profile already on this machine. To see every account, use the organisation's <strong>management (payer) account</strong>.</p>
+        <div class="row"><button type="button" class="btn primary" id="btnGsSso">AWS sign-in</button><span id="gsProfiles" class="muted small"></span></div>
+      </li>
+      <li class="card">
+        <h3><span class="step-n">2</span> Check access</h3>
+        <p>Tests the five read-only calls a scan needs. If anything is missing it says how to fix it and writes the request to send your AWS administrator, policy included.</p>
+        <div class="row"><button type="button" class="btn" id="btnGsCheck">Check access</button></div>
+      </li>
+      <li class="card">
+        <h3><span class="step-n">3</span> Scan and report</h3>
+        <p>Scan the organisation (seconds for hundreds of accounts), filter to production, answer the questions in section 5 and export the PDF.</p>
+        <div class="row"><button type="button" class="btn" id="btnGsScan">New scan</button></div>
+      </li>
+    </ol>
+    <p class="muted small">Just looking? <a href="#" id="lnkDemo">Load the demo organisation</a> - no AWS access needed. Permissions in detail: <a href="https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework/blob/main/docs/IAM_PERMISSIONS.md" target="_blank" rel="noopener noreferrer">IAM_PERMISSIONS.md</a>.</p>
   </div>
 
   <div id="content" hidden>
@@ -230,6 +248,7 @@
     <p class="muted small">Read-only. Credentials come from your local AWS profile (or <a href="#" id="lnkSso">sign in with AWS SSO</a>); with aws-cli-zsp you will be asked for Touch ID once. Use a profile in the <strong>management (payer) account</strong> for an organisation-wide view.</p>
     <label>AWS profile<select name="profile" id="sProfile"></select></label>
     <div class="row">
+      <button type="button" class="btn" id="btnScanCheck">Check access</button>
       <button type="button" class="btn" id="btnLoadOus">Load OUs</button>
       <span id="ouStatus" class="muted small"></span>
     </div>
@@ -282,7 +301,33 @@
     <p id="ssoError" class="error-text" role="alert"></p>
     <div class="dialog-actions">
       <button value="cancel" class="btn ghost" formnovalidate>Close</button>
-      <button type="button" id="btnSsoUse" class="btn primary" hidden>Use for a new scan</button>
+      <button type="button" id="btnSsoUse" class="btn primary" hidden>Next: check access</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Access check dialog -->
+<dialog id="accessDialog" class="dialog">
+  <form method="dialog" id="accessForm" autocomplete="off">
+    <h2>Check access</h2>
+    <p class="muted small">Makes the same read-only calls a scan makes. One Cost Explorer call costs US$0.01.</p>
+    <label>AWS profile<select id="aProfile"></select></label>
+    <details class="small"><summary>Deep scan role (optional)</summary>
+      <label>Role to assume in member accounts<input id="aRole" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
+    </details>
+    <div class="row"><button type="button" class="btn primary" id="btnAccessRun">Check access</button><span id="aBusy" class="muted small"></span></div>
+    <p id="aVerdict" class="verdict" hidden></p>
+    <ul id="aChecks" class="checks"></ul>
+    <div id="aAdmin" class="subpanel" hidden>
+      <h3>Ask your AWS administrator</h3>
+      <p class="small muted">Ready to send: names your identity, the account and exactly what to grant.</p>
+      <textarea id="aAdminText" rows="9" readonly></textarea>
+      <div class="row"><button type="button" class="btn" id="btnAdminCopy">Copy</button><button type="button" class="btn ghost" id="btnAdminSave">Download .txt</button></div>
+    </div>
+    <p id="aError" class="error-text" role="alert"></p>
+    <div class="dialog-actions">
+      <button value="cancel" class="btn ghost" formnovalidate>Close</button>
+      <button type="button" id="btnAccessScan" class="btn primary" hidden>Start a scan with this profile</button>
     </div>
   </form>
 </dialog>
