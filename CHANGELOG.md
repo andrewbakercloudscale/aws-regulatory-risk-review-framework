@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-20
+
 ### Changed
 - **Account ranking sorts by criticality: spend × risk** ("spend at risk", USD a month), so large,
   hard-to-move accounts come first. The column replaces "Contribution"; the "accounts set the pace"
