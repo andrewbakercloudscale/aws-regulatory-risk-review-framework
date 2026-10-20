@@ -173,6 +173,9 @@
       ["Resource inventory", m.inventory ? "Included (deep scan)" : "Not run (spend only)"],
       ["Exit target assumed", m.target_label],
     ];
+    const notes = r.summary.coverage || [];
+    $("#coverage").hidden = !notes.length;
+    $("#coverage").innerHTML = notes.map((n) => `<p>${esc(n)}</p>`).join("");
     $("#metaList").innerHTML = items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
   }
 
@@ -195,9 +198,11 @@
       tile("Annual spend in scope", money(s.annual_spend), `${money(s.monthly_spend)} / month, amortised`),
       tile("Spend on High/Critical services", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
       tile("Accounts in scope", num(s.accounts_in_scope), `${s.accounts_with_spend} with spend · ${s.accounts_excluded} filtered out`),
-      tile("Indicative exit cost", money(e.cost.total, cur), `range ${money(e.cost.low, cur)} – ${money(e.cost.high, cur)}`),
-      tile("Indicative duration", `${num(e.duration.calendar_months)} months`, `range ${num(e.duration.low_months)} – ${num(e.duration.high_months)} months`),
-      tile("Engineering effort", `${num(e.effort.person_months)} person-months`, `capacity ${num(e.team.capacity_fte, 1)} FTE`),
+      ...(e.empty ? [tile("Indicative exit cost", "–", "No spend in scope"), tile("Indicative duration", "–", "No spend in scope"), tile("Engineering effort", "–", "No spend in scope")] : [
+        tile("Indicative exit cost", money(e.cost.total, cur), `range ${money(e.cost.low, cur)} – ${money(e.cost.high, cur)}`),
+        tile("Indicative duration", `${num(e.duration.calendar_months)} months`, `range ${num(e.duration.low_months)} – ${num(e.duration.high_months)} months`),
+        tile("Engineering effort", `${num(e.effort.person_months)} person-months`, `capacity ${num(e.team.capacity_fte, 1)} FTE`),
+      ]),
     ].join("");
     $("#narrative").innerHTML = s.narrative.map((l) => `<li>${esc(l)}</li>`).join("");
   }
@@ -370,6 +375,8 @@
 
   function renderEstimate(r) {
     const e = r.estimate, cur = e.cost.currency;
+    $("#estEmpty").hidden = !e.empty;
+    $("#estBody").hidden = !!e.empty;
     $("#estTiles").innerHTML = [
       tile("Total cost (indicative)", money(e.cost.total, cur), `${money(e.cost.labour, cur)} engineering + ${money(e.cost.parallel_run, cur)} parallel run`),
       tile("Calendar duration", `${num(e.duration.calendar_months)} months`, `bound by ${e.duration.constrained_by}`),

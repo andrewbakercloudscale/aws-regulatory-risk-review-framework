@@ -219,6 +219,8 @@ def build_report(
         "excluded_billing_monthly": round(excluded_spend / n_months, 2),
         "top_lockin_services": [s for s in services_out if s["tier"] >= 4][:5],
     }
+    estimate["empty"] = total_monthly <= 0
+    summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
     summary["narrative"] = _narrative(summary, accounts_out, estimate, questionnaire)
 
     sev_order = {"critical": 0, "error": 1, "warning": 2, "info": 3}
@@ -252,6 +254,22 @@ def build_report(
         "issues": issues,
         "issue_counts": {s: sum(1 for i in issues if i.get("severity") == s) for s in sev_order},
     }
+
+
+def _coverage_notes(scan: dict, summary: dict, all_accounts: list, account_filter, issues: list) -> list[str]:
+    """Plain warnings for the top of the report when it covers less than the reader would assume."""
+    notes = []
+    if scan.get("mode", "live") == "live" and (scan.get("ou") or {}).get("id") == "-":
+        org_issue = next((i for i in issues if i.get("category") == "organizations"), None)
+        if org_issue:
+            notes.append(f"Partial view: {org_issue['message']} {org_issue.get('hint') or ''}".strip())
+    if all_accounts and summary["accounts_in_scope"] == 0:
+        names = ", ".join(a["name"] for a in all_accounts[:5]) + (" ..." if len(all_accounts) > 5 else "")
+        notes.append(
+            f"No account matches the filter ({account_filter.to_dict()['description']}). "
+            f"The scan holds {len(all_accounts)} account(s): {names}. Clear or change the filter."
+        )
+    return notes
 
 
 def _money(v: float, cur: str) -> str:

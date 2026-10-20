@@ -99,3 +99,12 @@ def test_tiny_estate_has_small_landing_zone():
     costs = [{"month": "2026-01", "account_id": "1", "service": "Amazon Simple Storage Service", "amount": 60}]
     e = build_report(_scan(costs, [{"id": "1", "name": "a"}]))["estimate"]
     assert e["effort"]["landing_zone_weeks"] < 6
+
+
+def test_filter_matching_nothing_explains_itself_and_has_no_estimate():
+    scan = build_demo_scan()
+    r = build_report(scan, AccountFilter(include="no-such-account"))
+    assert r["summary"]["accounts_in_scope"] == 0
+    assert r["estimate"]["empty"] is True
+    assert any("No account matches the filter" in n for n in r["summary"]["coverage"])
+    assert build_report(scan)["summary"]["coverage"] == []

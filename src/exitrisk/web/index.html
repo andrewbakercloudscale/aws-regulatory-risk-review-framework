@@ -59,6 +59,7 @@
       <p class="eyebrow">Concentration &amp; exit risk assessment</p>
       <h1 id="title">AWS exit risk review</h1>
       <p id="subtitle" class="muted"></p>
+      <div id="coverage" class="coverage" role="alert" hidden></div>
       <dl id="metaList" class="meta"></dl>
     </section>
 
@@ -155,6 +156,8 @@
           <button type="button" id="btnRecalc" class="btn primary no-print">Recalculate</button>
         </form>
         <div class="est-results">
+          <div id="estEmpty" class="card hint" hidden>No spend is in scope, so there is nothing to estimate. Change the account filter or run a scan that covers more accounts.</div>
+          <div id="estBody">
           <div class="tiles" id="estTiles"></div>
           <div class="card">
             <h3>Indicative timeline</h3>
@@ -164,6 +167,7 @@
             <figcaption><h3>Where the effort goes</h3><p class="muted">Engineer-weeks after delivery-maturity adjustment.</p></figcaption>
             <div class="chart-box short"><canvas id="chEffort" role="img" aria-label="Bar chart of effort by component"></canvas></div>
           </figure>
+          </div>
         </div>
       </div>
       <div class="card">
