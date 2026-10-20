@@ -122,7 +122,9 @@ _ARCHETYPES = [
         "Workloads / Production",
         {
             "Amazon SageMaker": 17500,
-            "Amazon Bedrock": 9400,
+            "Amazon Bedrock": 2400,
+            "Amazon Bedrock|Claude Sonnet 4.6 (Amazon Bedrock Edition)": (5200, 0.09),
+            "Amazon Bedrock|Claude Haiku 4.5 (Amazon Bedrock Edition)": (1300, 0.05),
             "Amazon Elastic Compute Cloud - Compute": 6000,
             "Amazon Simple Storage Service": 3800,
             "Amazon Textract": 2700,
@@ -289,6 +291,40 @@ _ARCHETYPES = [
     ("suspended-old-crm", "Suspended", {}, {}),
 ]
 
+# Third-party software billed through AWS Marketplace: (account, product, monthly USD, monthly growth).
+_MARKETPLACE = [
+    ("digital-channels-prod", "Example AI Assistant for Enterprise", 2500, 0.22),
+    ("payments-core-prod", "Example Streaming Cloud - Pay As You Go", 3400, 0.01),
+    ("shared-network-prod", "Example Observability Platform", 2900, 0.03),
+    ("data-platform-prod", "Example Data Integration Cloud", 1600, 0.0),
+]
+
+# A long tail of small production workloads, as in most estates: mostly portable, some serverless.
+_TAIL_NAMES = [
+    "statements", "notifications", "onboarding", "kyc-checks", "loans-origination", "collections",
+    "rewards", "fx-rates", "atm-switch", "branch-queue", "doc-store", "card-controls", "disputes",
+    "merchant-portal", "pricing", "limits", "insurance-quotes", "investments", "chatbot", "id-verify",
+    "payroll-api", "reporting-hub", "audit-trail", "partner-api", "mobile-backend", "search",
+    "geo-services", "sms-gateway",
+]  # fmt: skip
+_TAIL_MIXES = [
+    {"Amazon Elastic Kubernetes Service": 0.1, "Amazon Elastic Compute Cloud - Compute": 0.5,
+     "Amazon Relational Database Service": 0.3, "Amazon Simple Storage Service": 0.1},
+    {"Amazon Elastic Container Service": 0.2, "Amazon Elastic Compute Cloud - Compute": 0.3,
+     "Amazon Relational Database Service": 0.35, "AWS Lambda": 0.15},
+    {"AWS Lambda": 0.35, "Amazon DynamoDB": 0.35, "Amazon API Gateway": 0.2, "Amazon Simple Queue Service": 0.1},
+    {"Amazon Elastic Compute Cloud - Compute": 0.6, "EC2 - Other": 0.2, "Amazon Simple Storage Service": 0.2},
+]  # fmt: skip
+
+
+def _tail(rng: random.Random) -> list[tuple]:
+    out = []
+    for n in _TAIL_NAMES:
+        size = rng.uniform(800, 9000)
+        mix = _TAIL_MIXES[0] if rng.random() < 0.4 else rng.choice(_TAIL_MIXES)
+        out.append((f"{n}-prod", "Workloads / Production", {s: round(size * w) for s, w in mix.items()}, {}))
+    return out
+
 
 def _seasonality(month_index: int, rng: random.Random) -> float:
     # gentle growth with noise, as in most estates
@@ -307,7 +343,12 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
             m, y = 1, y + 1
 
     accounts, costs, inventory = [], [], {}
-    for i, (name, ou, services, inv) in enumerate(_ARCHETYPES):
+    archetypes = [*_ARCHETYPES, *_tail(random.Random(seed + 1))]  # noqa: S311
+    market = {}
+    for acct, product, amt, growth in _MARKETPLACE:
+        market.setdefault(acct, {})[f"AWS Marketplace (third-party)|{product}"] = (amt, growth)
+    for i, (name, ou, services, inv) in enumerate(archetypes):
+        services = {**services, **market.get(name, {})}
         aid = f"{rng.randint(10**11, 10**12 - 1)}"
         accounts.append(
             {
@@ -321,22 +362,27 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
         )
         for mi, month in enumerate(month_keys):
             factor = _seasonality(mi, rng)
-            for svc, amt in services.items():
-                costs.append(
-                    {
-                        "month": month,
-                        "account_id": aid,
-                        "service": svc,
-                        "amount": round(amt * factor * rng.uniform(0.97, 1.03), 2),
-                    }
-                )
+            for key, spec in services.items():
+                # "service|product" keys carry a Marketplace product name; (amount, growth) ramps up.
+                amt, growth = spec if isinstance(spec, tuple) else (spec, 0.0)
+                svc, _, product = key.partition("|")
+                row = {
+                    "month": month,
+                    "account_id": aid,
+                    "service": svc,
+                    "amount": round(amt * factor * (1 + growth) ** (mi - months + 1) * rng.uniform(0.97, 1.03), 2),
+                }
+                if product:
+                    row["product"] = product
+                costs.append(row)
             if services:
+                base = sum(s[0] if isinstance(s, tuple) else s for s in services.values())
                 costs.append(
                     {
                         "month": month,
                         "account_id": aid,
                         "service": "Tax",
-                        "amount": round(sum(services.values()) * 0.15 * factor, 2),
+                        "amount": round(base * 0.15 * factor, 2),
                     }
                 )
         if inv:

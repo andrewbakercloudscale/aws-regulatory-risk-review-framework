@@ -6,6 +6,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- Demo estate (made-up numbers): 40 production accounts including a long tail of small workloads,
+  12 months of history, Marketplace products and third-party Bedrock models; screenshots, sample PDF
+  and the exco guide figures regenerated from it.
+
 ## [0.2.3] - 2026-10-20
 
 ### Changed

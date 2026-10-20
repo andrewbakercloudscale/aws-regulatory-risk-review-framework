@@ -110,7 +110,7 @@ def main() -> int:
         page.set_viewport_size({"width": 1360, "height": 900})
         page.keyboard.press("Escape")
 
-        scan_id = create_demo_scan(6)["id"]
+        scan_id = create_demo_scan(12)["id"]
         base = f"http://127.0.0.1:{PORT}/?scan={scan_id}"
 
         page.goto(base + "&include=prod")

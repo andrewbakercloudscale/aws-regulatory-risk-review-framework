@@ -9,23 +9,24 @@ Section 1 opens with a written brief you can read out as-is: the **bottom line**
 **what leaving would take**, **what we recommend** and a **confidence** rating that says why the numbers
 might move (for example, the delivery questions in section 5 not yet answered). The key figures follow.
 
-Figures below are from the synthetic demo organisation filtered to `prod`.
+Figures below are from the synthetic demo organisation (made-up numbers, 12 months) filtered to `prod`.
 
-1. **The scores** — "Our production estate scores 43/100 by spend and 45/100 by number of accounts:
-   Elevated exit risk either way." Each is the difficulty of moving every workload off AWS, from 10
+1. **The scores** — "Our production estate scores 38/100 by spend and 28/100 by number of accounts:
+   Moderate exit risk, concentrated in a few large accounts." Each is the difficulty of moving every workload off AWS, from 10
    (everything on commodity infrastructure) to 95 (everything on services that exist only on AWS). If
    the spend score is much higher, risk sits in a few big accounts; if the account score is higher, it
    is spread across many small ones.
-2. **How much is locked in** — "32% of production spend, $2.4m a year, runs on services we would have to
+2. **How much is locked in** — "27% of production spend, $2.7m a year, runs on services we would have to
    re-engineer, not just move."
 
-   **How many accounts** — "7 of 12 production accounts are portable; 5 are High or Critical and hold
-   43% of spend." Few high-risk accounts with a lot of spend is a concentration to plan for, not an
+   **How many accounts** — "34 of 40 production accounts are portable; 6 are High or Critical and hold
+   36% of spend." Few high-risk accounts with a lot of spend is a concentration to plan for, not an
    estate-wide problem.
-3. **Where** — "Three accounts carry 63% of that risk: the data platform (Redshift and Glue), card
+3. **Where** — "Three accounts carry 57% of the spend at risk (spend × risk): the data platform (Redshift and Glue), card
    processing (DynamoDB and Lambda) and the contact centre (Amazon Connect)."
-4. **What leaving would take** — "About 28 months and $7.1m (range $5.3m–$10.6m), with our current team
-   and delivery maturity."
+4. **What leaving would take** — "About 3.3 years and $9.9m (range $7.4m–$14.9m), with our current team
+   and delivery maturity." Cost and time appear only once the delivery questions in section 5 are
+   answered; until then they are marked provisional.
 
 ## Questions to expect, and where the answer is
 
