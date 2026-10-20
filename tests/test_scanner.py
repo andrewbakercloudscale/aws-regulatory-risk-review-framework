@@ -70,3 +70,37 @@ def test_member_account_fallback_names_management_account(monkeypatch):
     org_issue = next(i for i in doc["issues"] if i["category"] == "organizations")
     assert "111111111111" in org_issue["message"] and "111111111111" in org_issue["hint"]
     assert doc["ou"]["name"] == "Single member account"
+
+
+def test_several_ous_scan_each_account_once(monkeypatch):
+    def node(i, name, path, children=()):
+        return {"id": i, "name": name, "path": path, "children": list(children)}
+
+    child = node("ou-a-kid", "kid", "Root / A / kid")
+    tree = node("r-1", "Root", "Root", [node("ou-a", "A", "Root / A", [child]), node("ou-b", "B", "Root / B")])
+    members = {"ou-a": ["1", "2"], "ou-a-kid": ["2"], "ou-b": ["3"]}  # account 2 sits under A and its child
+
+    monkeypatch.setattr(scanner, "make_session", lambda profile: object())
+    monkeypatch.setattr(scanner, "caller_identity", lambda s: {"account_id": "111111111111", "arn": "arn:x"})
+    monkeypatch.setattr(
+        scanner.organizations, "describe_org", lambda s: {"id": "o-1", "management_account_id": "111111111111"}
+    )
+    monkeypatch.setattr(scanner.organizations, "list_ou_tree", lambda s: tree)
+    monkeypatch.setattr(
+        scanner.organizations,
+        "list_accounts_under",
+        lambda s, ou: [
+            scanner.organizations.Account(i, f"acct-{i}", "", "ACTIVE", ou["id"], ou["path"]) for i in members[ou["id"]]
+        ],
+    )
+    monkeypatch.setattr(
+        scanner.cost, "fetch_costs", lambda s, ids, m: ([], {"start": "2026-09-01", "end": "2026-10-01", "months": 1})
+    )
+    params = ScanParams(ou_ids=["ou-a", "ou-a-kid", "ou-b"])
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=params))
+    assert sorted(a["id"] for a in doc["accounts"]) == ["1", "2", "3"]
+    assert doc["ou"]["name"] == "A + kid + B"
+    assert [o["id"] for o in doc["ous"]] == ["ou-a", "ou-a-kid", "ou-b"]
+
+    with pytest.raises(scanner.ScanFailed, match="ou-zzz"):
+        scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(ou_ids=["ou-zzz"])))

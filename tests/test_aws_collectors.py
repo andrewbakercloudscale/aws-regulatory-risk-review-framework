@@ -67,31 +67,29 @@ def test_fetch_costs_paginates_and_keeps_marketplace_products(monkeypatch):
 def test_list_accounts_recurses_ou_tree(monkeypatch):
     client = boto3.client("organizations", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
     stub = Stubber(client)
+    mgmt = {"Accounts": [{"Id": "111111111111", "Name": "mgmt", "Email": "a@example.com", "Status": "ACTIVE"}]}
+    app = {"Accounts": [{"Id": "222222222222", "Name": "app-prod", "Email": "b@example.com", "Status": "ACTIVE"}]}
     stub.add_response("list_roots", {"Roots": [{"Id": "r-ab12", "Name": "Root"}]})
+    # Building the tree counts each node's accounts, then lists its child OUs.
+    stub.add_response("list_accounts_for_parent", mgmt, {"ParentId": "r-ab12"})
     stub.add_response(
         "list_organizational_units_for_parent",
         {"OrganizationalUnits": [{"Id": "ou-ab12-abcd1234", "Name": "Prod"}]},
         {"ParentId": "r-ab12"},
     )
+    stub.add_response("list_accounts_for_parent", app, {"ParentId": "ou-ab12-abcd1234"})
     stub.add_response(
         "list_organizational_units_for_parent", {"OrganizationalUnits": []}, {"ParentId": "ou-ab12-abcd1234"}
     )
-    stub.add_response(
-        "list_accounts_for_parent",
-        {"Accounts": [{"Id": "111111111111", "Name": "mgmt", "Email": "a@example.com", "Status": "ACTIVE"}]},
-        {"ParentId": "r-ab12"},
-    )
-    stub.add_response(
-        "list_accounts_for_parent",
-        {"Accounts": [{"Id": "222222222222", "Name": "app-prod", "Email": "b@example.com", "Status": "ACTIVE"}]},
-        {"ParentId": "ou-ab12-abcd1234"},
-    )
+    stub.add_response("list_accounts_for_parent", mgmt, {"ParentId": "r-ab12"})
+    stub.add_response("list_accounts_for_parent", app, {"ParentId": "ou-ab12-abcd1234"})
     session = _session()
     monkeypatch.setattr(session, "client", lambda *a, **k: client)
     with stub:
         tree = organizations.list_ou_tree(session)
         accts = organizations.list_accounts_under(session, tree)
     assert tree["children"][0]["path"] == "Root / Prod"
+    assert (tree["accounts"], tree["children"][0]["accounts"]) == (1, 1)
     assert {a.name: a.ou_path for a in accts} == {"mgmt": "Root", "app-prod": "Root / Prod"}
     assert organizations.find_ou(tree, "ou-ab12-abcd1234")["name"] == "Prod"
 

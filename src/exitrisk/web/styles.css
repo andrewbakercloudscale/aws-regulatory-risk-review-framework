@@ -261,6 +261,15 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .scope legend { font-weight: 600; font-size: 13px; padding: 0 6px; color: var(--ink); }
 .scope p { margin: -6px 0 10px; }
 .select-row { display: flex; gap: 8px; }
+.ou-field { margin: 8px 0 4px; }
+.ou-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13.5px; margin-bottom: 4px; }
+.ou-pick { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px 0; background: var(--surface); }
+.ou-pick p { margin: 6px 10px; }
+.ou-item { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; padding: 5px 10px; font-size: 13.5px; color: var(--ink); margin: 0 !important; font-weight: 450; cursor: pointer; }
+.ou-item:hover { background: var(--surface-2); }
+.ou-item input { width: auto !important; min-height: 0; padding: 0; margin: 0; flex: none; }
+.ou-item:has(input:disabled) { color: var(--muted); }
+#ouChosen { margin: 4px 0 0; color: var(--ink-2); }
 .select-row select { flex: 1; }
 
 .hero-alt { font-size: 12px; color: var(--ink-2); margin: 6px 0 2px; }

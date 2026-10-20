@@ -6,6 +6,17 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **Scan several OUs at once.** The scan dialog's OU list is now a tick-box tree (nesting indented,
+  account count per OU); ticking a parent covers its children; nothing ticked scans the whole
+  organisation. CLI: `exitrisk scan --ou ou-a,ou-b`. Accounts are counted once.
+
+### Fixed
+- Nested OUs looked like top-level ones in the old drop-down (macOS ignores the indent), so a nested
+  `prod` OU with 2 accounts was easy to pick instead of the top-level `Prod` OU.
+- Static files are revalidated on every load, so an upgraded console never runs stale JavaScript.
+- A scan lost because the console restarted mid-scan now says so instead of "scan not found".
+
 ### Changed
 - Demo estate (made-up numbers): 40 production accounts including a long tail of small workloads,
   12 months of history, Marketplace products and third-party Bedrock models; screenshots, sample PDF

@@ -11,7 +11,7 @@ profile uses in the **management (payer) account**:
 | Action | Why |
 |---|---|
 | `organizations:DescribeOrganization` | Organisation id and management account id for the report header |
-| `organizations:ListRoots`, `ListOrganizationalUnitsForParent` | Build the OU tree for the OU picker |
+| `organizations:ListRoots`, `ListOrganizationalUnitsForParent` | Build the OU tree for the OU picker (with `ListAccountsForParent` for the account count per OU) |
 | `organizations:ListAccountsForParent` | Accounts under the chosen OU, recursively, with names (for the name filter) |
 | `ce:GetCostAndUsage` | Amortised spend by account × service × month |
 

@@ -331,10 +331,12 @@
     <div class="row"><button type="button" class="btn" id="btnScanCheck">Check access</button></div>
     <fieldset class="scope">
       <legend>What to include</legend>
-      <label>Organizational unit (e.g. Prod only)
-        <span class="select-row"><select name="ou_id" id="sOu"><option value="">Organization root (all accounts)</option></select>
-        <button type="button" class="btn ghost" id="btnLoadOus" title="Reload the OU list">↻</button></span>
-      </label>
+      <div class="ou-field">
+        <div class="ou-head"><span>Organizational units <span class="muted">(tick one or more; none = whole organisation)</span></span>
+          <button type="button" class="btn ghost" id="btnLoadOus" title="Reload the OU list">↻</button></div>
+        <div id="sOu" class="ou-pick" role="group" aria-label="Organizational units"><p class="muted small">Whole organisation</p></div>
+        <p id="ouChosen" class="small"></p>
+      </div>
       <p id="ouStatus" class="muted small"></p>
       <label>And/or account names containing<input id="sNameFilter" placeholder="e.g. prod, prd (comma = or)" maxlength="200"></label>
       <p class="muted small">The OU limits what is scanned. The name filter limits the report and can be changed any time in the bar at the top.</p>

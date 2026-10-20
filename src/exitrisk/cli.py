@@ -42,7 +42,7 @@ def _scan(args) -> int:
 
     params = ScanParams(
         profile=args.profile,
-        ou_id=args.ou,
+        ou_ids=[o.strip() for o in args.ou.split(",") if o.strip()] if args.ou else None,
         months=args.months,
         role_name=args.role,
         inventory=args.inventory,
@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("scan", help="run a scan from the command line")
     p.add_argument("--profile", help="AWS profile (e.g. an aws-cli-zsp profile in the management account)")
-    p.add_argument("--ou", help="OU id (ou-xxxx-yyyyyyyy); default: the organization root")
+    p.add_argument("--ou", help="OU id(s), comma-separated (ou-xxxx-yyyyyyyy,...); default: the organization root")
     p.add_argument("--months", type=int, default=3)
     p.add_argument("--inventory", action="store_true", help="also inventory resources in member accounts")
     p.add_argument("--role", help="role name to assume in member accounts for --inventory")

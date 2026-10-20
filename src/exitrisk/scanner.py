@@ -31,12 +31,17 @@ log = get_logger("scanner")
 class ScanParams:
     profile: str | None = None
     ou_id: str | None = None
+    ou_ids: list[str] | None = None  # several OUs in one scan; accounts in more than one count once
     months: int = 12
     role_name: str | None = None
     inventory: bool = False
     regions: list[str] | None = None
     label: str = ""
     target: str = "azure"  # exit target asked at scan time; seeds the estimate questionnaire
+
+    @property
+    def ous(self) -> list[str]:
+        return list(dict.fromkeys([*(self.ou_ids or []), *([self.ou_id] if self.ou_id else [])]))
 
     def validate(self) -> None:
         if not 1 <= self.months <= 12:
@@ -136,6 +141,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False) -> dict:
         "identity": data.get("identity"),
         "org": data.get("org"),
         "ou": data.get("ou"),
+        "ous": data.get("ous"),
         "accounts": data.get("accounts", []),
         "costs": data.get("costs", []),
         "period": data.get("period"),
@@ -148,7 +154,13 @@ def run_scan(job: ScanJob) -> dict:
     p = job.params
     data: dict = {"created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     job.data = data  # kept on the job so a failed scan still saves what it collected
-    log.info("scan starting: profile=%s ou=%s months=%d inventory=%s", p.profile, p.ou_id, p.months, p.inventory)
+    log.info(
+        "scan starting: profile=%s ou=%s months=%d inventory=%s",
+        p.profile,
+        ",".join(p.ous) or "root",
+        p.months,
+        p.inventory,
+    )
 
     # 1. Identity. With aws-cli-zsp this is where the Touch ID prompt appears.
     job.update("auth", 5, f"Authenticating with profile '{p.profile or 'default'}' (approve Touch ID if prompted)")
@@ -166,11 +178,18 @@ def run_scan(job: ScanJob) -> dict:
     try:
         data["org"] = organizations.describe_org(session)
         tree = organizations.list_ou_tree(session)
-        ou = organizations.find_ou(tree, p.ou_id) if p.ou_id else tree
-        if ou is None:
-            raise ScanFailed(f"OU {p.ou_id} not found in this organization")
-        data["ou"] = {"id": ou["id"], "name": ou["name"], "path": ou["path"]}
-        accounts = organizations.list_accounts_under(session, ou)
+        ous = [organizations.find_ou(tree, i) for i in p.ous] if p.ous else [tree]
+        missing = [i for i, ou in zip(p.ous, ous, strict=False) if ou is None]
+        if missing:
+            raise ScanFailed(f"OU {', '.join(missing)} not found in this organization")
+        data["ou"] = {k: " + ".join(ou[k] for ou in ous) for k in ("id", "name", "path")}
+        data["ous"] = [{k: ou[k] for k in ("id", "name", "path")} for ou in ous]
+        # Nested picks (an OU and one of its children) overlap: keep each account once.
+        seen: dict[str, organizations.Account] = {}
+        for ou in ous:
+            for a in organizations.list_accounts_under(session, ou):
+                seen.setdefault(a.id, a)
+        accounts = list(seen.values())
         if data["identity"]["account_id"] != data["org"]["management_account_id"]:
             job.add_issue(
                 Issue(

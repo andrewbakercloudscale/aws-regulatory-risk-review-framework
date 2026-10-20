@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 import uuid
 from importlib import resources
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -53,6 +54,7 @@ class AccessCheckRequest(BaseModel):
 class ScanRequest(BaseModel):
     profile: str | None = None
     ou_id: str | None = Field(None, max_length=80)
+    ou_ids: list[Annotated[str, Field(max_length=80)]] | None = Field(None, max_length=100)
     months: int = Field(12, ge=1, le=12)
     role_name: str | None = Field(None, max_length=64, pattern=r"^[\w+=,.@-]*$")
     inventory: bool = False
@@ -122,6 +124,9 @@ def create_app(allow_remote: bool = False) -> FastAPI:
         if request.url.path.startswith("/api/"):
             log.info("%s %s -> %d (%.0f ms)", request.method, request.url.path, response.status_code, ms)
         response.headers["X-Request-Id"] = req_id
+        if request.url.path.startswith("/static/"):
+            # Revalidate on every load so an upgraded console never runs stale JS/CSS.
+            response.headers.setdefault("Cache-Control", "no-cache")
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (

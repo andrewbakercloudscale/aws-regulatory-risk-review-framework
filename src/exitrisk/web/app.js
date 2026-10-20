@@ -640,31 +640,53 @@
     dlg.showModal();
   }
 
-  function flattenOus(node, depth = 0, out = []) {
-    // Non-breaking spaces: a <select> collapses ordinary ones, which flattened nested OUs.
-    out.push({ id: node.id, label: `${"\u00a0\u00a0\u00a0\u00a0".repeat(Math.max(0, depth - 1))}${depth ? "└ " : ""}${node.name}` });
-    node.children.forEach((c) => flattenOus(c, depth + 1, out));
+  // Accounts in an OU and everything below it (null if the tree came without counts).
+  function ouAccounts(node) {
+    if (node.accounts == null) return null;
+    return node.children.reduce((n, c) => n + (ouAccounts(c) ?? 0), node.accounts);
+  }
+  function flattenOus(node, depth = 0, out = [], parent = null) {
+    out.push({ id: node.id, name: node.name, depth, parent, accounts: ouAccounts(node) });
+    node.children.forEach((c) => flattenOus(c, depth + 1, out, node.id));
     return out;
   }
 
+  // Ticking an OU covers its children, so they show ticked and locked; the scan counts each account once.
+  function syncOus() {
+    const boxes = [...$("#sOu").querySelectorAll("input[type=checkbox]")];
+    const byId = new Map(boxes.map((b) => [b.value, b]));
+    for (const b of boxes) {
+      let p = b.dataset.parent, covered = false;
+      while (p && byId.has(p)) { if (byId.get(p).checked && !byId.get(p).disabled) { covered = true; break; } p = byId.get(p).dataset.parent; }
+      if (covered) { b.checked = true; b.disabled = true; } else if (b.disabled) { b.disabled = false; b.checked = false; }
+    }
+    const picked = boxes.filter((b) => b.checked && !b.disabled);
+    $("#ouChosen").textContent = picked.length ? `Scanning: ${picked.map((b) => b.dataset.name).join(", ")}` : "Scanning the whole organisation.";
+  }
+  const pickedOus = () => [...$("#sOu").querySelectorAll("input[type=checkbox]:checked:not(:disabled)")].map((b) => b.value);
+
   async function loadOus(ev) {
     const refresh = ev?.currentTarget?.id === "btnLoadOus";
-    $("#sOu").innerHTML = `<option value="">Loading organizational units…</option>`;
-    $("#sOu").disabled = true;
+    const was = new Set(pickedOus());
+    $("#sOu").innerHTML = `<p class="muted small">Loading organizational units…</p>`;
     $("#ouStatus").innerHTML = `<span class="spin" aria-hidden="true"></span> Loading organizational units (a few seconds)… approve Touch ID if prompted.`;
     $("#btnLoadOus").disabled = true;
     const seq = (state.ouSeq = (state.ouSeq || 0) + 1); // a later profile change wins over a slow earlier reply
     try {
       const { tree, org } = await api("/api/org", { method: "POST", body: { profile: $("#sProfile").value || null, refresh } });
       if (seq !== state.ouSeq) return;
-      $("#sOu").innerHTML = flattenOus(tree).map((o) => `<option value="${o.id === tree.id ? "" : esc(o.id)}">${esc(o.label)}${o.id === tree.id ? " (all accounts)" : ""}</option>`).join("");
+      $("#sOu").innerHTML = flattenOus(tree).filter((o) => o.depth > 0).map((o) =>
+        `<label class="ou-item" style="padding-left:${(o.depth - 1) * 20 + 6}px"><input type="checkbox" value="${esc(o.id)}" data-name="${esc(o.name)}" data-parent="${o.parent === tree.id ? "" : esc(o.parent)}"${was.has(o.id) ? " checked" : ""}> ${esc(o.name)}${o.accounts == null ? "" : ` <span class="muted">· ${o.accounts} account${o.accounts === 1 ? "" : "s"}</span>`}</label>`).join("") ||
+        `<p class="muted small">No OUs: the scan covers the whole organisation.</p>`;
+      syncOus();
       const n = flattenOus(tree).length - 1;
       $("#ouStatus").textContent = `${n} OU(s) in organization ${org.id} · management account ${org.management_account_id}`;
       state.mgmtAccount = org.management_account_id;
       try { if ($("#sProfile").value) localStorage.setItem(LS_ORG_PROFILE, $("#sProfile").value); } catch { /* ignore */ }
     } catch (e) {
       if (seq !== state.ouSeq) return;
-      $("#sOu").innerHTML = `<option value="">Organization root (all accounts)</option>`;
+      $("#sOu").innerHTML = `<p class="muted small">Whole organisation</p>`;
+      $("#ouChosen").textContent = "";
       const cur = $("#sProfile").value;
       const others = [...$("#sProfile").options].map((o) => o.value).filter((v) => v && v !== cur);
       const known = others.filter((v) => state.profileAccounts?.[v] && state.mgmtAccount && state.profileAccounts[v] === state.mgmtAccount);
@@ -678,13 +700,13 @@
       $("#ouStatus").querySelectorAll(".ou-try").forEach((a) => a.addEventListener("click", (ev) => {
         ev.preventDefault(); $("#sProfile").value = a.dataset.p; loadOus();
       }));
-    } finally { if (seq === state.ouSeq) { $("#btnLoadOus").disabled = false; $("#sOu").disabled = false; } }
+    } finally { if (seq === state.ouSeq) { $("#btnLoadOus").disabled = false; } }
   }
 
   async function startScan() {
     const f = $("#scanForm");
     const body = {
-      profile: f.profile.value || null, ou_id: f.ou_id.value || null, months: Number(f.months.value || 12),
+      profile: f.profile.value || null, ou_ids: pickedOus(), months: Number(f.months.value || 12),
       inventory: f.inventory.checked, role_name: f.role_name.value || null,
       regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: f.label.value,
       target: f.target.value || "azure",
@@ -724,7 +746,10 @@
         if (nameFilter && s.status !== "failed") { $("#fInclude").value = nameFilter; $("#fMode").value = "contains"; }
         await loadReport();
       } catch (e) {
-        $("#scanError").textContent = e.message;
+        // A 404 mid-scan means the console restarted and the in-memory scan was lost.
+        $("#scanError").textContent = /scan not found/i.test(e.message)
+          ? "The console restarted while this scan was running, so it was lost. Start the scan again."
+          : e.message;
         $("#btnStartScan").disabled = false;
       }
     };
@@ -1048,6 +1073,7 @@
     $("#ssoDialog").addEventListener("close", () => clearInterval(sso.loginTimer));
     refreshSsoBadge();
     $("#btnLoadOus").addEventListener("click", loadOus);
+    $("#sOu").addEventListener("change", syncOus);
     $("#sProfile").addEventListener("change", loadOus);
     $("#btnStartScan").addEventListener("click", startScan);
     $("#sInventory").addEventListener("change", (e) => { $("#invOpts").hidden = !e.target.checked; });

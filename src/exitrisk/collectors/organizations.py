@@ -36,13 +36,18 @@ def describe_org(session: boto3.Session) -> dict:
 
 
 def list_ou_tree(session: boto3.Session) -> dict:
-    """Return the full OU tree as nested dicts: {id, name, path, children: [...]}."""
+    """Return the full OU tree as nested dicts: {id, name, path, accounts, children: [...]}.
+
+    ``accounts`` counts the accounts directly in that node, so the picker can show how big each OU is.
+    """
     client = _client(session)
     root = client.list_roots()["Roots"][0]
     tree = {"id": root["Id"], "name": "Root", "path": "Root", "children": []}
     paginator = client.get_paginator("list_organizational_units_for_parent")
+    accounts = client.get_paginator("list_accounts_for_parent")
 
     def expand(node: dict) -> list[dict]:
+        node["accounts"] = sum(len(p["Accounts"]) for p in accounts.paginate(ParentId=node["id"]))
         for page in paginator.paginate(ParentId=node["id"]):
             for ou in page["OrganizationalUnits"]:
                 child = {"id": ou["Id"], "name": ou["Name"], "path": f"{node['path']} / {ou['Name']}", "children": []}

@@ -61,3 +61,9 @@ def test_bad_inputs():
 def test_catalog_endpoint():
     cat = client().get("/api/catalog").json()
     assert cat["services"] and all(not s["excluded"] for s in cat["services"])
+
+
+def test_static_assets_revalidate_so_upgrades_take_effect():
+    c = client()
+    assert c.get("/").headers["cache-control"] == "no-store"
+    assert c.get("/static/app.js").headers["cache-control"] == "no-cache"
