@@ -124,14 +124,53 @@ exitrisk catalog                                                        # list s
 
 ## Screenshots
 
-| | |
-|---|---|
-| ![Executive summary](docs/images/executive-summary.png) **Executive summary** — bottom line, findings, exit cost/time, recommendations, confidence; then scores and KPIs | ![Risk profile](docs/images/risk-profile.png) **Risk profile** — spend by tier and trend |
-| ![Accounts](docs/images/accounts.png) **Accounts** — risk vs spend; ranking by spend at risk (spend × risk) | ![Services](docs/images/services.png) **Services** — what drives lock-in |
-| ![Estimate](docs/images/estimate.png) **Exit estimate** — questionnaire, timeline, effort | ![Issues](docs/images/issues.png) **Data quality** — what the report does not cover |
-| ![Appendix](docs/images/appendix-catalog.png) **Appendix** — tier, rationale, migration path, duration | ![Dark mode](docs/images/dashboard-dark.png) **Dark mode** |
-| ![Getting started](docs/images/getting-started.png) **Getting started** — connect, check access, scan | ![Check access](docs/images/access-check.png) **Check access** — ✓/✗ per permission and the request for your AWS admin |
-| ![AWS sign-in](docs/images/sso-sign-in.png) **AWS sign-in** — SSO / Identity Center from the header | ![New scan](docs/images/new-scan-dialog.png) **New scan** — profile, OU, deep scan |
+**Executive summary** — Bottom line, findings, exit cost and time as ranges, recommendations, confidence; then scores and key figures.
+
+![Executive summary](docs/images/executive-summary.png)
+
+**Risk profile** — Spend by tier and its trend, and which product types are growing.
+
+![Risk profile](docs/images/risk-profile.png)
+
+**Accounts** — How many accounts are portable vs higher risk; risk vs spend; ranking by spend at risk (spend × risk).
+
+![Accounts](docs/images/accounts.png)
+
+**Services** — The AWS-only services that drive lock-in.
+
+![Services](docs/images/services.png)
+
+**Exit estimate** — Your answers (CI/CD, Terraform, team size), the exit timeline and where the effort goes.
+
+![Exit estimate](docs/images/estimate.png)
+
+**Data quality** — What the report does not cover, and why.
+
+![Data quality](docs/images/issues.png)
+
+**Appendix** — Each service's tier, rationale, migration path and typical duration.
+
+![Appendix](docs/images/appendix-catalog.png)
+
+**Getting started** — Connect, check access, scan.
+
+![Getting started](docs/images/getting-started.png)
+
+**Check access** — ✓/✗ per permission, and the request to send your AWS administrator.
+
+![Check access](docs/images/access-check.png)
+
+**AWS sign-in** — SSO / IAM Identity Center from the header.
+
+![AWS sign-in](docs/images/sso-sign-in.png)
+
+**New scan** — Profile, one or more OUs, deep scan.
+
+![New scan](docs/images/new-scan-dialog.png)
+
+**Dark mode**
+
+![Dark mode](docs/images/dashboard-dark.png)
 
 A complete sample report generated from the demo data: [docs/sample-report.pdf](docs/sample-report.pdf).
 
