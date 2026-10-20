@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+.terraform/
+*.tfstate*
+.DS_Store
+# Scan results contain account names and spend - never commit them.
+scans/
+*.scan.json
+exit-risk-report*.pdf
+.omc/

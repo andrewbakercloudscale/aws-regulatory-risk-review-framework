@@ -1,0 +1,208 @@
+"""The web console: a local FastAPI app serving the dashboard and a small JSON API.
+
+The console runs on the analyst's machine with the analyst's AWS credentials, so it is
+locked to loopback by default and defends against the two ways a web page in the same
+browser could reach it:
+
+* DNS rebinding - requests whose Host header is not a loopback name are refused;
+* cross-site requests - every state-changing request must carry ``X-ExitRisk: 1``, a
+  custom header a foreign origin cannot send without a CORS preflight, which we never grant.
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from importlib import resources
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from . import __version__, store
+from .aws_session import available_profiles, make_session
+from .catalog import load_catalog
+from .collectors import organizations
+from .demo import create_demo_scan
+from .estimate import CICD_LABELS, IAC_LABELS, TARGET_LABELS, Questionnaire
+from .filtering import AccountFilter, FilterError
+from .issues import describe_exception
+from .logging_config import configure_logging, get_logger, tail_log
+from .scanner import ScanParams, get_job, start_scan
+from .scoring import build_report
+
+log = get_logger("server")
+WEB_DIR = resources.files("exitrisk").joinpath("web")
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
+
+
+class OUQuery(BaseModel):
+    profile: str | None = None
+
+
+class ScanRequest(BaseModel):
+    profile: str | None = None
+    ou_id: str | None = Field(None, max_length=80)
+    months: int = Field(3, ge=1, le=12)
+    role_name: str | None = Field(None, max_length=64, pattern=r"^[\w+=,.@-]*$")
+    inventory: bool = False
+    regions: list[str] | None = None
+    label: str = Field("", max_length=120)
+
+
+class FilterModel(BaseModel):
+    include: str = Field("", max_length=200)
+    exclude: str = Field("", max_length=200)
+    mode: str = "contains"
+    case_sensitive: bool = False
+
+
+class ReportRequest(BaseModel):
+    scan_id: str
+    filter: FilterModel = FilterModel()
+    questionnaire: Questionnaire = Questionnaire()
+
+
+def _host_name(header: str) -> str:
+    """'localhost:8765' -> 'localhost', '[::1]:8765' -> '[::1]'."""
+    if header.startswith("["):
+        return header.split("]")[0] + "]"
+    return header.rsplit(":", 1)[0]
+
+
+def create_app(allow_remote: bool = False) -> FastAPI:
+    configure_logging()
+    app = FastAPI(title="AWS Exit Risk Review", version=__version__, docs_url="/api/docs", redoc_url=None)
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        req_id = uuid.uuid4().hex[:8]
+        started = time.perf_counter()
+        host = _host_name(request.headers.get("host") or "")
+        if not allow_remote and host not in LOOPBACK_HOSTS:
+            log.warning("refused request with Host %r", host)
+            return JSONResponse({"error": "host not allowed"}, status_code=403)
+        if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-exitrisk") != "1":
+            log.warning("refused %s %s without X-ExitRisk header", request.method, request.url.path)
+            return JSONResponse({"error": "missing X-ExitRisk header"}, status_code=403)
+        try:
+            response = await call_next(request)
+        except Exception:
+            log.exception("unhandled error on %s %s (req %s)", request.method, request.url.path, req_id)
+            return JSONResponse({"error": "internal error - see the log", "request_id": req_id}, status_code=500)
+        ms = (time.perf_counter() - started) * 1000
+        if request.url.path.startswith("/api/"):
+            log.info("%s %s -> %d (%.0f ms)", request.method, request.url.path, response.status_code, ms)
+        response.headers["X-Request-Id"] = req_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+            "connect-src 'self'; frame-ancestors 'none'"
+        )
+        return response
+
+    @app.get("/api/health")
+    def health():
+        return {"status": "ok", "version": __version__, "catalog_version": load_catalog().version}
+
+    @app.get("/api/profiles")
+    def profiles():
+        return {"profiles": available_profiles()}
+
+    @app.get("/api/options")
+    def options():
+        return {
+            "cicd": CICD_LABELS,
+            "iac": IAC_LABELS,
+            "target": TARGET_LABELS,
+            "defaults": Questionnaire().model_dump(),
+        }
+
+    @app.post("/api/org")
+    def org(q: OUQuery):
+        """Read the OU tree. With aws-cli-zsp this call is where Touch ID is first requested."""
+        try:
+            session = make_session(q.profile)
+            tree = organizations.list_ou_tree(session)
+            return {"tree": tree, "org": organizations.describe_org(session)}
+        except Exception as exc:
+            code, msg, hint = describe_exception(exc)
+            log.warning("OU tree unavailable for profile %s: %s %s", q.profile, code, msg)
+            return JSONResponse({"error": msg, "code": code, "hint": hint}, status_code=502)
+
+    @app.post("/api/scans")
+    def create_scan(req: ScanRequest):
+        try:
+            job = start_scan(ScanParams(**req.model_dump()))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return job.snapshot()
+
+    @app.post("/api/scans/demo")
+    def demo():
+        scan = create_demo_scan()
+        log.info("created demo scan %s", scan["id"])
+        return {"id": scan["id"], "status": "complete"}
+
+    @app.get("/api/scans")
+    def scans():
+        return {"scans": store.list_scans()}
+
+    @app.get("/api/scans/{scan_id}/status")
+    def scan_status(scan_id: str):
+        job = get_job(scan_id)
+        if job:
+            return job.snapshot()
+        try:
+            s = store.load_scan(scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        return {
+            "id": scan_id,
+            "phase": s["status"],
+            "pct": 100,
+            "status": s["status"],
+            "message": "",
+            "issues": len(s.get("issues", [])),
+        }
+
+    @app.delete("/api/scans/{scan_id}")
+    def delete(scan_id: str):
+        try:
+            store.delete_scan(scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        return {"deleted": scan_id}
+
+    @app.post("/api/report")
+    def report(req: ReportRequest):
+        try:
+            scan = store.load_scan(req.scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        try:
+            flt = AccountFilter(**req.filter.model_dump())
+        except FilterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return build_report(scan, flt, req.questionnaire)
+
+    @app.get("/api/catalog")
+    def catalog():
+        return load_catalog().to_dict()
+
+    @app.get("/api/logs")
+    def logs(lines: int = 200, run_id: str | None = None):
+        return {"records": tail_log(min(max(lines, 1), 2000), run_id)}
+
+    @app.get("/")
+    def index():
+        return FileResponse(str(WEB_DIR.joinpath("index.html")), headers={"Cache-Control": "no-store"})
+
+    @app.get("/favicon.ico")
+    def favicon():
+        return Response(status_code=204)
+
+    app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+    return app

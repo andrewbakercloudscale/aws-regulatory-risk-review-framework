@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aws-regulatory-risk-review-framework"
+version = "0.1.0"
+description = "Web console that scores how hard it is to exit AWS for an Organizational Unit, weighted by spend, with a migration cost and time estimate."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [{name = "Andrew Baker"}]
+keywords = ["aws", "exit-strategy", "cloud-concentration-risk", "DORA", "vendor-lock-in", "finops"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Apache Software License",
+  "Topic :: System :: Systems Administration",
+]
+dependencies = [
+  "boto3>=1.34",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "pydantic>=2.6",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+pdf = ["playwright>=1.44"]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5", "playwright>=1.44"]
+
+[project.scripts]
+exitrisk = "exitrisk.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+exitrisk = ["data/*.yaml", "web/*", "web/vendor/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = ["S101", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]

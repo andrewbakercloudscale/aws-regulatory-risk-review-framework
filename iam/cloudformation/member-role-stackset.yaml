@@ -1,0 +1,59 @@
+# Deploy with CloudFormation StackSets (service-managed) to every account in the OU you
+# want to deep-scan. Creates a list-only role the exit-risk scanner assumes from the
+# management account. It cannot read data, only count resources.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Read-only role for aws-regulatory-risk-review-framework deep scans
+Parameters:
+  ScannerAccountId:
+    Type: String
+    AllowedPattern: "^[0-9]{12}$"
+    Description: Account the scanner runs from (normally the management account)
+  ScannerPrincipalArn:
+    Type: String
+    Default: ""
+    Description: Optional - restrict to one IAM role/user ARN in the scanner account
+Conditions:
+  HasPrincipal: !Not [!Equals [!Ref ScannerPrincipalArn, ""]]
+Resources:
+  ExitRiskReadOnly:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ExitRiskReadOnly
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !If [HasPrincipal, !Ref ScannerPrincipalArn, !Sub "arn:${AWS::Partition}:iam::${ScannerAccountId}:root"]
+            Action: sts:AssumeRole
+            Condition:
+              StringLike:
+                sts:RoleSessionName: "exitrisk-*"
+      Policies:
+        - PolicyName: ExitRiskInventoryListOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeRegions
+                  - lambda:ListFunctions
+                  - dynamodb:ListTables
+                  - states:ListStateMachines
+                  - kinesis:ListStreams
+                  - sqs:ListQueues
+                  - sns:ListTopics
+                  - events:ListRules
+                  - apigateway:GET
+                  - cognito-idp:ListUserPools
+                  - glue:GetJobs
+                  - redshift:DescribeClusters
+                  - cloudformation:ListStacks
+                  - eks:ListClusters
+                  - ecs:ListClusters
+                  - rds:DescribeDBInstances
+                Resource: "*"
+Outputs:
+  RoleArn:
+    Value: !GetAtt ExitRiskReadOnly.Arn

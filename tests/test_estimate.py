@@ -1,0 +1,56 @@
+import pytest
+
+from exitrisk.demo import build_demo_scan
+from exitrisk.estimate import Questionnaire, size_multiplier
+from exitrisk.scoring import build_report
+
+
+def test_size_multiplier_scaling():
+    assert size_multiplier(1000) == pytest.approx(1.0)
+    assert size_multiplier(4000) == pytest.approx(2.0)
+    assert size_multiplier(1) == 0.25  # floor
+    assert size_multiplier(10_000_000) == 8.0  # cap
+    assert size_multiplier(100, count=100, typical=25) == pytest.approx(2.0)  # counts win when higher
+
+
+def _est(**q):
+    return build_report(build_demo_scan(), questionnaire=Questionnaire(**q))["estimate"]
+
+
+def test_maturity_lowers_effort():
+    good = _est(cicd="standard", iac="terraform_current")
+    poor = _est(cicd="manual", iac="none")
+    assert good["effort"]["total_weeks"] < poor["effort"]["total_weeks"]
+
+
+def test_bigger_team_is_faster_but_not_cheaper():
+    small = _est(cloud_team_size=5, app_engineers_fte=0)
+    large = _est(cloud_team_size=60, app_engineers_fte=40)
+    assert large["duration"]["calendar_weeks"] < small["duration"]["calendar_weeks"]
+    assert large["cost"]["labour"] == small["cost"]["labour"]
+
+
+def test_critical_path_floor():
+    huge = _est(cloud_team_size=2000, cloud_team_allocation_pct=100, app_engineers_fte=5000)
+    assert huge["duration"]["constrained_by"] == "critical path"
+    assert huge["duration"]["calendar_weeks"] >= 26
+
+
+def test_fx_applies_to_parallel_run_only():
+    usd = _est()
+    zar = _est(currency="ZAR", fx_per_usd=18, day_rate=750)
+    assert zar["cost"]["parallel_run"] == pytest.approx(usd["cost"]["parallel_run"] * 18, rel=1e-3)
+    assert zar["cost"]["labour"] == usd["cost"]["labour"]
+
+
+def test_waves_are_contiguous():
+    e = _est()
+    for prev, nxt in zip(e["waves"], e["waves"][1:], strict=False):
+        assert nxt["start"] == pytest.approx(prev["start"] + prev["weeks"], abs=0.2)
+
+
+def test_questionnaire_validation():
+    with pytest.raises(ValueError):
+        Questionnaire(cicd="sometimes")
+    with pytest.raises(ValueError):
+        Questionnaire(cloud_team_size=0)

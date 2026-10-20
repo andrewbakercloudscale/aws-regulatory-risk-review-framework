@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AWS Exit Risk Review</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/vendor/chart.umd.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar no-print">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2 3 6v6c0 5 3.8 9.3 9 10 5.2-.7 9-5 9-10V6l-9-4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m8 12 3 3 5-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <span>AWS Exit Risk Review</span>
+  </div>
+  <div class="topbar-actions">
+    <label class="sr-only" for="scanSelect">Scan</label>
+    <select id="scanSelect" title="Stored scans"></select>
+    <button id="btnNewScan" class="btn primary">New scan</button>
+    <button id="btnDemo" class="btn">Load demo data</button>
+    <button id="btnPdf" class="btn">Export PDF</button>
+    <button id="btnLogs" class="btn ghost" title="Application log">Log</button>
+    <button id="btnTheme" class="btn ghost" title="Toggle dark mode" aria-label="Toggle dark mode">◐</button>
+  </div>
+</header>
+
+<section class="scopebar no-print" aria-label="Scope">
+  <div class="field">
+    <label for="fInclude">Account name contains</label>
+    <input id="fInclude" placeholder="e.g. prod, prd" autocomplete="off">
+  </div>
+  <div class="field narrow">
+    <label for="fMode">Match</label>
+    <select id="fMode">
+      <option value="contains">contains</option>
+      <option value="prefix">starts with</option>
+      <option value="suffix">ends with</option>
+      <option value="regex">regex</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="fExclude">Exclude names</label>
+    <input id="fExclude" placeholder="e.g. sandbox" autocomplete="off">
+  </div>
+  <button id="btnApply" class="btn primary">Apply</button>
+  <span id="filterError" class="error-text" role="alert"></span>
+</section>
+
+<main id="report" class="report">
+  <div id="empty" class="empty">
+    <h1>No scan loaded</h1>
+    <p>Run a <strong>New scan</strong> against your AWS Organization (read-only; uses your local AWS profile, including aws-cli-zsp), or <strong>Load demo data</strong> to explore the dashboard with a synthetic estate.</p>
+  </div>
+
+  <div id="content" hidden>
+    <!-- Cover (print) / title -->
+    <section class="cover">
+      <p class="eyebrow">Concentration &amp; exit risk assessment</p>
+      <h1 id="title">AWS exit risk review</h1>
+      <p id="subtitle" class="muted"></p>
+      <dl id="metaList" class="meta"></dl>
+    </section>
+
+    <!-- 1. Executive summary -->
+    <section class="section" id="sec-summary">
+      <h2><span class="num">1</span>Executive summary</h2>
+      <div class="hero-row">
+        <div class="hero card">
+          <div class="hero-label">OU exit-risk score</div>
+          <div class="hero-value"><span id="heroScore">–</span><span class="hero-of">/100</span></div>
+          <div id="heroRating" class="badge"></div>
+          <div class="scale" aria-hidden="true"><div class="scale-bands"></div><div id="scaleMarker" class="scale-marker"></div></div>
+          <div class="scale-labels" aria-hidden="true"><span>Low</span><span>Mod.</span><span>Elev.</span><span>High</span><span>Critical</span></div>
+        </div>
+        <div class="tiles" id="kpiTiles"></div>
+      </div>
+      <div class="card narrative"><h3>Key messages</h3><ul id="narrative"></ul></div>
+    </section>
+
+    <!-- 2. Risk profile -->
+    <section class="section" id="sec-profile">
+      <h2><span class="num">2</span>Where the exit risk sits</h2>
+      <div class="grid-2">
+        <figure class="card chart-card">
+          <figcaption><h3>Monthly spend by exit-risk tier</h3><p class="muted">Share of in-scope spend by how hard it is to move.</p></figcaption>
+          <div class="chart-box short"><canvas id="chTiers" role="img" aria-label="Donut chart of spend by risk tier"></canvas></div>
+          <table class="mini-table" id="tierTable"></table>
+        </figure>
+        <figure class="card chart-card">
+          <figcaption><h3>Spend trend by tier</h3><p class="muted">Is lock-in growing? Monthly amortised spend.</p></figcaption>
+          <div class="chart-box"><canvas id="chTrend" role="img" aria-label="Stacked bar chart of monthly spend by risk tier"></canvas></div>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 3. Accounts -->
+    <section class="section" id="sec-accounts">
+      <h2><span class="num">3</span>Accounts: risk weighted by size</h2>
+      <figure class="card chart-card">
+        <figcaption><h3>Inherent risk vs spend</h3><p class="muted">Each bubble is an account. Up = harder to move; right = bigger; bubble size = points it contributes to the OU score. Top-right accounts drive the exit.</p></figcaption>
+        <div class="chart-box tall"><canvas id="chAccounts" role="img" aria-label="Bubble chart of account risk score against monthly spend"></canvas></div>
+      </figure>
+      <div class="card">
+        <h3>Account ranking <span class="muted small">by weighted contribution</span></h3>
+        <div class="table-wrap"><table class="data" id="accountTable"></table></div>
+      </div>
+    </section>
+
+    <!-- 4. Services -->
+    <section class="section" id="sec-services">
+      <h2><span class="num">4</span>Services driving lock-in</h2>
+      <div class="grid-2">
+        <figure class="card chart-card">
+          <figcaption><h3>Top services by spend</h3><p class="muted">Coloured by exit-risk tier.</p></figcaption>
+          <div class="chart-box tall"><canvas id="chServices" role="img" aria-label="Bar chart of top services by spend"></canvas></div>
+        </figure>
+        <div class="card">
+          <h3>High &amp; critical services in use</h3>
+          <div class="table-wrap"><table class="data" id="lockinTable"></table></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Estimate -->
+    <section class="section" id="sec-estimate">
+      <h2><span class="num">5</span>Exit cost &amp; time estimate</h2>
+      <div class="grid-est">
+        <form class="card questionnaire" id="qForm" autocomplete="off">
+          <h3>About your organisation</h3>
+          <p class="muted small">These answers drive the estimate. They are saved in this browser only.</p>
+          <label>Do teams use a standard CI/CD pipeline to create assets?
+            <select name="cicd"></select></label>
+          <label>Do you use Terraform, and is it up to date?
+            <select name="iac"></select></label>
+          <div class="pair">
+            <label>People in the core cloud team<input name="cloud_team_size" type="number" min="1" step="1"></label>
+            <label>% of their time on the exit<input name="cloud_team_allocation_pct" type="number" min="5" max="100" step="5"></label>
+          </div>
+          <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1"></label>
+          <label>Target platform<select name="target"></select></label>
+          <div class="pair">
+            <label>Blended day rate<input name="day_rate" type="number" min="0" step="50"></label>
+            <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}"></label>
+          </div>
+          <div class="pair">
+            <label>FX: currency per 1 USD<input name="fx_per_usd" type="number" min="0.0001" step="0.01"></label>
+            <label>Contingency %<input name="contingency_pct" type="number" min="0" max="100" step="5"></label>
+          </div>
+          <div class="pair">
+            <label>Parallel-run months<input name="parallel_run_months" type="number" min="0" max="36" step="1"></label>
+            <label>Materiality (USD/month)<input name="materiality" type="number" min="0" step="5"></label>
+          </div>
+          <label class="check"><input name="regulated" type="checkbox"> Regulated entity (exit plan evidence, regulator notification, assurance testing)</label>
+          <button type="button" id="btnRecalc" class="btn primary no-print">Recalculate</button>
+        </form>
+        <div class="est-results">
+          <div class="tiles" id="estTiles"></div>
+          <div class="card">
+            <h3>Indicative timeline</h3>
+            <div id="gantt" class="gantt"></div>
+          </div>
+          <figure class="card chart-card">
+            <figcaption><h3>Where the effort goes</h3><p class="muted">Engineer-weeks after delivery-maturity adjustment.</p></figcaption>
+            <div class="chart-box short"><canvas id="chEffort" role="img" aria-label="Bar chart of effort by component"></canvas></div>
+          </figure>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Your answers and the assumptions behind the estimate</h3>
+        <dl class="answers" id="answers"></dl>
+        <ul id="assumptions" class="assumptions"></ul>
+      </div>
+    </section>
+
+    <!-- 6. Data quality -->
+    <section class="section" id="sec-issues">
+      <h2><span class="num">6</span>Data quality &amp; scan issues</h2>
+      <div class="card">
+        <p class="muted small">What this report does <em>not</em> cover. Every API error during the scan is recorded here and in the log.</p>
+        <div id="issueCounts" class="issue-counts"></div>
+        <div class="table-wrap"><table class="data" id="issueTable"></table></div>
+      </div>
+    </section>
+
+    <!-- Appendix A -->
+    <section class="section appendix" id="sec-appendix">
+      <h2><span class="num">A</span>Appendix: service exit-risk catalog</h2>
+      <div class="card">
+        <p>Every AWS service is classified into one of five tiers by how much of a workload must change to leave AWS. The tier sets the service's risk score; the recommended path and typical duration are for one workload of that service.</p>
+        <table class="data tiers-def" id="tierDefs"></table>
+        <label class="check no-print"><input type="checkbox" id="showAllCatalog"> Show the full catalog (not only services in this estate)</label>
+        <div id="catalog"></div>
+      </div>
+    </section>
+
+    <!-- Appendix B -->
+    <section class="section appendix" id="sec-method">
+      <h2><span class="num">B</span>Appendix: methodology</h2>
+      <div class="card prose">
+        <h3>Data sources</h3>
+        <p>Spend comes from AWS Cost Explorer in the management (payer) account: amortised cost per account per service per month, excluding tax, credits, refunds and support. Marketplace purchases are grouped as one third-party line. Accounts and OU structure come from AWS Organizations. The optional deep scan counts resources (Lambda functions, DynamoDB tables, state machines, stacks and more) in each member account through a read-only role. All API calls are read-only.</p>
+        <h3>Scoring</h3>
+        <p>Each service's tier maps to a score: Portable 10, Low 30, Moderate 50, High 75, Critical 95. An account's <strong>inherent risk</strong> is the spend-weighted average of its services' scores. Its <strong>weight</strong> is its share of in-scope spend, and its <strong>contribution</strong> is inherent risk × weight. The <strong>OU score</strong> is the sum of contributions — the spend-weighted risk of the whole estate — so a small account full of proprietary services scores high on its own yet moves the OU score very little.</p>
+        <p>Ratings: Low &lt; 25 ≤ Moderate &lt; 40 ≤ Elevated &lt; 55 ≤ High &lt; 70 ≤ Critical.</p>
+        <h3>Estimate</h3>
+        <p>Effort is built bottom-up: each material service in each account contributes the catalog's engineer-weeks for one workload, scaled by the square root of its spend relative to US$1,000/month (and by its resource count where the deep scan ran). Account overhead, a target landing zone, programme management and contingency are added, and the total is adjusted for delivery maturity from the questionnaire. Duration is the longer of effort ÷ available capacity and the critical path of the hardest tier present.</p>
+        <h3>Limitations</h3>
+        <ul>
+          <li>Spend is a proxy for size; a cheap service can still be hard to move (the deep scan's resource counts partly correct for this).</li>
+          <li>RDS spend covers all engines; Aurora-specific features and commercial engines (Oracle, SQL Server) appear in the deep scan's engine breakdown.</li>
+          <li>Contractual exit costs (EDP commitments, Savings Plans, Reserved Instances) and target-cloud run costs are outside the estimate.</li>
+          <li>The estimate is an order-of-magnitude planning figure for an executive decision, not a delivery quote.</li>
+        </ul>
+      </div>
+    </section>
+    <footer class="report-footer" id="footer"></footer>
+  </div>
+</main>
+
+<!-- New scan dialog -->
+<dialog id="scanDialog" class="dialog">
+  <form method="dialog" id="scanForm">
+    <h2>New scan</h2>
+    <p class="muted small">Read-only. Credentials come from your local AWS profile; with aws-cli-zsp you will be asked for Touch ID once. Use a profile in the <strong>management (payer) account</strong> for an organisation-wide view.</p>
+    <label>AWS profile<select name="profile" id="sProfile"></select></label>
+    <div class="row">
+      <button type="button" class="btn" id="btnLoadOus">Load OUs</button>
+      <span id="ouStatus" class="muted small"></span>
+    </div>
+    <label>Organizational Unit<select name="ou_id" id="sOu"><option value="">Organization root (all accounts)</option></select></label>
+    <label>Months of spend history<input name="months" type="number" min="1" max="12" value="3"></label>
+    <label class="check"><input type="checkbox" name="inventory" id="sInventory"> Deep scan: count resources in each member account</label>
+    <div id="invOpts" hidden>
+      <label>Role to assume in member accounts<input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
+      <label>Regions (comma-separated; blank = all enabled)<input name="regions" placeholder="eu-west-1,us-east-1"></label>
+    </div>
+    <label>Label (optional)<input name="label" maxlength="120" placeholder="e.g. Q4 board pack"></label>
+    <div id="scanProgress" class="progress" hidden>
+      <div class="bar"><div id="scanBar"></div></div>
+      <div id="scanMsg" class="small"></div>
+    </div>
+    <p id="scanError" class="error-text" role="alert"></p>
+    <div class="dialog-actions">
+      <button value="cancel" class="btn ghost" formnovalidate>Close</button>
+      <button type="button" id="btnStartScan" class="btn primary">Start scan</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Log dialog -->
+<dialog id="logDialog" class="dialog wide">
+  <h2>Application log</h2>
+  <label class="check"><input type="checkbox" id="logThisRun" checked> Only this scan</label>
+  <div class="table-wrap log-wrap"><table class="data mono" id="logTable"></table></div>
+  <div class="dialog-actions"><button class="btn" id="btnCloseLog">Close</button></div>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,1255 @@
+# AWS exit-risk service catalog.
+#
+# Every AWS service that appears in Cost Explorer is mapped to an exit-risk tier:
+#
+#   1 Portable   - commodity infrastructure or an open standard; lift-and-shift.
+#   2 Low        - managed flavour of an open engine/API; config and data move, code rarely does.
+#   3 Moderate   - AWS-specific API, but a close equivalent exists everywhere; code changes needed.
+#   4 High       - proprietary programming model or data model; redesign of the workload.
+#   5 Critical   - no equivalent outside AWS; rebuild, re-platform or replace with a product.
+#
+# Fields
+#   service       exact Cost Explorer SERVICE dimension value (matching is exact, then case-insensitive)
+#   aliases       other names AWS has used for the same service in Cost Explorer
+#   display       short name shown in charts
+#   category      grouping used in the appendix
+#   tier          1..5 as above
+#   why           why it sits in that tier (shown in the report appendix)
+#   migration     recommended migration path
+#   targets       equivalent on the common destinations
+#   effort_weeks  engineer-weeks to migrate ONE typical workload of this service in ONE account
+#                 at ~US$1k/month spend; the estimate scales it by spend (see docs/METHODOLOGY.md)
+#   duration      rough elapsed time for one workload, for the appendix
+#   excluded      true for billing lines that are not workloads (tax, support, commitments)
+#
+# Contributions welcome: see CONTRIBUTING.md. Keep `why` factual and `migration` actionable.
+
+version: "2026.10"
+
+tiers:
+  1: {label: Portable, score: 10}
+  2: {label: Low, score: 30}
+  3: {label: Moderate, score: 50}
+  4: {label: High, score: 75}
+  5: {label: Critical, score: 95}
+
+# Used for any service Cost Explorer reports that is not in this file.
+unclassified:
+  tier: 3
+  why: Not yet classified in the catalog; scored as Moderate until reviewed.
+  migration: Review the service and add it to service_catalog.yaml.
+  effort_weeks: 4
+  duration: Unknown
+
+services:
+  # ---------------------------------------------------------------- Compute
+  - service: Amazon Elastic Compute Cloud - Compute
+    aliases: [Amazon Elastic Compute Cloud, Amazon EC2]
+    display: EC2
+    category: Compute
+    tier: 1
+    why: Virtual machines running standard operating systems. Images can be exported or rebuilt from configuration management.
+    migration: Rehost VMs (Azure Migrate, Google Migrate to VMs, or rebuild from Packer/Ansible images). Re-baseline instance sizes on the target.
+    targets: {azure: Virtual Machines, gcp: Compute Engine, other: VMware / OpenStack / bare metal}
+    effort_weeks: 1.5
+    duration: 1-4 weeks per application
+
+  - service: EC2 - Other
+    display: EC2 Other (EBS, NAT, transfer)
+    category: Compute
+    tier: 1
+    why: Block storage, snapshots, NAT gateways, elastic IPs and data transfer. Commodity primitives on every cloud.
+    migration: Recreate volumes and network egress on the target; move data with snapshots or block replication. Budget for one-off egress charges.
+    targets: {azure: Managed Disks / NAT Gateway, gcp: Persistent Disk / Cloud NAT, other: SAN / Ceph}
+    effort_weeks: 0.5
+    duration: Moves with the workload
+
+  - service: Amazon Elastic Kubernetes Service
+    aliases: [Amazon Elastic Container Service for Kubernetes, Amazon EKS]
+    display: EKS
+    category: Compute
+    tier: 1
+    why: Upstream Kubernetes. Manifests and Helm charts run on any conformant cluster; AWS-specific add-ons (IRSA, ALB controller, EBS CSI) are small and swappable.
+    migration: Stand up AKS/GKE/on-prem Kubernetes, swap cloud add-ons (identity, ingress, storage classes), redeploy via GitOps.
+    targets: {azure: AKS, gcp: GKE, other: OpenShift / Rancher / upstream Kubernetes}
+    effort_weeks: 2
+    duration: 2-6 weeks per cluster
+
+  - service: Amazon Elastic Container Service
+    aliases: [Amazon EC2 Container Service, Amazon ECS]
+    display: ECS
+    category: Compute
+    tier: 2
+    why: Containers are portable but ECS task definitions, service discovery and deployment wiring are AWS-specific and must be rewritten.
+    migration: Convert task definitions to Kubernetes manifests or Azure Container Apps / Cloud Run definitions. Images move unchanged.
+    targets: {azure: Container Apps / AKS, gcp: Cloud Run / GKE, other: Kubernetes / Nomad}
+    effort_weeks: 2.5
+    duration: 2-6 weeks per service group
+
+  - service: Amazon EC2 Container Registry (ECR)
+    aliases: [Amazon Elastic Container Registry, Amazon ECR]
+    display: ECR
+    category: Compute
+    tier: 1
+    why: OCI-compliant container registry; images copy directly.
+    migration: Mirror repositories with skopeo/crane and repoint pipelines.
+    targets: {azure: Azure Container Registry, gcp: Artifact Registry, other: Harbor}
+    effort_weeks: 0.5
+    duration: Days
+
+  - service: AWS Lambda
+    display: Lambda
+    category: Compute
+    tier: 4
+    why: The function code is portable, but the event model, triggers (S3, SQS, DynamoDB streams, EventBridge), IAM wiring, layers and runtime limits are AWS-specific. Real Lambda estates are mostly glue between other AWS services.
+    migration: Inventory triggers first. Repackage as containers on Cloud Run / Container Apps / Knative, or rewrite as Azure Functions; replace each event source with the target's equivalent. Migrate with the services it glues together, not alone.
+    targets: {azure: Azure Functions / Container Apps, gcp: Cloud Run functions, other: Knative / OpenFaaS on Kubernetes}
+    effort_weeks: 6
+    duration: 4-12 weeks per application
+
+  - service: AWS App Runner
+    display: App Runner
+    category: Compute
+    tier: 2
+    why: Runs a standard container image; only the service configuration is AWS-specific.
+    migration: Deploy the same image to Cloud Run or Azure Container Apps.
+    targets: {azure: Container Apps, gcp: Cloud Run, other: Kubernetes}
+    effort_weeks: 1
+    duration: 1-2 weeks
+
+  - service: AWS Elastic Beanstalk
+    display: Elastic Beanstalk
+    category: Compute
+    tier: 2
+    why: Standard application runtimes on EC2; Beanstalk configuration (.ebextensions) must be rewritten.
+    migration: Containerise or move to App Service / App Engine; translate environment configuration.
+    targets: {azure: App Service, gcp: App Engine / Cloud Run, other: Kubernetes}
+    effort_weeks: 2
+    duration: 2-4 weeks
+
+  - service: Amazon Lightsail
+    display: Lightsail
+    category: Compute
+    tier: 1
+    why: Simple VPS instances.
+    migration: Rehost as small VMs.
+    targets: {azure: Virtual Machines (B-series), gcp: Compute Engine (e2), other: Any VPS provider}
+    effort_weeks: 0.5
+    duration: Days
+
+  - service: AWS Batch
+    display: Batch
+    category: Compute
+    tier: 2
+    why: Container jobs on EC2/Fargate; job definitions and queues are AWS-specific.
+    migration: Move to Azure Batch, Google Batch, or Kubernetes Jobs / Argo Workflows.
+    targets: {azure: Azure Batch, gcp: Google Batch, other: Kubernetes Jobs / Slurm}
+    effort_weeks: 2
+    duration: 2-4 weeks
+
+  - service: AWS Outposts
+    display: Outposts
+    category: Compute
+    tier: 3
+    why: AWS-owned hardware in your data centre, operated through AWS APIs; contract terms and hardware return drive the timeline.
+    migration: Replace with on-prem virtualisation or Azure Stack / Google Distributed Cloud; plan around contract end.
+    targets: {azure: Azure Stack HCI, gcp: Google Distributed Cloud, other: VMware / OpenStack}
+    effort_weeks: 8
+    duration: 3-6 months
+
+  # ---------------------------------------------------------------- Storage
+  - service: Amazon Simple Storage Service
+    aliases: [Amazon S3]
+    display: S3
+    category: Storage
+    tier: 2
+    why: The S3 API is a de-facto standard implemented by most object stores, but bucket policies, event notifications, lifecycle rules, Object Lock and presigned URL patterns need translating, and large data sets incur egress cost and transfer time.
+    migration: Copy with rclone / Storage Transfer Service / AzCopy; use S3-compatible endpoints where code depends on the S3 SDK; recreate lifecycle, retention and event rules.
+    targets: {azure: Blob Storage, gcp: Cloud Storage, other: MinIO / Ceph RGW}
+    effort_weeks: 1.5
+    duration: 1-8 weeks (data-volume bound)
+
+  - service: Amazon Glacier
+    aliases: [Amazon S3 Glacier]
+    display: Glacier
+    category: Storage
+    tier: 2
+    why: Archive storage; retrieval is slow and paid, which dominates the timeline.
+    migration: Plan bulk retrievals in waves; land in the target's archive tier.
+    targets: {azure: Blob Archive tier, gcp: Archive Storage, other: Tape / object store}
+    effort_weeks: 2
+    duration: Weeks to months (retrieval bound)
+
+  - service: Amazon Elastic File System
+    display: EFS
+    category: Storage
+    tier: 1
+    why: Standard NFS.
+    migration: Sync to Azure Files (NFS) / Filestore with rsync or DataSync-equivalent tools.
+    targets: {azure: Azure Files NFS / NetApp Files, gcp: Filestore, other: NFS appliance}
+    effort_weeks: 1
+    duration: 1-3 weeks
+
+  - service: Amazon FSx
+    display: FSx
+    category: Storage
+    tier: 1
+    why: Managed Windows File Server, Lustre, ONTAP or OpenZFS - all standard file systems.
+    migration: Replicate to the equivalent managed file system (ONTAP SnapMirror where applicable).
+    targets: {azure: Azure Files / NetApp Files, gcp: Filestore / NetApp Volumes, other: NetApp / Windows File Server}
+    effort_weeks: 1.5
+    duration: 2-4 weeks
+
+  - service: AWS Backup
+    display: Backup
+    category: Storage
+    tier: 2
+    why: Backup policies and vaults are AWS-specific; the protected data moves with each workload. Retained backups must be kept (or restored and re-protected) to meet retention obligations.
+    migration: Recreate policies in Azure Backup / Backup and DR; keep the AWS vault read-only until retention expires.
+    targets: {azure: Azure Backup, gcp: Backup and DR, other: Veeam / Commvault}
+    effort_weeks: 1
+    duration: Retention-bound tail
+
+  - service: AWS Storage Gateway
+    display: Storage Gateway
+    category: Storage
+    tier: 2
+    why: Hybrid file/volume/tape gateway; standard protocols on-prem, AWS storage behind it.
+    migration: Replace with Azure File Sync / NetApp or a vendor gateway.
+    targets: {azure: Azure File Sync, gcp: NetApp / partner gateway, other: NAS}
+    effort_weeks: 2
+    duration: 2-6 weeks
+
+  - service: AWS Transfer Family
+    display: Transfer Family
+    category: Storage
+    tier: 2
+    why: Managed SFTP/FTPS in front of S3/EFS; protocol is standard, identity integration is not.
+    migration: Move partner endpoints to Azure Blob SFTP or a managed SFTP; coordinate partner DNS/key changes early.
+    targets: {azure: Blob Storage SFTP, gcp: Partner SFTP on GCS, other: OpenSSH / MOVEit}
+    effort_weeks: 1.5
+    duration: 2-6 weeks (partner coordination)
+
+  - service: AWS DataSync
+    display: DataSync
+    category: Storage
+    tier: 1
+    why: A transfer tool; nothing runs on it long-term.
+    migration: Retire; use the target's transfer tooling.
+    targets: {azure: AzCopy / Data Box, gcp: Storage Transfer Service, other: rsync / rclone}
+    effort_weeks: 0.25
+    duration: Days
+
+  # ---------------------------------------------------------------- Databases
+  - service: Amazon Relational Database Service
+    aliases: [Amazon RDS, Amazon Aurora]
+    display: RDS / Aurora
+    category: Database
+    tier: 2
+    why: PostgreSQL, MySQL, MariaDB, SQL Server and Oracle engines, plus Aurora (PostgreSQL/MySQL compatible). Schemas and SQL move; Aurora-only features (Global Database, Babelfish, Aurora Serverless scaling, IAM DB auth) and Oracle/SQL Server licensing need attention.
+    migration: Migrate with native replication or DMS-equivalents (Azure DMS, Database Migration Service) into Azure Database / Cloud SQL / AlloyDB. Cut over per database with a short read-only window.
+    targets: {azure: Azure Database for PostgreSQL/MySQL / Azure SQL, gcp: Cloud SQL / AlloyDB, other: Self-managed PostgreSQL (CloudNativePG)}
+    effort_weeks: 3
+    duration: 2-8 weeks per database
+
+  - service: Amazon Aurora DSQL
+    display: Aurora DSQL
+    category: Database
+    tier: 4
+    why: Distributed, PostgreSQL-flavoured service with its own consistency model and a reduced feature set; applications are written around its behaviour.
+    migration: Re-target to CockroachDB, YugabyteDB, Spanner (PostgreSQL interface) or AlloyDB; regression-test transactional behaviour.
+    targets: {azure: Cosmos DB for PostgreSQL / CockroachDB, gcp: Spanner (PostgreSQL interface), other: CockroachDB / YugabyteDB}
+    effort_weeks: 8
+    duration: 2-4 months
+
+  - service: Amazon DynamoDB
+    display: DynamoDB
+    category: Database
+    tier: 5
+    why: Proprietary key-value/document model. Single-table designs, GSIs, conditional writes, TTL and DynamoDB Streams are baked into application code and data layout. No wire-compatible equivalent outside AWS.
+    migration: Redesign the data access layer. Common targets are Cosmos DB, Firestore/Bigtable, ScyllaDB (Alternator offers a DynamoDB-compatible API) or PostgreSQL JSONB. Replace Streams consumers. Run dual-writes during cutover.
+    targets: {azure: Cosmos DB, gcp: Firestore / Bigtable / Spanner, other: ScyllaDB Alternator / Cassandra / PostgreSQL}
+    effort_weeks: 10
+    duration: 2-6 months per application
+
+  - service: Amazon DocumentDB (with MongoDB compatibility)
+    aliases: [Amazon DocumentDB]
+    display: DocumentDB
+    category: Database
+    tier: 2
+    why: Speaks the MongoDB wire protocol (with gaps in operators and features). Apps written to the MongoDB driver usually move with minor fixes.
+    migration: Migrate to MongoDB Atlas (on any cloud) or Cosmos DB for MongoDB with mongodump/mongorestore or live sync.
+    targets: {azure: Cosmos DB for MongoDB, gcp: MongoDB Atlas, other: MongoDB}
+    effort_weeks: 3
+    duration: 3-8 weeks
+
+  - service: Amazon ElastiCache
+    display: ElastiCache
+    category: Database
+    tier: 1
+    why: Managed Redis / Valkey / Memcached - open engines.
+    migration: Provision the target cache and warm it; caches rarely need data migration.
+    targets: {azure: Azure Cache for Redis, gcp: Memorystore, other: Redis / Valkey}
+    effort_weeks: 0.5
+    duration: Days
+
+  - service: Amazon MemoryDB
+    aliases: [Amazon MemoryDB for Redis]
+    display: MemoryDB
+    category: Database
+    tier: 2
+    why: Durable Redis-compatible store; data is the system of record, so it must be migrated, not rebuilt.
+    migration: Replicate to Redis Enterprise / Azure Managed Redis; validate durability semantics.
+    targets: {azure: Azure Managed Redis, gcp: Memorystore for Redis Cluster, other: Redis Enterprise}
+    effort_weeks: 2
+    duration: 2-4 weeks
+
+  - service: Amazon Keyspaces (for Apache Cassandra)
+    aliases: [Amazon Keyspaces]
+    display: Keyspaces
+    category: Database
+    tier: 2
+    why: Cassandra CQL API with some unsupported features.
+    migration: Move to Cassandra / ScyllaDB / Cosmos DB for Cassandra with dsbulk or dual-writes.
+    targets: {azure: Cosmos DB for Apache Cassandra / Managed Instance for Cassandra, gcp: Bigtable (CQL) / Astra DB, other: Apache Cassandra / ScyllaDB}
+    effort_weeks: 3
+    duration: 3-8 weeks
+
+  - service: Amazon Neptune
+    display: Neptune
+    category: Database
+    tier: 3
+    why: Graph database using open query languages (Gremlin, openCypher, SPARQL), but loaders, IAM auth and Neptune-specific extensions need rework.
+    migration: Move to Neo4j, Cosmos DB for Gremlin or JanusGraph; re-validate query behaviour.
+    targets: {azure: Cosmos DB for Apache Gremlin, gcp: Neo4j AuraDB / Spanner Graph, other: Neo4j / JanusGraph}
+    effort_weeks: 5
+    duration: 1-3 months
+
+  - service: Amazon Timestream
+    display: Timestream
+    category: Database
+    tier: 4
+    why: Proprietary time-series engine and SQL dialect (Timestream for InfluxDB is the portable variant).
+    migration: Move to InfluxDB, TimescaleDB, Azure Data Explorer or Bigtable; rewrite queries and ingestion.
+    targets: {azure: Azure Data Explorer, gcp: Bigtable / BigQuery, other: InfluxDB / TimescaleDB}
+    effort_weeks: 6
+    duration: 1-3 months
+
+  - service: Amazon Quantum Ledger Database
+    aliases: [Amazon QLDB]
+    display: QLDB
+    category: Database
+    tier: 5
+    why: Proprietary ledger database (PartiQL, cryptographic journal) with no equivalent; AWS ended support for QLDB on 31 July 2025, so any remaining use is urgent.
+    migration: Re-implement on PostgreSQL with an append-only journal and hash chaining, or a ledger product such as Azure SQL ledger tables.
+    targets: {azure: Azure SQL Database ledger, gcp: Spanner with audit tables, other: PostgreSQL + immudb}
+    effort_weeks: 10
+    duration: 2-4 months
+
+  - service: AWS Database Migration Service
+    display: DMS
+    category: Database
+    tier: 1
+    why: A migration tool, not a workload.
+    migration: Retire; use the target's migration service.
+    targets: {azure: Azure Database Migration Service, gcp: Database Migration Service, other: Debezium}
+    effort_weeks: 0.25
+    duration: Days
+
+  # ---------------------------------------------------------------- Analytics
+  - service: Amazon Redshift
+    display: Redshift
+    category: Analytics
+    tier: 4
+    why: PostgreSQL-derived but proprietary MPP warehouse - distribution/sort keys, Spectrum external tables, stored procedures, UNLOAD/COPY from S3, Redshift ML and data sharing are all specific. Downstream BI and ELT jobs depend on its dialect.
+    migration: Choose a warehouse (Snowflake or Databricks are cloud-neutral; BigQuery / Fabric Warehouse are native). Convert DDL and SQL with a translation tool, re-point ELT (dbt makes this far cheaper), reconcile results in parallel for several reporting cycles.
+    targets: {azure: Fabric Warehouse / Synapse / Snowflake, gcp: BigQuery, other: Snowflake / Databricks / ClickHouse}
+    effort_weeks: 10
+    duration: 3-9 months per warehouse
+
+  - service: Amazon Athena
+    display: Athena
+    category: Analytics
+    tier: 3
+    why: Trino/Presto-based SQL, so queries are largely portable, but it is bound to the Glue Data Catalog, S3 locations and Athena workgroups.
+    migration: Move tables to Iceberg/Delta, query with Trino, BigQuery or Databricks SQL.
+    targets: {azure: Fabric / Synapse serverless SQL, gcp: BigQuery, other: Trino / Starburst}
+    effort_weeks: 3
+    duration: 3-8 weeks
+
+  - service: AWS Glue
+    display: Glue
+    category: Analytics
+    tier: 4
+    why: Spark under the hood, but jobs use GlueContext/DynamicFrame APIs, the Glue Data Catalog, crawlers and Glue workflows. The catalog is usually shared by Athena, EMR, Redshift Spectrum and Lake Formation, so it is a hub.
+    migration: Port jobs to plain Spark (Databricks, Dataproc, Synapse Spark), migrate the catalog to Unity / Hive Metastore / Dataplex, and replace crawlers with explicit schemas.
+    targets: {azure: Data Factory + Databricks, gcp: Dataproc / Dataflow + Dataplex, other: Spark + Airflow + Hive Metastore}
+    effort_weeks: 6
+    duration: 1-4 months
+
+  - service: Amazon Elastic MapReduce
+    aliases: [Amazon EMR]
+    display: EMR
+    category: Analytics
+    tier: 2
+    why: Open-source Spark, Hive, Presto, Flink. EMRFS, bootstrap actions and step orchestration need adjusting.
+    migration: Run the same jobs on Databricks, Dataproc or HDInsight; swap s3:// paths and IAM roles.
+    targets: {azure: Databricks / HDInsight, gcp: Dataproc, other: Spark on Kubernetes}
+    effort_weeks: 3
+    duration: 1-2 months
+
+  - service: Amazon Kinesis
+    aliases: [Amazon Kinesis Data Streams]
+    display: Kinesis Streams
+    category: Analytics
+    tier: 4
+    why: Proprietary streaming API (shards, KCL checkpointing in DynamoDB, enhanced fan-out). Producers and consumers must be rewritten.
+    migration: Move to Kafka (MSK-equivalent, Confluent, Event Hubs Kafka endpoint) or Pub/Sub; rewrite producers/consumers against the Kafka API to avoid the next lock-in.
+    targets: {azure: Event Hubs (Kafka API), gcp: Pub/Sub / Managed Kafka, other: Apache Kafka / Redpanda}
+    effort_weeks: 6
+    duration: 1-3 months
+
+  - service: Amazon Kinesis Firehose
+    aliases: [Amazon Data Firehose]
+    display: Firehose
+    category: Analytics
+    tier: 3
+    why: Managed delivery pipeline with AWS-only sources and destinations.
+    migration: Replace with Kafka Connect, Event Hubs Capture, or Dataflow templates.
+    targets: {azure: Event Hubs Capture / Stream Analytics, gcp: Dataflow / Pub/Sub subscriptions, other: Kafka Connect / Vector}
+    effort_weeks: 3
+    duration: 3-6 weeks
+
+  - service: Amazon Kinesis Analytics
+    aliases: [Amazon Managed Service for Apache Flink]
+    display: Managed Flink
+    category: Analytics
+    tier: 2
+    why: Apache Flink applications are portable; legacy Kinesis SQL applications are not.
+    migration: Run Flink jobs on Confluent, Ververica, or Flink on Kubernetes; rewrite any legacy SQL apps.
+    targets: {azure: Flink on HDInsight on AKS / Stream Analytics, gcp: Dataflow / Flink on GKE, other: Apache Flink}
+    effort_weeks: 3
+    duration: 1-2 months
+
+  - service: Amazon Managed Streaming for Apache Kafka
+    aliases: [Amazon MSK]
+    display: MSK (Kafka)
+    category: Analytics
+    tier: 1
+    why: Standard Apache Kafka.
+    migration: Mirror topics with MirrorMaker 2 / Cluster Linking and cut consumers over.
+    targets: {azure: Event Hubs (Kafka) / Confluent, gcp: Managed Service for Apache Kafka, other: Apache Kafka / Redpanda}
+    effort_weeks: 1.5
+    duration: 2-6 weeks
+
+  - service: Amazon OpenSearch Service
+    aliases: [Amazon Elasticsearch Service, Amazon OpenSearch Serverless]
+    display: OpenSearch
+    category: Analytics
+    tier: 1
+    why: Open-source OpenSearch / Elasticsearch APIs (Serverless collections have a reduced API).
+    migration: Snapshot/restore or reindex into Elastic Cloud, OpenSearch on Kubernetes or Azure AI Search where suitable.
+    targets: {azure: Elastic Cloud on Azure, gcp: Elastic Cloud on GCP, other: OpenSearch}
+    effort_weeks: 1.5
+    duration: 2-4 weeks
+
+  - service: Amazon QuickSight
+    display: QuickSight
+    category: Analytics
+    tier: 4
+    why: Proprietary BI tool; dashboards, SPICE datasets and embedding cannot be exported to other BI products.
+    migration: Rebuild priority dashboards in Power BI, Looker or Superset; retire the long tail. Treat as a business change, not a technical migration.
+    targets: {azure: Power BI, gcp: Looker, other: Apache Superset / Tableau}
+    effort_weeks: 5
+    duration: 1-3 months
+
+  - service: AWS Lake Formation
+    display: Lake Formation
+    category: Analytics
+    tier: 4
+    why: Proprietary fine-grained permission layer over the Glue catalog; access policies must be re-modelled.
+    migration: Re-implement as Unity Catalog, Microsoft Purview / OneLake security, or Dataplex policies.
+    targets: {azure: Microsoft Purview / OneLake security, gcp: Dataplex / BigLake, other: Unity Catalog / Apache Ranger}
+    effort_weeks: 4
+    duration: 1-2 months
+
+  - service: Amazon Managed Workflows for Apache Airflow
+    aliases: [Amazon MWAA]
+    display: MWAA (Airflow)
+    category: Analytics
+    tier: 1
+    why: Apache Airflow; DAGs are portable apart from AWS operators.
+    migration: Move DAGs to Cloud Composer, Astronomer or Airflow on Kubernetes; swap AWS operators.
+    targets: {azure: Data Factory Workflow Orchestration Manager / Astronomer, gcp: Cloud Composer, other: Apache Airflow}
+    effort_weeks: 1.5
+    duration: 2-4 weeks
+
+  - service: AWS Data Pipeline
+    display: Data Pipeline
+    category: Analytics
+    tier: 4
+    why: Legacy proprietary orchestration (in maintenance mode).
+    migration: Rewrite as Airflow DAGs or Data Factory pipelines.
+    targets: {azure: Data Factory, gcp: Cloud Composer, other: Apache Airflow}
+    effort_weeks: 4
+    duration: 1-2 months
+
+  # ---------------------------------------------------------------- Integration
+  - service: Amazon Simple Queue Service
+    aliases: [Amazon SQS]
+    display: SQS
+    category: Integration
+    tier: 3
+    why: Simple semantics, but a proprietary API; every producer and consumer needs a code change.
+    migration: Move to Service Bus / Pub/Sub / RabbitMQ behind a small messaging abstraction; drain queues at cutover.
+    targets: {azure: Service Bus / Storage Queues, gcp: Pub/Sub / Cloud Tasks, other: RabbitMQ / NATS}
+    effort_weeks: 2
+    duration: 2-6 weeks
+
+  - service: Amazon Simple Notification Service
+    aliases: [Amazon SNS]
+    display: SNS
+    category: Integration
+    tier: 3
+    why: Proprietary pub/sub and SMS/mobile push API, usually fanned out to SQS and Lambda.
+    migration: Move topics to Event Grid / Service Bus topics / Pub/Sub; move SMS to a CPaaS provider (Twilio, Azure Communication Services).
+    targets: {azure: Event Grid / Service Bus topics, gcp: Pub/Sub, other: NATS / Kafka + Twilio}
+    effort_weeks: 2
+    duration: 2-6 weeks
+
+  - service: Amazon EventBridge
+    aliases: [CloudWatch Events]
+    display: EventBridge
+    category: Integration
+    tier: 4
+    why: Proprietary event bus whose value is AWS-native event sources, rules, Pipes and the Scheduler. Event patterns and targets are AWS ARNs.
+    migration: Re-implement routing on Event Grid / Eventarc or Kafka; replace AWS-native sources with the target's audit/event feeds; move schedules to the target scheduler.
+    targets: {azure: Event Grid, gcp: Eventarc / Cloud Scheduler, other: Kafka / Argo Events}
+    effort_weeks: 4
+    duration: 1-2 months
+
+  - service: AWS Step Functions
+    display: Step Functions
+    category: Integration
+    tier: 4
+    why: Workflows are written in Amazon States Language with direct service integrations to 200+ AWS APIs; nothing executes ASL outside AWS.
+    migration: Rewrite workflows in Logic Apps / Durable Functions, Google Workflows, or Temporal (cloud-neutral and code-first). Redesign each service integration step.
+    targets: {azure: Logic Apps / Durable Functions, gcp: Workflows, other: Temporal / Argo Workflows}
+    effort_weeks: 6
+    duration: 1-3 months
+
+  - service: Amazon Simple Workflow Service
+    aliases: [Amazon SWF]
+    display: SWF
+    category: Integration
+    tier: 5
+    why: Legacy proprietary workflow engine with a bespoke decider/worker model; no equivalent.
+    migration: Rewrite on Temporal (the conceptual successor) or Durable Functions.
+    targets: {azure: Durable Functions, gcp: Workflows, other: Temporal}
+    effort_weeks: 8
+    duration: 2-4 months
+
+  - service: Amazon MQ
+    display: Amazon MQ
+    category: Integration
+    tier: 1
+    why: Managed ActiveMQ / RabbitMQ - standard protocols (AMQP, MQTT, STOMP, JMS).
+    migration: Shovel/federate queues to the target broker and cut clients over.
+    targets: {azure: Service Bus (AMQP) / RabbitMQ on AKS, gcp: RabbitMQ on GKE, other: RabbitMQ / ActiveMQ}
+    effort_weeks: 1
+    duration: 1-3 weeks
+
+  - service: Amazon API Gateway
+    display: API Gateway
+    category: Integration
+    tier: 3
+    why: OpenAPI definitions export, but Lambda/VTL integrations, authorizers, usage plans and WebSocket routes are AWS-specific.
+    migration: Export OpenAPI, re-implement on Azure API Management, Apigee or Kong; rewrite authorizers and mapping templates.
+    targets: {azure: API Management, gcp: Apigee / API Gateway, other: Kong / Envoy Gateway}
+    effort_weeks: 3
+    duration: 3-8 weeks
+
+  - service: AWS AppSync
+    display: AppSync
+    category: Integration
+    tier: 4
+    why: GraphQL is standard but AppSync resolvers (VTL / APPSYNC_JS), data-source bindings and subscriptions are proprietary.
+    migration: Re-implement with Apollo Server / Hasura / Azure API Management GraphQL; rewrite resolvers.
+    targets: {azure: API Management (GraphQL) / Hasura, gcp: Apollo on Cloud Run, other: Apollo / Hasura}
+    effort_weeks: 5
+    duration: 1-3 months
+
+  - service: AWS IoT
+    aliases: [AWS IoT Core]
+    display: IoT Core
+    category: Integration
+    tier: 4
+    why: MQTT is standard, but device registry, certificates, shadows, rules engine and Greengrass deployments are proprietary - and devices in the field must be re-provisioned.
+    migration: Move to Azure IoT Hub or an MQTT broker (EMQX, HiveMQ); plan staged device re-provisioning via OTA.
+    targets: {azure: IoT Hub / Event Grid MQTT, gcp: Partner MQTT (Google IoT Core retired), other: EMQX / HiveMQ}
+    effort_weeks: 10
+    duration: 3-9 months (device fleet bound)
+
+  - service: AWS IoT Greengrass
+    display: Greengrass
+    category: Integration
+    tier: 5
+    why: Proprietary edge runtime deployed on devices.
+    migration: Replace with Azure IoT Edge or a container-based edge runtime (K3s); requires OTA re-flash.
+    targets: {azure: IoT Edge, gcp: Partner edge runtime, other: K3s / balena}
+    effort_weeks: 12
+    duration: 6-12 months
+
+  # ---------------------------------------------------------------- Networking
+  - service: Amazon Virtual Private Cloud
+    aliases: [Amazon VPC]
+    display: VPC
+    category: Networking
+    tier: 1
+    why: Standard network constructs (subnets, routing, VPN, IPAM); only the console and APIs differ.
+    migration: Design the target landing-zone network; reuse the IP plan where possible.
+    targets: {azure: Virtual Network, gcp: VPC, other: Data-centre networking}
+    effort_weeks: 1
+    duration: Part of landing zone
+
+  - service: Amazon Elastic Load Balancing
+    aliases: [Elastic Load Balancing, AWS Elastic Load Balancing]
+    display: ELB
+    category: Networking
+    tier: 1
+    why: Standard L4/L7 load balancing.
+    migration: Recreate listeners and rules on Application Gateway / Cloud Load Balancing / Envoy.
+    targets: {azure: Load Balancer / Application Gateway, gcp: Cloud Load Balancing, other: HAProxy / F5 / Envoy}
+    effort_weeks: 0.5
+    duration: Moves with the workload
+
+  - service: Amazon Route 53
+    display: Route 53
+    category: Networking
+    tier: 1
+    why: DNS zones export as standard zone files. Alias records, health-check routing and Resolver rules need translating.
+    migration: Export zones, recreate in Azure DNS / Cloud DNS / NS1, then lower TTLs and switch NS records.
+    targets: {azure: Azure DNS, gcp: Cloud DNS, other: NS1 / Cloudflare DNS}
+    effort_weeks: 0.5
+    duration: 1-2 weeks
+
+  - service: Amazon CloudFront
+    display: CloudFront
+    category: Networking
+    tier: 2
+    why: A CDN like any other, but Lambda@Edge / CloudFront Functions and signed-URL schemes are proprietary.
+    migration: Move to Front Door, Cloud CDN, Cloudflare or Akamai; rewrite edge functions.
+    targets: {azure: Front Door, gcp: Cloud CDN, other: Cloudflare / Akamai / Fastly}
+    effort_weeks: 1
+    duration: 1-3 weeks
+
+  - service: AWS Direct Connect
+    display: Direct Connect
+    category: Networking
+    tier: 2
+    why: Physical circuits; lead times for new carrier connections dominate.
+    migration: Order ExpressRoute / Cloud Interconnect early (8-16 week lead time is common).
+    targets: {azure: ExpressRoute, gcp: Cloud Interconnect, other: Carrier MPLS}
+    effort_weeks: 2
+    duration: 2-4 months (carrier lead time)
+
+  - service: AWS Global Accelerator
+    display: Global Accelerator
+    category: Networking
+    tier: 2
+    why: Anycast IP front door; static IPs cannot be moved.
+    migration: Replace with Front Door / global load balancer; plan for client IP allow-list changes.
+    targets: {azure: Front Door / cross-region Load Balancer, gcp: Global external Load Balancer, other: Cloudflare Spectrum}
+    effort_weeks: 1
+    duration: 2-4 weeks
+
+  - service: AWS Network Firewall
+    display: Network Firewall
+    category: Networking
+    tier: 2
+    why: Suricata-compatible rules; policy structure is AWS-specific.
+    migration: Translate rules to Azure Firewall / Cloud NGFW or a vendor NGFW.
+    targets: {azure: Azure Firewall, gcp: Cloud NGFW, other: Palo Alto / Fortinet}
+    effort_weeks: 1.5
+    duration: 2-4 weeks
+
+  - service: AWS Cloud Map
+    display: Cloud Map
+    category: Networking
+    tier: 3
+    why: Proprietary service registry.
+    migration: Replace with Kubernetes DNS, Consul or private DNS.
+    targets: {azure: Private DNS / AKS service discovery, gcp: Service Directory, other: Consul}
+    effort_weeks: 1
+    duration: 1-2 weeks
+
+  - service: AWS App Mesh
+    display: App Mesh
+    category: Networking
+    tier: 2
+    why: Envoy-based mesh with AWS control plane (being retired by AWS).
+    migration: Move to Istio / Linkerd / Cilium service mesh.
+    targets: {azure: Istio add-on for AKS, gcp: Cloud Service Mesh, other: Istio / Linkerd}
+    effort_weeks: 2
+    duration: 2-6 weeks
+
+  # ---------------------------------------------------------------- Security & identity
+  - service: AWS Key Management Service
+    display: KMS
+    category: Security
+    tier: 2
+    why: Keys cannot be exported from KMS. Data encrypted under KMS must be decrypted and re-encrypted on the target; envelope-encryption code calls the KMS API.
+    migration: Create keys in Key Vault / Cloud KMS (or an external HSM / BYOK), re-encrypt data during migration, swap the SDK calls.
+    targets: {azure: Key Vault / Managed HSM, gcp: Cloud KMS / Cloud HSM, other: HashiCorp Vault / Thales HSM}
+    effort_weeks: 1
+    duration: Moves with the workload
+
+  - service: AWS Secrets Manager
+    display: Secrets Manager
+    category: Security
+    tier: 2
+    why: Simple secret store, but rotation Lambdas and SDK calls are AWS-specific.
+    migration: Move secrets to Key Vault / Secret Manager / Vault; rewrite rotation; prefer External Secrets Operator for Kubernetes workloads.
+    targets: {azure: Key Vault, gcp: Secret Manager, other: HashiCorp Vault}
+    effort_weeks: 0.5
+    duration: 1-2 weeks
+
+  - service: AWS Certificate Manager
+    aliases: [AWS Private Certificate Authority, AWS Certificate Manager Private Certificate Authority]
+    display: ACM / Private CA
+    category: Security
+    tier: 2
+    why: Public certificates are free to reissue elsewhere; a private CA hierarchy must be re-established and trusted by every client.
+    migration: Reissue public certs on the target; plan a private CA trust rollout (or adopt a cloud-neutral CA such as Vault PKI).
+    targets: {azure: Key Vault certificates, gcp: Certificate Authority Service, other: Vault PKI / EJBCA}
+    effort_weeks: 1.5
+    duration: 2-6 weeks
+
+  - service: Amazon Cognito
+    display: Cognito
+    category: Security
+    tier: 4
+    why: User pools hold customer identities; password hashes cannot be exported, and triggers / hosted UI are AWS-specific. Customers notice an identity migration.
+    migration: Move to Entra External ID, Identity Platform, Auth0 or Keycloak using lazy (on-login) migration; plan MFA re-enrolment and app token changes.
+    targets: {azure: Entra External ID, gcp: Identity Platform, other: Auth0 / Keycloak / Okta CIC}
+    effort_weeks: 6
+    duration: 2-4 months (customer-facing)
+
+  - service: AWS Directory Service
+    display: Directory Service
+    category: Security
+    tier: 2
+    why: Managed Microsoft AD - standard Active Directory.
+    migration: Extend trusts to Entra Domain Services / Managed AD on the target and migrate members.
+    targets: {azure: Entra Domain Services, gcp: Managed Service for Microsoft AD, other: Active Directory}
+    effort_weeks: 2
+    duration: 1-2 months
+
+  - service: AWS WAF
+    display: WAF
+    category: Security
+    tier: 2
+    why: Rule concepts are common; rule syntax and managed rule groups are AWS-specific.
+    migration: Translate rules to Azure WAF / Cloud Armor / Cloudflare WAF; re-tune in detection mode before enforcing.
+    targets: {azure: Azure WAF, gcp: Cloud Armor, other: Cloudflare / Akamai WAF}
+    effort_weeks: 1
+    duration: 2-4 weeks
+
+  - service: AWS Shield
+    display: Shield
+    category: Security
+    tier: 1
+    why: DDoS protection service; replaced by the target's equivalent.
+    migration: Enable DDoS Protection / Cloud Armor Enterprise.
+    targets: {azure: DDoS Protection, gcp: Cloud Armor Enterprise, other: Cloudflare / Akamai}
+    effort_weeks: 0.25
+    duration: Days
+
+  - service: AWS Firewall Manager
+    display: Firewall Manager
+    category: Security
+    tier: 2
+    why: Central policy management for WAF/Shield/security groups.
+    migration: Recreate as Azure Firewall Manager / Hierarchical firewall policies.
+    targets: {azure: Azure Firewall Manager, gcp: Hierarchical firewall policies, other: Vendor management}
+    effort_weeks: 0.5
+    duration: Part of landing zone
+
+  - service: Amazon GuardDuty
+    display: GuardDuty
+    category: Security
+    tier: 1
+    why: Detective service; nothing to migrate except detection coverage and SIEM integrations.
+    migration: Enable Defender for Cloud / Security Command Center; re-point SIEM.
+    targets: {azure: Defender for Cloud, gcp: Security Command Center, other: Wiz / CrowdStrike}
+    effort_weeks: 0.5
+    duration: Part of landing zone
+
+  - service: AWS Security Hub
+    display: Security Hub
+    category: Security
+    tier: 1
+    why: Posture aggregation; replaced by the target's posture tooling.
+    migration: Enable Defender CSPM / SCC; map controls to your framework.
+    targets: {azure: Defender CSPM, gcp: Security Command Center, other: Wiz / Prisma Cloud}
+    effort_weeks: 0.5
+    duration: Part of landing zone
+
+  - service: Amazon Inspector
+    display: Inspector
+    category: Security
+    tier: 1
+    why: Vulnerability scanning; replaced, not migrated.
+    migration: Enable Defender for Servers/Containers or a vendor scanner.
+    targets: {azure: Defender for Cloud, gcp: Artifact Analysis / SCC, other: Trivy / Qualys}
+    effort_weeks: 0.25
+    duration: Days
+
+  - service: Amazon Macie
+    display: Macie
+    category: Security
+    tier: 1
+    why: Data classification scanning; replaced, not migrated.
+    migration: Use Microsoft Purview / Sensitive Data Protection.
+    targets: {azure: Microsoft Purview, gcp: Sensitive Data Protection, other: BigID / Varonis}
+    effort_weeks: 0.5
+    duration: Days
+
+  - service: Amazon Detective
+    display: Detective
+    category: Security
+    tier: 1
+    why: Investigation tooling over CloudTrail/VPC logs.
+    migration: Use Sentinel / Chronicle investigation.
+    targets: {azure: Microsoft Sentinel, gcp: Google SecOps, other: Splunk}
+    effort_weeks: 0.25
+    duration: Days
+
+  - service: AWS CloudTrail
+    display: CloudTrail
+    category: Security
+    tier: 2
+    why: Audit log; the service is replaced, but historic audit logs usually carry regulatory retention obligations.
+    migration: Enable Activity Logs / Cloud Audit Logs into the SIEM; archive CloudTrail history to immutable storage for the retention period.
+    targets: {azure: Activity Log / Monitor, gcp: Cloud Audit Logs, other: SIEM}
+    effort_weeks: 0.5
+    duration: Retention-bound tail
+
+  - service: AWS Config
+    display: Config
+    category: Security
+    tier: 2
+    why: Config rules and conformance packs encode controls that must be re-expressed on the target.
+    migration: Re-implement as Azure Policy / Organization Policy / OPA; map each control.
+    targets: {azure: Azure Policy, gcp: Organization Policy / Config Validator, other: OPA / Cloud Custodian}
+    effort_weeks: 1
+    duration: Part of landing zone
+
+  # ---------------------------------------------------------------- Management & DevOps
+  - service: AmazonCloudWatch
+    aliases: [Amazon CloudWatch, CloudWatch]
+    display: CloudWatch
+    category: Management
+    tier: 2
+    why: Metrics, logs, alarms and dashboards are re-creatable, but Embedded Metric Format, Logs Insights queries and alarm-driven automation are AWS-specific.
+    migration: Standardise on OpenTelemetry and ship to Azure Monitor / Cloud Monitoring / Grafana stack; rebuild alarms and dashboards from code.
+    targets: {azure: Azure Monitor, gcp: Cloud Monitoring / Logging, other: Grafana / Prometheus / Loki / Datadog}
+    effort_weeks: 1
+    duration: 2-4 weeks
+
+  - service: AWS X-Ray
+    display: X-Ray
+    category: Management
+    tier: 2
+    why: Tracing via the X-Ray SDK/daemon; OpenTelemetry instrumentation is portable.
+    migration: Move instrumentation to OpenTelemetry; export to App Insights / Cloud Trace / Tempo.
+    targets: {azure: Application Insights, gcp: Cloud Trace, other: Jaeger / Tempo}
+    effort_weeks: 0.5
+    duration: 1-2 weeks
+
+  - service: Amazon Managed Service for Prometheus
+    display: Managed Prometheus
+    category: Management
+    tier: 1
+    why: Prometheus-compatible.
+    migration: Remote-write to the target's Prometheus service.
+    targets: {azure: Azure Monitor managed Prometheus, gcp: Managed Service for Prometheus, other: Prometheus / Mimir}
+    effort_weeks: 0.5
+    duration: Days
+
+  - service: Amazon Managed Grafana
+    display: Managed Grafana
+    category: Management
+    tier: 1
+    why: Grafana; dashboards export as JSON.
+    migration: Export dashboards, import into Azure Managed Grafana / Grafana Cloud.
+    targets: {azure: Azure Managed Grafana, gcp: Grafana Cloud, other: Grafana}
+    effort_weeks: 0.25
+    duration: Days
+
+  - service: AWS Systems Manager
+    display: Systems Manager
+    category: Management
+    tier: 3
+    why: Parameter Store, Session Manager, patching and automation runbooks are AWS-specific and often embedded in boot scripts and pipelines.
+    migration: Move parameters to Key Vault / App Configuration, patching to Azure Update Manager / VM Manager, runbooks to Ansible.
+    targets: {azure: Update Manager / App Configuration / Bastion, gcp: VM Manager / Secret Manager / IAP, other: Ansible / Teleport}
+    effort_weeks: 2
+    duration: 2-6 weeks
+
+  - service: AWS CloudFormation
+    aliases: [AWS Cloud Development Kit]
+    display: CloudFormation / CDK
+    category: Management
+    tier: 4
+    why: Infrastructure-as-code written in CloudFormation or CDK describes AWS resources only and cannot be reused; the whole IaC estate must be rewritten.
+    migration: Rewrite in Terraform/OpenTofu (or Bicep / Pulumi) against the target; for Terraform estates only the providers and modules change.
+    targets: {azure: Terraform / Bicep, gcp: Terraform / Infrastructure Manager, other: Terraform / OpenTofu / Pulumi}
+    effort_weeks: 3
+    duration: Proportional to IaC estate
+
+  - service: AWS CodeBuild
+    display: CodeBuild
+    category: DevOps
+    tier: 2
+    why: Build specs (buildspec.yml) are simple but proprietary.
+    migration: Move to GitHub Actions / GitLab CI / Azure Pipelines / Cloud Build.
+    targets: {azure: Azure Pipelines / GitHub Actions, gcp: Cloud Build, other: GitHub Actions / GitLab CI / Jenkins}
+    effort_weeks: 0.5
+    duration: Per pipeline, days
+
+  - service: AWS CodePipeline
+    display: CodePipeline
+    category: DevOps
+    tier: 2
+    why: Proprietary pipeline definitions.
+    migration: Re-express in the organisation's standard CI/CD.
+    targets: {azure: Azure Pipelines / GitHub Actions, gcp: Cloud Deploy, other: GitHub Actions / Argo CD}
+    effort_weeks: 0.5
+    duration: Per pipeline, days
+
+  - service: AWS CodeCommit
+    display: CodeCommit
+    category: DevOps
+    tier: 1
+    why: Plain Git (closed to new customers by AWS).
+    migration: git push --mirror to GitHub / Azure Repos / GitLab.
+    targets: {azure: Azure Repos / GitHub, gcp: Secure Source Manager / GitHub, other: GitHub / GitLab}
+    effort_weeks: 0.25
+    duration: Days
+
+  - service: AWS CodeArtifact
+    display: CodeArtifact
+    category: DevOps
+    tier: 1
+    why: Standard package registries (npm, PyPI, Maven, NuGet).
+    migration: Move to Azure Artifacts / Artifact Registry / Artifactory and repoint clients.
+    targets: {azure: Azure Artifacts, gcp: Artifact Registry, other: JFrog Artifactory / Nexus}
+    effort_weeks: 0.5
+    duration: Days
+
+  - service: AWS CodeDeploy
+    display: CodeDeploy
+    category: DevOps
+    tier: 2
+    why: Proprietary deployment agent and appspec files.
+    migration: Replace with the standard pipeline's deploy stage, Argo CD or Ansible.
+    targets: {azure: Azure Pipelines, gcp: Cloud Deploy, other: Argo CD / Ansible}
+    effort_weeks: 0.5
+    duration: Days
+
+  - service: AWS Amplify
+    display: Amplify
+    category: DevOps
+    tier: 4
+    why: Opinionated framework that generates Cognito, AppSync, DynamoDB and Lambda backends; front-end hosting is portable, the generated backend is not.
+    migration: Host front-ends on Static Web Apps / Firebase Hosting / Vercel; re-platform the backend along with Cognito, AppSync and DynamoDB.
+    targets: {azure: Static Web Apps, gcp: Firebase Hosting, other: Vercel / Netlify}
+    effort_weeks: 5
+    duration: 1-3 months
+
+  # ---------------------------------------------------------------- AI / ML
+  - service: Amazon SageMaker
+    aliases: [Amazon SageMaker AI]
+    display: SageMaker
+    category: AI/ML
+    tier: 3
+    why: Models (PyTorch, XGBoost, Hugging Face) and containers are portable, but pipelines, feature store, endpoints and Studio domains are SageMaker-specific.
+    migration: Move training/inference to Azure ML / Vertex AI or Kubeflow/MLflow; rebuild pipelines and feature store.
+    targets: {azure: Azure Machine Learning, gcp: Vertex AI, other: Kubeflow / MLflow / KServe}
+    effort_weeks: 5
+    duration: 1-3 months
+
+  - service: Amazon Bedrock
+    display: Bedrock
+    category: AI/ML
+    tier: 3
+    why: Foundation models (Anthropic Claude, Llama, Mistral) are available on other clouds and direct from providers, but Bedrock Agents, Knowledge Bases, Guardrails and Flows are proprietary orchestration.
+    migration: Call the same models via Vertex AI / Azure AI Foundry or the provider's own API; re-implement agents and RAG pipelines with a portable framework; re-run evaluations.
+    targets: {azure: Azure AI Foundry, gcp: Vertex AI, other: Provider APIs (Anthropic, Mistral) / self-hosted}
+    effort_weeks: 3
+    duration: 3-8 weeks
+
+  - service: Amazon Bedrock AgentCore
+    display: Bedrock AgentCore
+    category: AI/ML
+    tier: 4
+    why: Agent runtime, memory, gateway, identity and observability services with AWS-specific APIs. Agent code written with open frameworks is portable; the hosting, memory stores and tool gateway are not.
+    migration: Keep agent logic in an open framework (LangGraph, Strands, Claude Agent SDK); re-host on Azure AI Foundry Agent Service, Vertex AI Agent Engine or containers; migrate memory to a vector/relational store you control.
+    targets: {azure: Azure AI Foundry Agent Service, gcp: Vertex AI Agent Engine, other: Containers + open agent frameworks}
+    effort_weeks: 4
+    duration: 1-2 months
+
+  - service: AWSDevOpsAgent
+    aliases: [AWS DevOps Agent]
+    display: DevOps Agent
+    category: AI/ML
+    tier: 2
+    why: Operational AI assistant over your telemetry; it holds no workload, so leaving it is a tool change.
+    migration: Replace with the target's operations copilot or a cloud-neutral AIOps tool; re-connect telemetry sources.
+    targets: {azure: Azure SRE Agent / Copilot in Azure, gcp: Gemini Cloud Assist, other: Datadog / PagerDuty AIOps}
+    effort_weeks: 0.5
+    duration: Days
+
+  - service: Amazon Rekognition
+    display: Rekognition
+    category: AI/ML
+    tier: 3
+    why: Proprietary vision API; face collections cannot be exported.
+    migration: Swap API calls to Azure AI Vision / Cloud Vision; re-enrol face collections; re-validate accuracy and bias.
+    targets: {azure: Azure AI Vision, gcp: Cloud Vision, other: Open models (YOLO, InsightFace)}
+    effort_weeks: 3
+    duration: 1-2 months
+
+  - service: Amazon Textract
+    display: Textract
+    category: AI/ML
+    tier: 3
+    why: Proprietary document-extraction API and output schema.
+    migration: Move to Azure Document Intelligence / Document AI; re-map output parsing and re-validate accuracy.
+    targets: {azure: Document Intelligence, gcp: Document AI, other: Open-source OCR + LLM extraction}
+    effort_weeks: 3
+    duration: 1-2 months
+
+  - service: Amazon Comprehend
+    display: Comprehend
+    category: AI/ML
+    tier: 3
+    why: Proprietary NLP API; custom classifiers must be retrained.
+    migration: Swap to Azure AI Language / Natural Language API or an LLM-based classifier.
+    targets: {azure: Azure AI Language, gcp: Natural Language API, other: Hugging Face models}
+    effort_weeks: 2
+    duration: 3-6 weeks
+
+  - service: Amazon Transcribe
+    display: Transcribe
+    category: AI/ML
+    tier: 3
+    why: Proprietary speech API; custom vocabularies need recreating.
+    migration: Swap to Azure AI Speech / Speech-to-Text or Whisper.
+    targets: {azure: Azure AI Speech, gcp: Speech-to-Text, other: Whisper}
+    effort_weeks: 1.5
+    duration: 2-4 weeks
+
+  - service: Amazon Translate
+    display: Translate
+    category: AI/ML
+    tier: 2
+    why: Simple request/response API; easy to swap.
+    migration: Swap to Azure AI Translator / Cloud Translation.
+    targets: {azure: Azure AI Translator, gcp: Cloud Translation, other: DeepL / open models}
+    effort_weeks: 0.5
+    duration: 1-2 weeks
+
+  - service: Amazon Polly
+    display: Polly
+    category: AI/ML
+    tier: 2
+    why: Simple text-to-speech API; voices differ.
+    migration: Swap to Azure AI Speech / Text-to-Speech; re-approve voice choice.
+    targets: {azure: Azure AI Speech, gcp: Text-to-Speech, other: ElevenLabs / open models}
+    effort_weeks: 0.5
+    duration: 1-2 weeks
+
+  - service: Amazon Lex
+    display: Lex
+    category: AI/ML
+    tier: 4
+    why: Proprietary bot definitions, intents and Connect integration.
+    migration: Rebuild bots in Copilot Studio / Dialogflow CX or an LLM-based assistant.
+    targets: {azure: Copilot Studio, gcp: Dialogflow CX, other: Rasa / LLM agents}
+    effort_weeks: 5
+    duration: 1-3 months
+
+  - service: Amazon Kendra
+    display: Kendra
+    category: AI/ML
+    tier: 4
+    why: Proprietary enterprise search index and connectors.
+    migration: Rebuild on Azure AI Search / Vertex AI Search or OpenSearch with a vector index; re-ingest sources.
+    targets: {azure: Azure AI Search, gcp: Vertex AI Search, other: OpenSearch / Elastic}
+    effort_weeks: 4
+    duration: 1-2 months
+
+  - service: Amazon Personalize
+    display: Personalize
+    category: AI/ML
+    tier: 4
+    why: Proprietary recommender with opaque models; results change on any migration.
+    migration: Rebuild with Vertex AI recommendations or an open recommender; A/B test against the incumbent.
+    targets: {azure: Azure ML custom recommender, gcp: Vertex AI Search for commerce, other: Open-source recommenders}
+    effort_weeks: 6
+    duration: 2-4 months
+
+  - service: Amazon Forecast
+    display: Forecast
+    category: AI/ML
+    tier: 4
+    why: Proprietary forecasting service (closed to new customers).
+    migration: Rebuild on Azure ML / Vertex AI forecasting or open libraries (Prophet, Nixtla).
+    targets: {azure: Azure ML AutoML forecasting, gcp: Vertex AI forecasting, other: Prophet / Nixtla}
+    effort_weeks: 4
+    duration: 1-2 months
+
+  - service: Amazon Q
+    aliases: [Amazon Q Business, Amazon Q Developer]
+    display: Amazon Q
+    category: AI/ML
+    tier: 3
+    why: SaaS assistant; indexes and app configuration are proprietary but user impact is mostly a tool change.
+    migration: Replace with Microsoft 365 Copilot / Gemini / Claude for Work; re-index sources.
+    targets: {azure: Microsoft 365 Copilot, gcp: Gemini Enterprise, other: Claude / ChatGPT Enterprise}
+    effort_weeks: 2
+    duration: 1-2 months (change management)
+
+  # ---------------------------------------------------------------- Business applications & media
+  - service: Amazon Connect
+    display: Connect
+    category: Business apps
+    tier: 5
+    why: Full contact-centre platform - contact flows, phone numbers, Lex bots, Lambda integrations, recordings and agent desktop. Number porting and agent retraining make it a business transformation.
+    migration: Select a CCaaS platform (Genesys, NICE, Five9, Dynamics 365 Contact Center), rebuild flows, port numbers, migrate recordings under retention rules, retrain agents.
+    targets: {azure: Dynamics 365 Contact Center, gcp: Contact Center AI Platform, other: Genesys Cloud / NICE CXone / Five9}
+    effort_weeks: 16
+    duration: 6-12 months
+
+  - service: Amazon Pinpoint
+    aliases: [AWS End User Messaging]
+    display: Pinpoint
+    category: Business apps
+    tier: 4
+    why: Proprietary campaign, journey and segment definitions; sender IDs and registered numbers are tied to AWS.
+    migration: Move to Braze / Twilio / Azure Communication Services; re-register sender IDs and short codes.
+    targets: {azure: Azure Communication Services, gcp: Firebase Cloud Messaging + partner, other: Braze / Twilio}
+    effort_weeks: 4
+    duration: 1-3 months
+
+  - service: Amazon Simple Email Service
+    aliases: [Amazon SES]
+    display: SES
+    category: Business apps
+    tier: 2
+    why: SMTP is standard; sending reputation, DKIM, configuration sets and inbound rules are not.
+    migration: Move to Azure Communication Services Email / SendGrid / Postmark; warm up new IPs; update SPF/DKIM.
+    targets: {azure: Communication Services Email, gcp: SendGrid (partner), other: SendGrid / Postmark / Mailgun}
+    effort_weeks: 1
+    duration: 2-4 weeks (IP warm-up)
+
+  - service: Amazon WorkSpaces
+    display: WorkSpaces
+    category: Business apps
+    tier: 2
+    why: Virtual desktops; images and user profiles must be rebuilt on another VDI.
+    migration: Move to Azure Virtual Desktop / Citrix / Omnissa Horizon with profile migration.
+    targets: {azure: Azure Virtual Desktop / Windows 365, gcp: Citrix on Google Cloud, other: Citrix / Omnissa Horizon}
+    effort_weeks: 3
+    duration: 1-3 months
+
+  - service: AWS Elemental MediaConvert
+    aliases: [AWS Elemental MediaLive, AWS Elemental MediaPackage]
+    display: Elemental Media
+    category: Business apps
+    tier: 4
+    why: Proprietary media job templates and channel configuration.
+    migration: Move to a cloud-neutral video platform (Mux, Bitmovin) or FFmpeg-based pipelines.
+    targets: {azure: Partner video platforms, gcp: Transcoder API / Live Stream API, other: Mux / Bitmovin / FFmpeg}
+    effort_weeks: 5
+    duration: 1-3 months
+
+  - service: Amazon GameLift
+    display: GameLift
+    category: Business apps
+    tier: 4
+    why: Proprietary game-server fleet management and matchmaking SDK.
+    migration: Move to Agones on Kubernetes or a vendor game backend.
+    targets: {azure: Agones on AKS / PlayFab, gcp: Agones on GKE, other: Agones}
+    effort_weeks: 6
+    duration: 2-4 months
+
+  - service: Amazon Location Service
+    display: Location Service
+    category: Business apps
+    tier: 3
+    why: Proprietary API over third-party map data.
+    migration: Swap to Azure Maps / Google Maps Platform / Mapbox.
+    targets: {azure: Azure Maps, gcp: Google Maps Platform, other: Mapbox / HERE}
+    effort_weeks: 1.5
+    duration: 2-4 weeks
+
+  - service: AWS Marketplace (third-party)
+    display: Marketplace (3rd party)
+    category: Business apps
+    tier: 2
+    why: Third-party software bought through AWS billing. The product usually exists on other clouds or direct from the vendor; contracts and private offers need re-papering.
+    migration: Re-contract directly or via the target cloud's marketplace; align with contract renewal dates.
+    targets: {azure: Azure Marketplace, gcp: Google Cloud Marketplace, other: Direct vendor contract}
+    effort_weeks: 0.5
+    duration: Contract-bound
+
+  # ---------------------------------------------------------------- Billing lines that are not workloads
+  - service: Tax
+    display: Tax
+    category: Billing
+    tier: 1
+    excluded: true
+    why: Tax on AWS charges; not a workload.
+    migration: n/a
+    targets: {}
+    effort_weeks: 0
+    duration: n/a
+
+  - service: AWS Support (Business)
+    aliases: [AWS Support (Enterprise), AWS Support (Developer), AWS Support (Enterprise On-Ramp), AWS Premium Support]
+    display: AWS Support
+    category: Billing
+    tier: 1
+    excluded: true
+    why: Support plan fee; replaced by the target provider's support contract.
+    migration: Negotiate support with the target provider.
+    targets: {azure: Microsoft Unified Support, gcp: Google Cloud Customer Care, other: Vendor support}
+    effort_weeks: 0
+    duration: n/a
+
+  - service: Savings Plans for AWS Compute usage
+    aliases: [Savings Plans for AWS Machine Learning, Savings Plans for  Compute usage, Savings Plans for AWS Database usage]
+    display: Savings Plans
+    category: Billing
+    tier: 1
+    excluded: true
+    why: Commitment fee rather than a workload. Note the commitment term in the exit plan - it is a cost of leaving early.
+    migration: Let commitments run off; do not renew during the migration window.
+    targets: {}
+    effort_weeks: 0
+    duration: Commitment-bound
+
+  - service: AWS Cost Explorer
+    aliases: [AWS Budgets, AWS Billing, AWS Cost and Usage Report]
+    display: Billing tools
+    category: Billing
+    tier: 1
+    excluded: true
+    why: Billing tooling; not a workload.
+    migration: Use the target's cost-management tooling.
+    targets: {azure: Cost Management, gcp: Cloud Billing, other: FinOps tooling}
+    effort_weeks: 0
+    duration: n/a

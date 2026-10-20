@@ -1,0 +1,3 @@
+- [ ] `pytest` and `ruff check` pass
+- [ ] Catalog edited? Ran `python scripts/gen_catalog_doc.py`; tier changes explained and catalog `version` bumped
+- [ ] UI changed? Ran `python scripts/screenshots.py` and checked the PDF

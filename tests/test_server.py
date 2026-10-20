@@ -1,0 +1,63 @@
+from fastapi.testclient import TestClient
+
+from exitrisk.server import create_app
+
+H = {"X-ExitRisk": "1"}
+
+
+def client():
+    return TestClient(create_app(), base_url="http://127.0.0.1")
+
+
+def test_health_and_index():
+    c = client()
+    assert c.get("/api/health").json()["status"] == "ok"
+    r = c.get("/")
+    assert r.status_code == 200 and "AWS Exit Risk Review" in r.text
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+
+
+def test_rejects_foreign_host_and_missing_header():
+    c = client()
+    assert c.get("/api/health", headers={"Host": "evil.example"}).status_code == 403
+    assert c.post("/api/scans/demo").status_code == 403
+
+
+def test_demo_report_roundtrip():
+    c = client()
+    scan_id = c.post("/api/scans/demo", headers=H).json()["id"]
+    assert any(s["id"] == scan_id for s in c.get("/api/scans").json()["scans"])
+    r = c.post(
+        "/api/report",
+        headers=H,
+        json={
+            "scan_id": scan_id,
+            "filter": {"include": "prod"},
+            "questionnaire": {"cicd": "standard", "cloud_team_size": 25},
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["meta"]["filter"]["include"] == "prod"
+    assert body["estimate"]["inputs"]["cloud_team_size"] == 25
+
+
+def test_bad_inputs():
+    c = client()
+    scan_id = c.post("/api/scans/demo", headers=H).json()["id"]
+    assert (
+        c.post(
+            "/api/report", headers=H, json={"scan_id": scan_id, "filter": {"include": "(", "mode": "regex"}}
+        ).status_code
+        == 400
+    )
+    assert c.post("/api/report", headers=H, json={"scan_id": "../../etc/passwd"}).status_code == 404
+    assert (
+        c.post("/api/report", headers=H, json={"scan_id": scan_id, "questionnaire": {"cicd": "x"}}).status_code == 422
+    )
+    assert c.post("/api/scans", headers=H, json={"inventory": True}).status_code == 400  # role required
+
+
+def test_catalog_endpoint():
+    cat = client().get("/api/catalog").json()
+    assert cat["services"] and all(not s["excluded"] for s in cat["services"])

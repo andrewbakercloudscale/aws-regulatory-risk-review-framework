@@ -1,0 +1,28 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ExitRiskInventoryListOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeRegions",
+        "lambda:ListFunctions",
+        "dynamodb:ListTables",
+        "states:ListStateMachines",
+        "kinesis:ListStreams",
+        "sqs:ListQueues",
+        "sns:ListTopics",
+        "events:ListRules",
+        "apigateway:GET",
+        "cognito-idp:ListUserPools",
+        "glue:GetJobs",
+        "redshift:DescribeClusters",
+        "cloudformation:ListStacks",
+        "eks:ListClusters",
+        "ecs:ListClusters",
+        "rds:DescribeDBInstances"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
