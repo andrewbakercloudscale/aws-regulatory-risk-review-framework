@@ -55,8 +55,12 @@ def _change(first: float, last: float, months_between: int) -> dict:
     }
 
 
-def _growth(months: list[str], trend: dict, cat_trend: dict, cat_lockin: dict) -> dict:
-    """Spend growth over the scanned period, overall, for lock-in services and by product type."""
+def _growth(months: list[str], trend: dict, cat_trend: dict, cat_lockin: dict, services: list[dict]) -> dict:
+    """Spend growth over the scanned period, overall, for lock-in services and by product type.
+
+    Each product type lists the services in it (largest first) and the ones that moved its spend
+    most, so a product type's rise names the services behind it.
+    """
     if len(months) < 2:
         return {
             "months": len(months),
@@ -79,6 +83,19 @@ def _growth(months: list[str], trend: dict, cat_trend: dict, cat_lockin: dict) -
             lockin_pct=round(100 * cat_lockin.get(cat, 0.0) / spend, 1) if spend else 0.0,
             share_of_growth=round(100 * row["change"] / total["change"], 1) if total["change"] else None,
         )
+        members = [s for s in services if s["category"] == cat]
+        row["services"] = [s["display"] for s in members]
+        movers = sorted((s for s in members if abs(s.get("change", 0)) >= 1), key=lambda s: -abs(s["change"]))
+        row["drivers"] = [
+            {k: s[k] for k in ("display", "tier", "first", "last", "change", "change_pct")}
+            # For Marketplace, name the products that moved, largest rise first.
+            | (
+                {"products": [p["name"] for p in sorted(s["products"], key=lambda p: -p.get("change", 0))[:3]]}
+                if s.get("products")
+                else {}
+            )
+            for s in movers[:3]
+        ]
         cats.append(row)
     cats.sort(key=lambda r: -r["last"])
     return {
@@ -145,6 +162,10 @@ def build_report(
     trend: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
     cat_trend: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     cat_lockin: dict[str, float] = defaultdict(float)
+    svc_trend: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    # Marketplace: one catalog entry, many third-party products. service -> product -> month -> spend.
+    products: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+    product_accounts: dict[tuple, set] = defaultdict(set)
     excluded_spend = 0.0
     unclassified: dict[str, float] = defaultdict(float)
     negative_lines = 0
@@ -165,6 +186,11 @@ def build_report(
         per_account[r["account_id"]][info.service] += r["amount"]
         trend[r["month"]][info.tier] += r["amount"]
         cat_trend[info.category][r["month"]] += r["amount"]
+        svc_trend[info.service][r["month"]] += r["amount"]
+        if r.get("product"):
+            product = r["product"].removesuffix(" (Amazon Bedrock Edition)")
+            products[info.service][product][r["month"]] += r["amount"]
+            product_accounts[(info.service, product)].add(r["account_id"])
         if info.tier >= 4:
             cat_lockin[info.category] += r["amount"]
         if not info.classified:
@@ -299,9 +325,27 @@ def build_report(
             }
         )
     services_out = sorted(services_agg.values(), key=lambda s: -s["monthly_spend"])
+    first_m, last_m = (months_in_data[0], months_in_data[-1]) if len(months_in_data) >= 2 else (None, None)
     for s in services_out:
         s["monthly_spend"] = round(s["monthly_spend"], 2)
         s["pct"] = round(100 * s["monthly_spend"] / total_monthly, 2) if total_monthly else 0.0
+        if first_m:
+            by_month = svc_trend.get(s["service"], {})
+            first, last = by_month.get(first_m, 0.0), by_month.get(last_m, 0.0)
+            s["first"], s["last"], s["change"] = round(first, 2), round(last, 2), round(last - first, 2)
+            s["change_pct"] = round(100 * (last - first) / first, 1) if first > 0 else None
+        if s["service"] in products:
+            rows = []
+            for name, by_month in products[s["service"]].items():
+                row = {
+                    "name": name,
+                    "monthly_spend": round(sum(by_month.values()) / n_months, 2),
+                    "accounts": len(product_accounts[(s["service"], name)]),
+                }
+                if first_m:
+                    row["change"] = round(by_month.get(last_m, 0.0) - by_month.get(first_m, 0.0), 2)
+                rows.append(row)
+            s["products"] = sorted(rows, key=lambda x: -x["monthly_spend"])[:10]
 
     high_pct = sum(t["pct"] for t in tiers if t["tier"] >= 4)
     estimate = build_estimate(questionnaire, accounts_out, total_monthly)
@@ -337,8 +381,20 @@ def build_report(
         "high_risk_accounts": by_rating["High"]["accounts"] + by_rating["Critical"]["accounts"],
         "high_risk_accounts_spend_pct": round(by_rating["High"]["pct_spend"] + by_rating["Critical"]["pct_spend"], 1),
     }
-    growth = _growth(months_in_data, trend, cat_trend, cat_lockin)
+    growth = _growth(months_in_data, trend, cat_trend, cat_lockin, services_out)
     summary["growth"] = {k: growth[k] for k in ("months", "first_month", "last_month", "total", "lockin")}
+    # The services whose monthly spend rose most, so growth names its causes.
+    summary["growth"]["top_rises"] = [
+        {
+            "display": s["display"],
+            "category": s["category"],
+            "tier": s["tier"],
+            "change": s["change"],
+            "product": max(s["products"], key=lambda p: p.get("change", 0))["name"] if s.get("products") else None,
+        }
+        for s in sorted(services_out, key=lambda s: -s.get("change", 0))[:3]
+        if s.get("change", 0) >= 1
+    ]
     estimate["empty"] = total_monthly <= 0
     estimate["provisional"] = not questionnaire.confirmed
     summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
@@ -506,11 +562,22 @@ def _executive_summary(
         )
     context = f"{scores} {shape}"
 
+    # Name the bespoke services with what they cost and how widely they are used, not just a count.
+    bespoke = [x for x in s["top_lockin_services"] if x["monthly_spend"] >= MATERIAL_TIER_SPEND]
+    named = [
+        f"{x['display']} {_money(x['monthly_spend'] * 12, cur)} a year ({_plural(x['accounts'], 'account')})"
+        for x in bespoke[:3]
+    ]
+    rest = s["bespoke_services"] - len(named)
+    rest_spend = (s["high_risk_monthly"] - sum(x["monthly_spend"] for x in bespoke[:3])) * 12
     findings = [
         {
             "lead": f"{s['high_risk_pct']:.0f}% of spend ({_money(s['high_risk_monthly'] * 12)} a year)",
             "text": f"runs on {_plural(s['bespoke_services'], 'bespoke, AWS-only service')} that must be "
-            "re-engineered, not just moved" + (f"; the largest are {_join(lockin)}." if lockin else "."),
+            "re-engineered, not just moved"
+            + (f": {_join(named)}" if named else "")
+            + (f"; the other {rest} cost {_money(rest_spend, cur)} a year (section 4)" if rest > 0 else "")
+            + ".",
         },
         {
             "lead": f"{port} of {n} accounts are portable",
@@ -530,13 +597,22 @@ def _executive_summary(
     g = s.get("growth") or {}
     if g.get("total") and g["total"]["pct"] is not None and g["lockin"]["pct"] is not None:
         t, lk = g["total"]["pct"], g["lockin"]["pct"]
+        rises = [
+            (f"{x['product']} via {x['display']}" if x.get("product") else x["display"], x["change"])
+            for x in g.get("top_rises", [])
+        ]
         pace = "faster than" if lk > t + 1 else "more slowly than" if lk < t - 1 else "in line with"
         verb = lambda v: f"grew {v:.0f}%" if v >= 0 else f"fell {-v:.0f}%"  # noqa: E731
         findings.append(
             {
                 "lead": f"Spend {verb(t)}",
                 "text": f"from {_month(g['first_month'])} to {_month(g['last_month'])}; High/Critical spend "
-                f"{verb(lk)}, so lock-in is growing {pace} the estate.",
+                f"{verb(lk)}, so lock-in is growing {pace} the estate."
+                + (
+                    f" Biggest rises: {_join([f'{x[0]} +{_money(x[1], cur)} a month' for x in rises])}."
+                    if rises
+                    else ""
+                ),
             }
         )
 

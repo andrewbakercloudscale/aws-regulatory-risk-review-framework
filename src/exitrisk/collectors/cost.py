@@ -18,6 +18,10 @@ from ..logging_config import get_logger
 log = get_logger("cost")
 
 MARKETPLACE_SERVICE = "AWS Marketplace (third-party)"
+# Third-party models on Bedrock (Anthropic Claude, ...) bill through Marketplace as "<model> (Amazon Bedrock Edition)".
+# They are Bedrock usage, not bought-in software, so they score as Bedrock.
+BEDROCK_SERVICE = "Amazon Bedrock"
+_BEDROCK_SUFFIX = "(Amazon Bedrock Edition)"
 _EXCLUDED_RECORD_TYPES = ["Credit", "Refund", "Tax", "Support"]
 _MAX_ACCOUNTS_PER_FILTER = 100
 
@@ -61,9 +65,12 @@ def _query(client, start: str, end: str, account_ids: list[str], billing_entity:
             for g in period.get("Groups", []):
                 account_id, service = g["Keys"]
                 amount = float(g["Metrics"]["AmortizedCost"]["Amount"])
+                row = {"month": month, "account_id": account_id, "service": service, "amount": amount}
                 if billing_entity == "AWS Marketplace":
-                    service = MARKETPLACE_SERVICE
-                rows.append({"month": month, "account_id": account_id, "service": service, "amount": amount})
+                    # One catalog entry for all third-party software; keep the product so the report can name it.
+                    billed_as = BEDROCK_SERVICE if service.endswith(_BEDROCK_SUFFIX) else MARKETPLACE_SERVICE
+                    row.update(service=billed_as, product=service)
+                rows.append(row)
         token = resp.get("NextPageToken")
         if not token:
             break
@@ -82,7 +89,11 @@ def fetch_costs(session: boto3.Session, account_ids: list[str], months: int) -> 
         rows += _query(client, start, end, chunk, "AWS Marketplace")
     merged: dict[tuple, float] = {}
     for r in rows:
-        key = (r["month"], r["account_id"], r["service"])
+        key = (r["month"], r["account_id"], r["service"], r.get("product"))
         merged[key] = merged.get(key, 0.0) + r["amount"]
-    out = [{"month": k[0], "account_id": k[1], "service": k[2], "amount": round(v, 4)} for k, v in merged.items()]
+    out = [
+        {"month": k[0], "account_id": k[1], "service": k[2], "amount": round(v, 4)}
+        | ({"product": k[3]} if k[3] else {})
+        for k, v in merged.items()
+    ]
     return out, {"start": start, "end": end, "months": months}

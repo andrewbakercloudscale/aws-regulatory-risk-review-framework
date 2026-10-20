@@ -24,7 +24,7 @@
 #
 # Contributions welcome: see CONTRIBUTING.md. Keep `why` factual and `migration` actionable.
 
-version: "2026.10.1"
+version: "2026.10.2"
 
 tiers:
   1: {label: Portable, score: 10}
@@ -1245,7 +1245,7 @@ services:
 
   - service: AWS Marketplace (third-party)
     display: Marketplace (3rd party)
-    category: Business apps
+    category: Third-party software
     tier: 2
     why: Third-party software bought through AWS billing. The product usually exists on other clouds or direct from the vendor; contracts and private offers need re-papering.
     migration: Re-contract directly or via the target cloud's marketplace; align with contract renewal dates.

@@ -6,6 +6,18 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **Specifics behind the numbers.** The bespoke-services finding names each of the largest services with
+  its annual spend and account count; the growth finding names the biggest rises. Growth by product type
+  names the service (or product) behind each bar, and the table lists the services in each type. The
+  High & Critical services table gains a Change column.
+- **Third-party products.** Scans keep the Marketplace product name instead of one "Marketplace" line; a
+  new table lists them. Third-party models on Bedrock (billed via Marketplace as "... (Amazon Bedrock
+  Edition)") now score as Bedrock (AI/ML, tier 3), not as Marketplace. Re-scan to see product names.
+
+### Changed
+- Catalog 2026.10.2: Marketplace moves from "Business apps" to its own "Third-party software" category.
+
 ## [0.2.1] - 2026-10-20
 
 ### Changed

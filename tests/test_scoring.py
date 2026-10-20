@@ -206,6 +206,41 @@ def test_growth_by_product_type():
     assert r["estimate"]["cost"]["pct_of_annual_spend"] > 0
 
 
+def test_growth_names_the_services_and_products_behind_it():
+    mkt = "AWS Marketplace (third-party)"
+    costs = [
+        {"account_id": "1", "service": "Amazon Connect", "month": "2026-07", "amount": 1000},
+        {"account_id": "1", "service": "Amazon Connect", "month": "2026-09", "amount": 1200},
+        {"account_id": "1", "service": "Amazon Redshift", "month": "2026-07", "amount": 500},
+        {"account_id": "1", "service": "Amazon Redshift", "month": "2026-09", "amount": 500},
+        {"account_id": "1", "service": mkt, "product": "Acme SaaS", "month": "2026-07", "amount": 10},
+        {"account_id": "1", "service": mkt, "product": "Acme SaaS", "month": "2026-09", "amount": 900},
+        {"account_id": "1", "service": "Amazon Bedrock", "month": "2026-09", "amount": 50},
+        {
+            "account_id": "1",
+            "service": "Amazon Bedrock",
+            "product": "Claude Sonnet 4.6 (Amazon Bedrock Edition)",
+            "month": "2026-09",
+            "amount": 300,
+        },
+    ]
+    r = build_report(_scan(costs, [{"id": "1", "name": "a-prod"}]))
+    cats = {c["category"]: c for c in r["growth"]["by_category"]}
+    assert cats["Business apps"]["services"] == ["Connect"]
+    assert cats["Business apps"]["drivers"][0]["display"] == "Connect"
+    assert cats["Business apps"]["drivers"][0]["change"] == 200
+    third = cats["Third-party software"]["drivers"][0]
+    assert third["products"] == ["Acme SaaS"] and third["change"] == 890
+    svc = {s["service"]: s for s in r["services"]}
+    assert svc["Amazon Connect"]["change_pct"] == 20.0
+    assert svc["Amazon Bedrock"]["products"] == [
+        {"name": "Claude Sonnet 4.6", "monthly_spend": 150.0, "accounts": 1, "change": 300.0}
+    ]
+    findings = r["summary"]["executive"]["findings"]
+    assert any("Connect $" in f and "a year (1 account)" in f for f in findings)
+    assert any("Biggest rises: Acme SaaS via Marketplace (3rd party) +$890 a month" in f for f in findings)
+
+
 def test_growth_needs_two_months():
     costs = [{"account_id": "1", "service": "Amazon Connect", "month": "2026-09", "amount": 100}]
     g = build_report(_scan(costs, [{"id": "1", "name": "a-prod"}]))["growth"]

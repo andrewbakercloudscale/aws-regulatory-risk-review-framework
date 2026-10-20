@@ -20,7 +20,7 @@ def test_month_window():
     assert cost.month_window(12, date(2026, 1, 5)) == ("2025-01-01", "2026-01-01")
 
 
-def test_fetch_costs_paginates_and_tags_marketplace(monkeypatch):
+def test_fetch_costs_paginates_and_keeps_marketplace_products(monkeypatch):
     client = boto3.client("ce", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
     stub = Stubber(client)
 
@@ -40,15 +40,27 @@ def test_fetch_costs_paginates_and_tags_marketplace(monkeypatch):
     )
     stub.add_response(
         "get_cost_and_usage",
-        {"ResultsByTime": [{**period, "Groups": [group("1", "Some SaaS", 7)]}]},
+        {
+            "ResultsByTime": [
+                {
+                    **period,
+                    "Groups": [group("1", "Some SaaS", 7), group("1", "Claude Opus 4.6 (Amazon Bedrock Edition)", 3)],
+                }
+            ]
+        },
         {k: ANY for k in ("TimePeriod", "Granularity", "Metrics", "GroupBy", "Filter")},
     )
     session = _session()
     monkeypatch.setattr(session, "client", lambda *a, **k: client)
     with stub:
         rows, period_out = cost.fetch_costs(session, ["1"], 1)
-    by_svc = {r["service"]: r["amount"] for r in rows}
-    assert by_svc == {"AWS Lambda": 15.0, cost.MARKETPLACE_SERVICE: 7.0}
+    by_svc = {(r["service"], r.get("product")): r["amount"] for r in rows}
+    assert by_svc == {
+        ("AWS Lambda", None): 15.0,
+        (cost.MARKETPLACE_SERVICE, "Some SaaS"): 7.0,
+        # Third-party models on Bedrock bill through Marketplace but are Bedrock usage.
+        (cost.BEDROCK_SERVICE, "Claude Opus 4.6 (Amazon Bedrock Edition)"): 3.0,
+    }
     assert period_out["months"] == 1
 
 

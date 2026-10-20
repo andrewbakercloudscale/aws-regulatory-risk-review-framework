@@ -335,12 +335,14 @@
       `. ${g.lockin.pct != null && g.total.pct != null ? (g.lockin.pct > g.total.pct + 1 ? "Lock-in is growing faster than the estate." : g.lockin.pct < g.total.pct - 1 ? "Lock-in is growing more slowly than the estate." : "Lock-in is growing in line with the estate.") : ""}`;
     $("#growthCap").textContent = `Monthly spend in ${month(g.last_month)} minus ${month(g.first_month)}, by product type. Red = growth, blue = decline.`;
     const rows = [...g.by_category].sort((a, b) => b.change - a.change);
+    // The service that moved a product type most; for Marketplace/Bedrock, the product behind it.
+    const driverText = (d) => `${d.products?.length ? d.products[0] : d.display} ${usd(d.change)}`;
     // Match the table beside it so the two cards line up.
-    $("#chGrowth").parentElement.style.height = `${Math.max(300, 34 * rows.length + 70)}px`;
+    $("#chGrowth").parentElement.style.height = `${Math.max(300, 42 * rows.length + 70)}px`;
     chart("chGrowth", {
       type: "bar",
       data: {
-        labels: rows.map((c) => c.category),
+        labels: rows.map((c) => c.drivers?.length ? [c.category, driverText(c.drivers[0])] : c.category),
         datasets: [{ label: "Change in USD / month", data: rows.map((c) => c.change), backgroundColor: rows.map((c) => (c.change >= 0 ? tierColor(5) : tierColor(1))), borderRadius: 3, barPercentage: 0.75 }],
       },
       options: {
@@ -348,12 +350,13 @@
         scales: { x: { ticks: { callback: (v) => usd(v), maxRotation: 0 }, grid: { color: css("--grid") } }, y: { grid: { display: false } } },
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => {
           const x = rows[c.dataIndex];
-          return [` ${money(x.first)} → ${money(x.last)} a month`, ` ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`];
+          return [` ${money(x.first)} → ${money(x.last)} a month`, ` ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`,
+            ...(x.drivers || []).map((d) => ` ${d.display}: ${usd(d.change)}${d.products?.length ? ` (${d.products.join(", ")})` : ""}`)];
         } } } },
       },
     });
     $("#growthTable").innerHTML = `<thead><tr><th>Product type</th><th class="num-cell">${esc(month(g.first_month))}</th><th class="num-cell">${esc(month(g.last_month))}</th><th class="num-cell">Change</th>${annual ? `<th class="num-cell">Per year</th>` : ""}<th class="num-cell" title="Share of this product type's spend on High or Critical services">Lock-in</th></tr></thead><tbody>` +
-      g.by_category.map((c) => `<tr><td>${esc(c.category)}</td><td class="num-cell">${money(c.first)}</td><td class="num-cell">${money(c.last)}</td><td class="num-cell">${sgn(c.pct)}</td>${annual ? `<td class="num-cell">${sgn(c.annualised_pct)}</td>` : ""}<td class="num-cell">${pct(c.lockin_pct)}</td></tr>`).join("") +
+      g.by_category.map((c) => `<tr><td>${esc(c.category)}${c.services?.length ? `<div class="hint">${esc(c.services.slice(0, 4).join(", "))}${c.services.length > 4 ? ` +${c.services.length - 4} more` : ""}</div>` : ""}</td><td class="num-cell">${money(c.first)}</td><td class="num-cell">${money(c.last)}</td><td class="num-cell">${sgn(c.pct)}</td>${annual ? `<td class="num-cell">${sgn(c.annualised_pct)}</td>` : ""}<td class="num-cell">${pct(c.lockin_pct)}</td></tr>`).join("") +
       `<tr class="total"><td><strong>Total</strong></td><td class="num-cell">${money(g.total.first)}</td><td class="num-cell">${money(g.total.last)}</td><td class="num-cell"><strong>${sgn(g.total.pct)}</strong></td>${annual ? `<td class="num-cell">${sgn(g.total.annualised_pct)}</td>` : ""}<td></td></tr></tbody>`;
     $("#growthNote").textContent = annual
       ? "Per year = the first-to-last-month change annualised. Amortised spend: Savings Plans and RIs are spread over the months they cover."
@@ -508,9 +511,19 @@
     });
     const lock = r.services.filter((s) => s.tier >= 4);
     $("#chServices").parentElement.style.height = `${Math.min(760, Math.max(420, 54 * lock.length + 40))}px`;
-    $("#lockinTable").innerHTML = `<thead><tr><th>Service</th><th>Tier</th><th class="num-cell">Per month</th><th class="num-cell">Share</th><th class="num-cell">Accounts</th></tr></thead><tbody>` +
-      (lock.map((s) => `<tr><td><strong>${esc(s.display)}</strong><div class="hint">${esc(s.category)}</div></td><td><span class="tier-pill" style="--dot:${tierColor(s.tier)}">${s.tier} · ${esc(s.tier_label)}</span></td><td class="num-cell">${money(s.monthly_spend)}</td><td class="num-cell">${pct(s.pct, 1)}</td><td class="num-cell">${s.accounts}</td></tr>`).join("")
-        || `<tr><td colspan="5" class="hint">No High or Critical services in scope.</td></tr>`) + "</tbody>";
+    const g = r.growth || {};
+    const hasChange = lock.some((s) => s.change != null);
+    const chg = (s) => s.change == null ? "–" : `${s.change > 0 ? "+" : s.change < 0 ? "−" : ""}${money(Math.abs(s.change))}${s.change_pct != null ? `<div class="hint">${s.change_pct > 0 ? "+" : ""}${num(s.change_pct, 0)}%</div>` : ""}`;
+    $("#lockinTable").innerHTML = `<thead><tr><th>Service</th><th>Tier</th><th class="num-cell">Per month</th><th class="num-cell">Share</th><th class="num-cell">Accounts</th>${hasChange ? `<th class="num-cell" title="Monthly spend in ${esc(month(g.last_month))} minus ${esc(month(g.first_month))}">Change</th>` : ""}</tr></thead><tbody>` +
+      (lock.map((s) => `<tr><td><strong>${esc(s.display)}</strong><div class="hint">${esc(s.category)}</div></td><td><span class="tier-pill" style="--dot:${tierColor(s.tier)}">${s.tier} · ${esc(s.tier_label)}</span></td><td class="num-cell">${money(s.monthly_spend)}</td><td class="num-cell">${pct(s.pct, 1)}</td><td class="num-cell">${s.accounts}</td>${hasChange ? `<td class="num-cell">${chg(s)}</td>` : ""}</tr>`).join("")
+        || `<tr><td colspan="6" class="hint">No High or Critical services in scope.</td></tr>`) + "</tbody>";
+    const prods = r.services.flatMap((s) => (s.products || []).map((p) => ({ ...p, billed: s.display, tier: s.tier }))).sort((a, b) => b.monthly_spend - a.monthly_spend).slice(0, 12);
+    $("#mktCard").hidden = !prods.length;
+    if (prods.length) {
+      const pc = prods.some((p) => p.change != null);
+      $("#mktTable").innerHTML = `<thead><tr><th>Product</th><th>Billed as</th><th class="num-cell">Per month</th><th class="num-cell">Accounts</th>${pc ? `<th class="num-cell">Change</th>` : ""}</tr></thead><tbody>` +
+        prods.map((p) => `<tr><td>${esc(p.name)}</td><td><span class="tier-pill" style="--dot:${tierColor(p.tier)}">${esc(p.billed)}</span></td><td class="num-cell">${money(p.monthly_spend)}</td><td class="num-cell">${p.accounts}</td>${pc ? `<td class="num-cell">${chg(p)}</td>` : ""}</tr>`).join("") + "</tbody>";
+    }
   }
 
   function renderEstimate(r) {
