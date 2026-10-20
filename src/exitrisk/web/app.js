@@ -154,13 +154,17 @@
     if ($("#fMinRating").value) url.searchParams.set("min_rating", $("#fMinRating").value); else url.searchParams.delete("min_rating");
     if (!PRINT) history.replaceState(null, "", url);
     render();
+    // The multi-region view follows the same scan and filter.
+    state.mr = null;
+    if (state.view === "multiregion") loadMultiRegion();
   }
 
   // ------------------------------------------------------------------ render
   function render() {
     const r = state.report;
     $("#empty").hidden = true;
-    $("#content").hidden = false;
+    $("#viewTabs").hidden = false;
+    $("#content").hidden = state.view === "multiregion";
     renderCover(r);
     renderSummary(r);
     renderProfile(r);
@@ -170,7 +174,7 @@
     renderIssues(r);
     renderAppendix(r);
     $("#footer").textContent = `Generated ${new Date(r.meta.generated_at).toLocaleString()} by aws-regulatory-risk-review-framework v${r.meta.tool_version} · catalog ${r.meta.catalog_version} · scan ${r.meta.scan_id}`;
-    document.body.dataset.ready = "1";
+    if (state.view !== "multiregion") document.body.dataset.ready = "1";
   }
 
   function renderCover(r) {
@@ -620,6 +624,260 @@
     $("#catalog").innerHTML = html;
   }
 
+  // ------------------------------------------------------------------ multi-region view
+  const LS_MR = "exitrisk.multiregion.v1";
+  const LS_MR_ACCTS = "exitrisk.multiregion.accounts."; // + scan id: the accounts ticked for a second region
+  const MR_DEFAULTS = { recovery: "rto_3h", residency: "any", primary: "", secondary: "", support_plan: "enterprise", allocation_pct: 50, fte_annual_cost: 0, confirmed: false };
+  const MR_NUM = ["allocation_pct", "fte_annual_cost"];
+  const SEV_TIER = { Low: 1, Moderate: 3, High: 4, Critical: 5 };
+  const AVAIL_LABEL = { available: "Available", missing: "Not available", unverified: "Not verified", global: "Global" };
+  const AVAIL_TIER = { available: 1, missing: 5, unverified: 3, global: 2 };
+  const MR_ROWS = 25;
+
+  function setView(v) {
+    state.view = v === "multiregion" ? "multiregion" : "exit";
+    document.body.dataset.view = state.view;
+    for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
+    $("#content").hidden = state.view !== "exit" || !state.report;
+    $("#mrContent").hidden = state.view !== "multiregion" || !state.mr;
+    if (!PRINT) {
+      const url = new URL(location.href);
+      if (state.view === "multiregion") url.searchParams.set("view", "multiregion"); else url.searchParams.delete("view");
+      history.replaceState(null, "", url);
+    }
+    if (state.view === "multiregion" && !state.mr) loadMultiRegion();
+    Object.values(state.charts).forEach((c) => c.resize());
+  }
+
+  function loadMrAnswers() {
+    const a = { ...MR_DEFAULTS };
+    try { Object.assign(a, JSON.parse(localStorage.getItem(LS_MR) || "{}")); } catch { /* ignore */ }
+    if (params.get("mr")) {
+      try { Object.assign(a, JSON.parse(params.get("mr"))); } catch { console.warn("bad mr param"); }
+    }
+    return a;
+  }
+
+  function readMr() {
+    if (!state.mrFilled) return loadMrAnswers();
+    const f = $("#mrForm");
+    const a = { confirmed: !!state.mrConfirmed };
+    for (const el of f.elements) {
+      if (!el.name || el.hasAttribute("data-shared")) continue;
+      if (el.type === "radio") { if (el.checked) a[el.name] = el.value; }
+      else if (MR_NUM.includes(el.name)) a[el.name] = el.value === "" ? undefined : Number(el.value);
+      else a[el.name] = el.value;
+    }
+    try { localStorage.setItem(LS_MR, JSON.stringify(a)); } catch { /* ignore */ }
+    return a;
+  }
+
+  function mrAccounts() {
+    if (params.get("mr_accounts")) return params.get("mr_accounts").split(",");
+    try { const v = localStorage.getItem(LS_MR_ACCTS + state.scanId); return v ? JSON.parse(v) : null; } catch { return null; }
+  }
+  function saveMrAccounts(ids) {
+    try {
+      if (ids) localStorage.setItem(LS_MR_ACCTS + state.scanId, JSON.stringify(ids)); else localStorage.removeItem(LS_MR_ACCTS + state.scanId);
+    } catch { /* ignore */ }
+  }
+
+  async function loadMultiRegion() {
+    if (!state.scanId) return;
+    const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
+    const body = { scan_id: state.scanId, filter, questionnaire: readQuestionnaire(), multiregion: { ...readMr(), accounts: mrAccounts() } };
+    const seq = (state.mrSeq = (state.mrSeq || 0) + 1);
+    try {
+      const mr = await api("/api/multiregion", { method: "POST", body });
+      if (seq !== state.mrSeq) return; // a newer request superseded this one
+      state.mr = mr;
+    } catch (e) { toast(e.message); return; }
+    renderMr();
+  }
+
+  function fillMrForm(m) {
+    const f = $("#mrForm"), a = m.answers, q = $("#qForm");
+    const opts = (labels, extra) => (extra || "") + Object.entries(labels).map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+    const regionOpts = Object.entries(m.regions).map(([k, n]) => `<option value="${esc(k)}">${esc(n)} · ${esc(k)}</option>`).join("");
+    const s = m.summary;
+    f.residency.innerHTML = opts(m.labels.residency);
+    f.support_plan.innerHTML = opts(m.labels.support_plan);
+    f.primary.innerHTML = `<option value="">Detected: ${esc(m.regions[s.primary] || s.primary)}</option>` + regionOpts;
+    f.secondary.innerHTML = `<option value="">Recommended: ${esc(s.recommended_name || "none allowed")}</option>` + regionOpts;
+    f.cicd.innerHTML = q.cicd.innerHTML;
+    f.iac.innerHTML = q.iac.innerHTML;
+    for (const el of f.elements) {
+      if (!el.name) continue;
+      if (el.hasAttribute("data-shared")) { el.value = q[el.name].value; continue; }
+      if (el.type === "radio") el.checked = el.value === a[el.name];
+      else if (a[el.name] != null) el.value = a[el.name];
+    }
+    state.mrFilled = true;
+    state.mrConfirmed = a.confirmed;
+  }
+
+  function sevBadge(sev) {
+    return sev ? `<span class="badge" style="--dot:${tierColor(SEV_TIER[sev])}">${esc(sev)}</span>` : `<span class="muted">–</span>`;
+  }
+
+  function renderMr() {
+    const m = state.mr, s = m.summary, rg = s.ranges, x = s.executive, t = s.target;
+    const cur = s.run.currency;
+    $("#viewTabs").hidden = false;
+    fillMrForm(m);
+    $("#mrMeta").innerHTML = [
+      ["Scope", state.report?.meta.filter.description || "All accounts"],
+      ["Accounts going multi-region", `${num(s.accounts_selected)} of ${num(s.accounts_in_scope)}`],
+      ["Primary region", `${s.primary_name} (${s.primary})${s.primary_detected ? "" : " · set by you"}`],
+      ["Second region", s.secondary_name ? `${s.secondary_name} (${s.secondary})${s.secondary === s.recommended ? " · recommended" : " · chosen by you"}` : "–"],
+      ["Recovery target", m.labels.recovery[m.answers.recovery]],
+      ["Data residency", m.labels.residency[m.answers.residency]],
+    ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+    const notes = [];
+    if (!s.has_region_data) notes.push(`This scan has no spend-by-region data (scans made before this version did not collect it), so all spend is assumed to run in ${s.primary_name}. Run a new scan for the real split.`);
+    if (!s.secondary) notes.push("No AWS region meets the data-residency rule. Relax the rule in section 2 to see candidates.");
+    $("#mrCoverage").hidden = !notes.length;
+    $("#mrCoverage").innerHTML = notes.map((n) => `<p>${esc(n)}</p>`).join("");
+
+    const lead = (i) => `<li><strong>${esc(i.lead)}</strong> ${esc(i.text)}</li>`;
+    $("#mrHeadline").textContent = x.headline;
+    $("#mrFindings").innerHTML = x.findings.map(lead).join("");
+    $("#mrActions").innerHTML = x.actions.map(lead).join("");
+    $("#mrProvisional").hidden = !m.provisional;
+    const prov = m.provisional;
+    $("#mrTiles").innerHTML = [
+      tile("Extra cost to run (a year)", rg.run_annual, rg.uplift_pct ? `${rg.uplift_pct} of the chosen accounts' spend` : "infrastructure, support and people", prov),
+      tile("Cost to achieve (one-off)", rg.build_cost, rg.build_effort, prov),
+      tile("Time to achieve", rg.build_duration, `bound by ${s.build.constrained_by}`, prov),
+      tile("Extra people", rg.staff === "–" ? "–" : `${rg.staff} FTE`, `${rg.staff_annual} a year`, prov),
+      tile("Recommended region", s.recommended_name || "–", t ? `~${t.latency_ms} ms · ${num(t.parity_pct)}% service parity` : "none meets the residency rule"),
+      tile("Accounts with failover risk", `${num(s.accounts_blocked)} of ${num(s.accounts_selected)}`, "a material service cannot meet the target as built"),
+    ].join("");
+    $("#mrStatus").innerHTML = m.provisional
+      ? `<span class="prov-tag">Provisional</span> Using default answers. Change any answer, or confirm these.`
+      : `<span class="ok-tag">✓ Your answers</span> The estimate uses the answers below.`;
+
+    renderMrAccounts(m);
+
+    const regs = s.by_region.slice(0, 8);
+    chart("chMrRegions", {
+      type: "bar",
+      data: { labels: regs.map((r) => (r.region === "global" ? "Global" : r.region)), datasets: [{ data: regs.map((r) => r.monthly_spend), backgroundColor: regs.map((r) => (r.region === s.primary ? css("--accent") : r.region === s.secondary ? tierColor(2) : css("--axis"))), borderRadius: 4, barPercentage: 0.7 }] },
+      options: { indexAxis: "y", plugins: { legend: { display: false }, tooltip: { callbacks: { title: (c) => regs[c[0].dataIndex].name, label: (c) => ` ${money(c.raw)}/month` } } },
+        scales: { x: { ticks: { callback: (v) => money(v) }, grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } } },
+    });
+    $("#mrRecName").textContent = s.recommended_name || "none";
+    $("#mrRecWhy").textContent = s.secondary && s.secondary !== s.recommended ? `You chose ${s.secondary_name}; the figures below are for it.` : "Best balance of service parity, latency and price for the chosen accounts and recovery target.";
+    $("#mrTargetFacts").innerHTML = t ? [
+      ["Region", `${t.name} (${t.region})`],
+      ["Estimated latency from primary", `~${t.latency_ms} ms round trip`],
+      ["Service parity (by spend)", `${num(t.parity_pct, 1)}%`],
+      ["Not available there", t.missing.length ? t.missing.map((x) => `${x.display} (${money(x.monthly_spend)}/mo)`).join(", ") : "None"],
+      ["Prices against primary", `${t.price_index >= 1 ? "+" : ""}${num(100 * (t.price_index - 1))}%`],
+      ["Already runs there", `${num(t.existing_pct, 1)}% of regional spend`],
+    ].map(([k, v]) => `<tr><th scope="row">${esc(k)}</th><td>${esc(v)}</td></tr>`).join("") : "";
+    const cands = m.candidates.filter((c) => c.residency_ok || c.region === s.secondary).slice(0, 10);
+    $("#mrCandTable").innerHTML = `<thead><tr><th>Region</th><th class="num-cell">Latency</th><th class="num-cell">Parity</th><th>Not available</th><th class="num-cell">Price</th><th class="num-cell">Score</th><th>Notes</th><th class="no-print"></th></tr></thead><tbody>` +
+      cands.map((c) => `<tr class="${c.region === s.secondary ? "chosen" : ""}"><td><strong>${esc(c.name)}</strong> <span class="muted small">${esc(c.region)}</span>${c.region === s.recommended ? ' <span class="ok-tag">Recommended</span>' : ""}</td>
+        <td class="num-cell">~${num(c.latency_ms)} ms</td><td class="num-cell">${num(c.parity_pct, 1)}%</td>
+        <td>${c.missing.length ? esc(c.missing.map((x) => x.display).join(", ")) : '<span class="muted">none</span>'}</td>
+        <td class="num-cell">${c.price_index >= 1 ? "+" : ""}${num(100 * (c.price_index - 1))}%</td><td class="num-cell">${num(c.score)}</td>
+        <td class="small">${esc(c.notes.join("; "))}${c.residency_ok ? "" : " Outside the residency rule."}</td>
+        <td class="no-print">${c.region === s.secondary ? "" : `<button type="button" class="btn" data-use-region="${esc(c.region)}">Use</button>`}</td></tr>`).join("") + "</tbody>";
+
+    $("#mrRunTiles").innerHTML = [
+      tile("Second-region infrastructure", rg.infra_annual, "a year, incl. replication traffic", prov),
+      tile("AWS Support uplift", rg.support_annual, `${m.labels.support_plan[m.answers.support_plan]} plan, a year`, prov),
+      tile("Extra people", rg.staff_annual, `${rg.staff} FTE a year`, prov),
+    ].join("");
+    const cls = s.run.by_class;
+    chart("chMrClass", {
+      type: "bar",
+      data: { labels: cls.map((c) => c.label), datasets: [{ data: cls.map((c) => c.monthly), backgroundColor: css("--accent"), borderRadius: 4, barPercentage: 0.7 }] },
+      options: { indexAxis: "y", plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${money(c.raw)}/month` } } },
+        scales: { x: { ticks: { callback: (v) => money(v) }, grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } } },
+    });
+    $("#mrStaffTable").innerHTML = `<thead><tr><th>Role</th><th class="num-cell">FTE (midpoint)</th></tr></thead><tbody>` +
+      s.staff.parts.map((p) => `<tr><td>${esc(p.role)}</td><td class="num-cell">${num(p.fte, 1)}</td></tr>`).join("") +
+      `<tr class="total"><td><strong>Total</strong> <span class="muted small">(quoted as ${esc(rg.staff)})</span></td><td class="num-cell"><strong>${num(s.staff.fte, 1)}</strong></td></tr></tbody>` +
+      `<caption class="muted small" style="caption-side:bottom;text-align:left;padding-top:8px">At ${money(s.staff.fte_annual_cost, cur)} per FTE a year.</caption>`;
+
+    $("#mrBuildTiles").innerHTML = [
+      tile("Cost to achieve (one-off)", rg.build_cost, "engineering, plus running the region while it is built", prov),
+      tile("Time to achieve", rg.build_duration, `bound by ${s.build.constrained_by} · capacity ${num(s.build.capacity_fte, 1)} FTE`, prov),
+      tile("Engineering effort", rg.build_effort, plural(s.build.material_accounts, "material account"), prov),
+    ].join("");
+    const parts = s.build.parts;
+    chart("chMrBuild", {
+      type: "bar",
+      data: { labels: parts.map((p) => p.part), datasets: [{ data: parts.map((p) => Math.round(p.weeks / 4.33)), backgroundColor: css("--ink-2"), borderRadius: 4, barPercentage: 0.7 }] },
+      options: { indexAxis: "y", plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${num(c.raw)} person-months` } } },
+        scales: { x: { grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } } },
+    });
+    $("#mrParityTable").innerHTML = `<thead><tr><th>Service</th><th>Class</th><th class="num-cell">Accounts</th><th class="num-cell">Spend / month</th><th>In ${esc(s.secondary || "–")}</th></tr></thead><tbody>` +
+      (PRINT ? m.parity.filter((p) => p.availability !== "available" || p.monthly_spend >= 1000) : m.parity.slice(0, 40)).map((p) => `<tr><td>${esc(p.service)}</td><td class="small">${esc(p.class_label)}</td><td class="num-cell">${num(p.accounts)}</td><td class="num-cell">${money(p.monthly_spend)}</td>
+        <td><span class="badge" style="--dot:${tierColor(AVAIL_TIER[p.availability])}">${esc(AVAIL_LABEL[p.availability])}</span></td></tr>`).join("") + "</tbody>";
+    $("#mrAssumptions").innerHTML = m.assumptions.map((a) => `<li>${esc(a)}</li>`).join("");
+    $("#mrFooter").textContent = $("#footer").textContent;
+    $("#mrContent").hidden = state.view !== "multiregion";
+    if (PRINT) document.querySelectorAll("#mrContent details").forEach((d) => { d.open = true; });
+    if (state.view === "multiregion") document.body.dataset.ready = "1";
+  }
+
+  function renderMrAccounts(m) {
+    const rows = m.accounts;
+    const shown = PRINT ? rows : state.mrShowAll ? rows : rows.slice(0, MR_ROWS);
+    const counts = (c) => ["Critical", "High", "Moderate", "Low"].filter((k) => c[k]).map((k) => `<span class="chip"><span class="sev" style="--dot:${tierColor(SEV_TIER[k])}">${esc(k)} ${c[k]}</span></span>`).join("");
+    $("#mrAcctCount").textContent = `${num(m.summary.accounts_selected)} of ${num(rows.length)} accounts selected`;
+    $("#mrAcctTable").innerHTML = `<thead><tr><th class="no-print"></th><th>Account</th><th class="num-cell">Spend / month</th><th>Readiness</th><th>Multi-region risks</th></tr></thead><tbody>` +
+      shown.map((a) => `<tr class="${a.selected ? "" : "off"}"><td class="sel no-print"><input type="checkbox" data-acct="${esc(a.id)}" ${a.selected ? "checked" : ""} aria-label="Make ${esc(a.name)} multi-region"></td>
+        <td><strong>${esc(a.name)}</strong><div class="muted small">${esc(a.id)} · ${esc(a.ou_path)}</div></td>
+        <td class="num-cell">${money(a.monthly_spend)}</td><td>${sevBadge(a.readiness)}</td>
+        <td>${a.risks.length ? `<details><summary><span class="chips" style="display:inline-flex">${counts(a.risk_counts)}</span></summary><ul class="risk-list">${a.risks.slice(0, 12).map((r) => `<li>${sevBadge(r.severity)} <strong>${esc(r.service)}</strong> <span class="muted">${money(r.monthly_spend)}/mo · ${esc(r.failover_label)}</span><br>${esc(r.note)}</li>`).join("")}${a.risks.length > 12 ? `<li class="muted">and ${a.risks.length - 12} smaller service(s)</li>` : ""}</ul></details>` : '<span class="muted">No regional spend</span>'}</td></tr>`).join("") + "</tbody>";
+    const more = rows.length > MR_ROWS && !PRINT;
+    $("#btnMrAcctMore").hidden = !more;
+    $("#btnMrAcctMore").textContent = state.mrShowAll ? "Show fewer" : `Show all ${num(rows.length)}`;
+    $("#mrAcctMoreNote").textContent = more && !state.mrShowAll ? `Showing the ${MR_ROWS} largest of ${num(rows.length)}.` : "";
+  }
+
+  function setMrSelection(ids) {
+    saveMrAccounts(ids);
+    clearTimeout(state.mrTimer);
+    state.mrTimer = setTimeout(loadMultiRegion, 250);
+  }
+
+  function bindMultiRegion() {
+    for (const b of document.querySelectorAll(".vtab")) b.addEventListener("click", () => setView(b.dataset.view));
+    $("#mrForm").addEventListener("change", (ev) => {
+      const el = ev.target;
+      if (el.hasAttribute?.("data-shared")) { $("#qForm")[el.name].value = el.value; readQuestionnaire(); state.report && loadReport(); }
+      state.mrConfirmed = true;
+      loadMultiRegion();
+    });
+    $("#btnMrConfirm").addEventListener("click", () => { state.mrConfirmed = true; loadMultiRegion(); });
+    $("#mrAcctTable").addEventListener("change", (ev) => {
+      const id = ev.target.dataset?.acct;
+      if (!id || !state.mr) return;
+      const sel = new Set(state.mr.accounts.filter((a) => a.selected).map((a) => a.id));
+      if (ev.target.checked) sel.add(id); else sel.delete(id);
+      for (const a of state.mr.accounts) if (a.id === id) a.selected = ev.target.checked;
+      ev.target.closest("tr").classList.toggle("off", !ev.target.checked);
+      setMrSelection([...sel]);
+    });
+    $("#btnMrAll").addEventListener("click", () => setMrSelection(null));
+    $("#btnMrNone").addEventListener("click", () => setMrSelection([]));
+    $("#btnMrTop").addEventListener("click", () => state.mr && setMrSelection(state.mr.accounts.slice(0, 10).map((a) => a.id)));
+    $("#btnMrAcctMore").addEventListener("click", () => { state.mrShowAll = !state.mrShowAll; renderMrAccounts(state.mr); });
+    $("#mrCandTable").addEventListener("click", (ev) => {
+      const r = ev.target.dataset?.useRegion;
+      if (!r) return;
+      $("#mrForm").secondary.value = r;
+      state.mrConfirmed = true;
+      loadMultiRegion();
+    });
+    window.addEventListener("beforeprint", () => { if (state.view === "multiregion") document.querySelectorAll("#mrContent details").forEach((d) => { d.open = true; }); });
+  }
+
   // ------------------------------------------------------------------ new scan dialog
   async function openScanDialog(selectProfile) {
     const dlg = $("#scanDialog");
@@ -992,6 +1250,10 @@
       [state.options, state.catalog] = await Promise.all([api("/api/options"), api("/api/catalog")]);
     } catch (e) { toast(e.message, 8000); return; }
     fillQuestionnaire(loadQuestionnaire());
+    state.view = params.get("view") === "multiregion" ? "multiregion" : "exit";
+    document.body.dataset.view = state.view;
+    for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
+    bindMultiRegion();
     if (["balanced", "spend", "equal"].includes(params.get("weighting"))) $("#fWeighting").value = params.get("weighting");
     if (["Moderate", "High"].includes(params.get("min_rating"))) $("#fMinRating").value = params.get("min_rating");
     for (const k of ["include", "exclude", "mode"]) if (params.get(k)) $(`#f${k[0].toUpperCase()}${k.slice(1)}`).value = params.get(k);
@@ -1003,6 +1265,7 @@
 
     $("#scanSelect").addEventListener("change", (e) => {
       state.scanId = e.target.value;
+      state.mrShowAll = false;
       // Each scan remembers the exit target chosen when it was started.
       const t = (state.scans || []).find((s) => s.id === state.scanId)?.target;
       if (t) $("#qForm").target.value = t;

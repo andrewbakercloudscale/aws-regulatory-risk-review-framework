@@ -24,6 +24,8 @@ BEDROCK_SERVICE = "Amazon Bedrock"
 _BEDROCK_SUFFIX = "(Amazon Bedrock Edition)"
 _EXCLUDED_RECORD_TYPES = ["Credit", "Refund", "Tax", "Support"]
 _MAX_ACCOUNTS_PER_FILTER = 100
+# Region lines under this (USD/month) are baseline noise (Config, GuardDuty in idle regions) and are dropped.
+_MIN_REGION_MONTHLY = 0.1
 
 
 def month_window(months: int, today: date | None = None) -> tuple[str, str]:
@@ -75,6 +77,68 @@ def _query(client, start: str, end: str, account_ids: list[str], billing_entity:
         if not token:
             break
     log.info("cost explorer %s: %d rows, %d page(s), %d account(s)", billing_entity, len(rows), pages, len(account_ids))
+    return rows
+
+
+def _grouped(client, start: str, end: str, filt: dict, group_by: list[str]) -> dict[tuple, float]:
+    """Total AmortizedCost over [start, end) for each combination of the ``group_by`` dimensions."""
+    out: dict[tuple, float] = {}
+    token = None
+    while True:
+        kwargs = {
+            "TimePeriod": {"Start": start, "End": end},
+            "Granularity": "MONTHLY",
+            "Metrics": ["AmortizedCost"],
+            "GroupBy": [{"Type": "DIMENSION", "Key": k} for k in group_by],
+            "Filter": filt,
+        }
+        if token:
+            kwargs["NextPageToken"] = token
+        resp = client.get_cost_and_usage(**kwargs)
+        for period in resp["ResultsByTime"]:
+            for g in period.get("Groups", []):
+                key = tuple(g["Keys"])
+                out[key] = out.get(key, 0.0) + float(g["Metrics"]["AmortizedCost"]["Amount"])
+        token = resp.get("NextPageToken")
+        if not token:
+            return out
+
+
+def fetch_region_costs(session: boto3.Session, account_ids: list[str], months: int) -> list[dict]:
+    """Average monthly spend per account, service and region, for the multi-region estimate.
+
+    Cost Explorer groups by at most two dimensions, so this asks which regions carry spend,
+    then for each of them asks account x service. A handful of regions in use means a handful
+    of queries per 100 accounts (US$0.01 each). Marketplace is left out: it is not regional.
+    """
+    client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
+    start, end = month_window(months)
+    rows: list[dict] = []
+    for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER):
+        chunk = account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER]
+        base = [
+            {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": chunk}},
+            {"Dimensions": {"Key": "BILLING_ENTITY", "Values": ["AWS"]}},
+            {"Not": {"Dimensions": {"Key": "RECORD_TYPE", "Values": _EXCLUDED_RECORD_TYPES}}},
+        ]
+        regions = _grouped(client, start, end, {"And": base}, ["REGION"])
+        for (region,), total in sorted(regions.items(), key=lambda kv: -kv[1]):
+            if total <= 0:
+                continue
+            filt = {"And": [*base, {"Dimensions": {"Key": "REGION", "Values": [region]}}]}
+            for (account_id, service), amount in _grouped(
+                client, start, end, filt, ["LINKED_ACCOUNT", "SERVICE"]
+            ).items():
+                if amount / months >= _MIN_REGION_MONTHLY:
+                    rows.append(
+                        {
+                            "account_id": account_id,
+                            "service": service,
+                            "region": region or "NoRegion",
+                            "monthly": round(amount / months, 4),
+                        }
+                    )
+    log.info("cost explorer by region: %d rows, %d account(s)", len(rows), len(account_ids))
     return rows
 
 

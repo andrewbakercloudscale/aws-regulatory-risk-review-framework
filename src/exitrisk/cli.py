@@ -91,12 +91,16 @@ def _report(args) -> int:
         q = Questionnaire(**{"confirmed": True, **json.loads(Path(args.questionnaire).read_text())})
     else:  # no answers given: use the exit target chosen when the scan was started
         q = Questionnaire(target=(scan.get("params") or {}).get("target") or "azure")
-    report = build_report(
-        scan,
-        AccountFilter(include=args.include or "", exclude=args.exclude or "", mode=args.mode),
-        q,
-        weighting=args.weighting,
-    )
+    flt = AccountFilter(include=args.include or "", exclude=args.exclude or "", mode=args.mode)
+    if args.view == "multiregion":
+        from .multiregion import MultiRegionAnswers, build_multiregion
+
+        mq = MultiRegionAnswers(
+            **({"confirmed": True, **json.loads(Path(args.multiregion).read_text())} if args.multiregion else {})
+        )
+        report = build_multiregion(scan, flt, q, mq)
+    else:
+        report = build_report(scan, flt, q, weighting=args.weighting)
     text = json.dumps(report, indent=2, default=str)
     if args.out:
         Path(args.out).write_text(text)
@@ -141,6 +145,10 @@ def _pdf(args) -> int:
                 "min_rating": getattr(args, "min_rating", None),
                 "q": json.dumps({"confirmed": True, **json.loads(Path(args.questionnaire).read_text())})
                 if args.questionnaire
+                else None,
+                "view": "multiregion" if args.view == "multiregion" else None,
+                "mr": json.dumps({"confirmed": True, **json.loads(Path(args.multiregion).read_text())})
+                if args.multiregion
                 else None,
                 "print": "1",
             }.items()
@@ -221,6 +229,17 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument(
             "--questionnaire",
             help="JSON file with the delivery answers (section 5); without it cost and time are marked provisional",
+        )
+        p.add_argument(
+            "--view",
+            default="exit",
+            choices=["exit", "multiregion"],
+            help="exit = the exit-risk report (default); multiregion = the cost of running a second region",
+        )
+        p.add_argument(
+            "--multiregion",
+            help="JSON file with the multi-region answers (recovery, residency, accounts, ...); "
+            "see docs/MULTI_REGION.md",
         )
         if name == "pdf":
             p.add_argument("--port", type=int, default=8741)

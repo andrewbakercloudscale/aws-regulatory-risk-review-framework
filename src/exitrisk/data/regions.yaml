@@ -1,0 +1,310 @@
+# AWS regions and how each catalog service behaves in a second region.
+#
+# Used by the multi-region estimate (src/exitrisk/multiregion.py, docs/MULTI_REGION.md).
+#
+# regions
+#   name          AWS's name for the region
+#   country       ISO 3166 country code: the data-residency test "same country"
+#   jurisdiction  wider legal area for "same jurisdiction" (EU = the European Union / EEA)
+#   continent     for "same continent"
+#   lat, lon      approximate location, for the estimated round-trip latency between regions
+#   via           where traffic to other continents actually routes (Cape Town reaches Asia and
+#                 the Americas through Europe), so latency is not taken from the great circle
+#   price         indicative price index against us-east-1 = 1.00, from EC2 on-demand list prices.
+#                 Services vary around it; it moves the run cost of a second region, not the shape.
+#
+# Service availability per region is NOT here: it is data/region_services.json, refreshed from
+# AWS's public regional services table with `python scripts/refresh_region_services.py`.
+#
+# services: catalog service name -> how it behaves in a second region
+#   regional  the service's name in AWS's regional services table (null: not listed there, so
+#             availability is "not verified"; global: one instance serves every region)
+#   class     how its spend scales with the resilience pattern (see `classes`)
+
+version: "2026.10.1"
+
+regions:
+  us-east-1:      {name: US East (N. Virginia),          country: US, jurisdiction: US, continent: North America, lat: 38.9,  lon: -77.4,  price: 1.00}
+  us-east-2:      {name: US East (Ohio),                 country: US, jurisdiction: US, continent: North America, lat: 40.0,  lon: -83.0,  price: 1.00}
+  us-west-1:      {name: US West (N. California),        country: US, jurisdiction: US, continent: North America, lat: 37.4,  lon: -121.9, price: 1.17}
+  us-west-2:      {name: US West (Oregon),               country: US, jurisdiction: US, continent: North America, lat: 45.8,  lon: -119.7, price: 1.00}
+  ca-central-1:   {name: Canada (Central),               country: CA, jurisdiction: CA, continent: North America, lat: 45.5,  lon: -73.6,  price: 1.10}
+  ca-west-1:      {name: Canada West (Calgary),          country: CA, jurisdiction: CA, continent: North America, lat: 51.0,  lon: -114.1, price: 1.10}
+  mx-central-1:   {name: Mexico (Central),               country: MX, jurisdiction: MX, continent: North America, lat: 20.6,  lon: -100.4, price: 1.15}
+  sa-east-1:      {name: South America (São Paulo),      country: BR, jurisdiction: BR, continent: South America, lat: -23.5, lon: -46.6,  price: 1.55}
+  eu-west-1:      {name: Europe (Ireland),               country: IE, jurisdiction: EU, continent: Europe,        lat: 53.3,  lon: -6.3,   price: 1.11}
+  eu-west-2:      {name: Europe (London),                country: GB, jurisdiction: UK, continent: Europe,        lat: 51.5,  lon: -0.1,   price: 1.16}
+  eu-west-3:      {name: Europe (Paris),                 country: FR, jurisdiction: EU, continent: Europe,        lat: 48.9,  lon: 2.4,    price: 1.17}
+  eu-central-1:   {name: Europe (Frankfurt),             country: DE, jurisdiction: EU, continent: Europe,        lat: 50.1,  lon: 8.7,    price: 1.18}
+  eu-central-2:   {name: Europe (Zurich),                country: CH, jurisdiction: CH, continent: Europe,        lat: 47.4,  lon: 8.5,    price: 1.30}
+  eu-north-1:     {name: Europe (Stockholm),             country: SE, jurisdiction: EU, continent: Europe,        lat: 59.3,  lon: 18.1,   price: 1.05}
+  eu-south-1:     {name: Europe (Milan),                 country: IT, jurisdiction: EU, continent: Europe,        lat: 45.5,  lon: 9.2,    price: 1.17}
+  eu-south-2:     {name: Europe (Spain),                 country: ES, jurisdiction: EU, continent: Europe,        lat: 41.6,  lon: -0.9,   price: 1.12}
+  il-central-1:   {name: Israel (Tel Aviv),              country: IL, jurisdiction: IL, continent: Middle East,   lat: 32.1,  lon: 34.8,   price: 1.20}
+  me-south-1:     {name: Middle East (Bahrain),          country: BH, jurisdiction: BH, continent: Middle East,   lat: 26.1,  lon: 50.6,   price: 1.22}
+  me-central-1:   {name: Middle East (UAE),              country: AE, jurisdiction: AE, continent: Middle East,   lat: 24.5,  lon: 54.4,   price: 1.22}
+  af-south-1:     {name: Africa (Cape Town),             country: ZA, jurisdiction: ZA, continent: Africa,        lat: -33.9, lon: 18.4,   price: 1.32, via: eu-west-2}
+  ap-south-1:     {name: Asia Pacific (Mumbai),          country: IN, jurisdiction: IN, continent: Asia,          lat: 19.1,  lon: 72.9,   price: 1.05}
+  ap-south-2:     {name: Asia Pacific (Hyderabad),       country: IN, jurisdiction: IN, continent: Asia,          lat: 17.4,  lon: 78.5,   price: 1.05}
+  ap-east-1:      {name: Asia Pacific (Hong Kong),       country: HK, jurisdiction: HK, continent: Asia,          lat: 22.3,  lon: 114.2,  price: 1.38}
+  ap-east-2:      {name: Asia Pacific (Taipei),          country: TW, jurisdiction: TW, continent: Asia,          lat: 25.0,  lon: 121.5,  price: 1.30}
+  ap-northeast-1: {name: Asia Pacific (Tokyo),           country: JP, jurisdiction: JP, continent: Asia,          lat: 35.7,  lon: 139.7,  price: 1.28}
+  ap-northeast-2: {name: Asia Pacific (Seoul),           country: KR, jurisdiction: KR, continent: Asia,          lat: 37.6,  lon: 127.0,  price: 1.22}
+  ap-northeast-3: {name: Asia Pacific (Osaka),           country: JP, jurisdiction: JP, continent: Asia,          lat: 34.7,  lon: 135.5,  price: 1.28}
+  ap-southeast-1: {name: Asia Pacific (Singapore),       country: SG, jurisdiction: SG, continent: Asia,          lat: 1.35,  lon: 103.8,  price: 1.25}
+  ap-southeast-2: {name: Asia Pacific (Sydney),          country: AU, jurisdiction: AU, continent: Oceania,       lat: -33.9, lon: 151.2,  price: 1.25}
+  ap-southeast-3: {name: Asia Pacific (Jakarta),         country: ID, jurisdiction: ID, continent: Asia,          lat: -6.2,  lon: 106.8,  price: 1.25}
+  ap-southeast-4: {name: Asia Pacific (Melbourne),       country: AU, jurisdiction: AU, continent: Oceania,       lat: -37.8, lon: 145.0,  price: 1.25}
+  ap-southeast-5: {name: Asia Pacific (Malaysia),        country: MY, jurisdiction: MY, continent: Asia,          lat: 3.1,   lon: 101.7,  price: 1.15}
+  ap-southeast-6: {name: Asia Pacific (New Zealand),     country: NZ, jurisdiction: NZ, continent: Oceania,       lat: -36.8, lon: 174.8,  price: 1.30}
+  ap-southeast-7: {name: Asia Pacific (Thailand),        country: TH, jurisdiction: TH, continent: Asia,          lat: 13.8,  lon: 100.5,  price: 1.15}
+
+# How each class behaves in a second region, for the two recovery targets:
+#   [rto_3h, instant]   rto_3h = recover within 3 hours of a region-wide event (pilot light:
+#                       data replicated continuously, a minimal footprint scaled up on failover);
+#                       instant = on demand, no outage (active-active: both regions serve traffic).
+#   run          second-region run cost as a share of the same spend in the primary region
+#   build_weeks  engineer-weeks to make ONE typical workload (~US$1k/month) multi-region
+#   failover     native = AWS replicates and fails over for you; manual = replication exists but
+#                failover is a step someone runs; rebuild = no live replica, restore or re-run
+#   note         the multi-region risk shown per account (services below may override it)
+classes:
+  compute:
+    label: "Compute (VMs, containers)"
+    run: [0.12, 1.00]
+    build_weeks: [0.3, 1.0]
+    failover: manual
+    note: No cross-region failover built in. Images, launch templates and capacity must exist in the second region and be started by a runbook or automation.
+  data:
+    label: Databases
+    run: [0.45, 1.00]
+    build_weeks: [0.75, 2.5]
+    failover: manual
+    note: Needs a cross-region replica. Asynchronous replication loses the last seconds of writes, and promoting the replica is a decision someone has to make.
+  storage:
+    label: "Storage (S3, EBS snapshots, files)"
+    run: [0.80, 1.00]
+    build_weeks: [0.15, 0.4]
+    failover: native
+    note: Replication is available, but applications must be re-pointed to the copy and replication lag accepted.
+  analytics:
+    label: Analytics and data platform
+    run: [0.25, 1.00]
+    build_weeks: [0.75, 2.0]
+    failover: rebuild
+    note: Data platforms are built single-region. Datasets, catalogs and jobs must be copied and pipelines re-run; recovery takes hours.
+  platform:
+    label: "Network, security and monitoring"
+    run: [0.40, 1.00]
+    build_weeks: [0.1, 0.3]
+    failover: manual
+    note: Network, keys, secrets and security tooling are regional and must be built and kept in step in the second region.
+  managed:
+    label: "Serverless and integration (pay per use)"
+    run: [0.05, 0.35]
+    build_weeks: [0.2, 0.75]
+    failover: manual
+    note: Regional endpoints. Deploy to both regions and re-route traffic; in-flight messages and running executions do not fail over.
+  business:
+    label: "Business applications (Connect, WorkSpaces)"
+    run: [0.15, 1.00]
+    build_weeks: [0.75, 2.0]
+    failover: manual
+    note: Has its own failover model, often only for specific region pairs.
+  ai:
+    label: AI and ML
+    run: [0.05, 0.50]
+    build_weeks: [0.2, 0.75]
+    failover: manual
+    note: Models, endpoints and quotas differ by region and must be provisioned in the second region.
+  tooling:
+    label: "Delivery tooling (CI/CD)"
+    run: [0.05, 0.20]
+    build_weeks: [0.05, 0.1]
+    failover: native
+    note: Pipelines must deploy to both regions; the tooling itself can stay in one.
+  global:
+    label: "Global services (one copy serves every region)"
+    run: [0, 0]
+    build_weeks: [0, 0]
+    failover: native
+    note: Global service; nothing to fail over.
+
+# Class for a catalog category when the service has no entry below.
+category_classes:
+  Compute: compute
+  Storage: storage
+  Database: data
+  Analytics: analytics
+  Integration: managed
+  Networking: platform
+  Security: platform
+  Management: platform
+  DevOps: tooling
+  AI/ML: ai
+  Business apps: business
+  Third-party software: global
+  Billing: global
+  Unclassified: compute
+
+services:
+  Amazon Elastic Compute Cloud - Compute: {regional: Amazon Elastic Compute Cloud (EC2), class: compute}
+  EC2 - Other: {regional: Amazon Elastic Block Store (EBS), class: compute}
+  Amazon Elastic Kubernetes Service: {regional: Amazon Elastic Kubernetes Service (EKS), class: compute}
+  Amazon Elastic Container Service: {regional: Amazon Elastic Container Service (ECS), class: compute}
+  Amazon EC2 Container Registry (ECR): {regional: Amazon Elastic Container Registry (ECR), class: storage}
+  AWS Lambda: {regional: AWS Lambda, class: managed}
+  AWS App Runner: {regional: AWS App Runner, class: compute}
+  AWS Elastic Beanstalk: {regional: AWS Elastic Beanstalk, class: compute}
+  Amazon Lightsail: {regional: Amazon Lightsail, class: compute}
+  AWS Batch: {regional: AWS Batch, class: analytics}
+  AWS Outposts: {regional: AWS Outposts, class: compute}
+  Amazon Simple Storage Service: {regional: Amazon Simple Storage Service (S3), class: storage}
+  Amazon Glacier: {regional: Amazon Simple Storage Service (S3), class: storage}
+  Amazon Elastic File System: {regional: Amazon Elastic File System (EFS), class: storage}
+  Amazon FSx: {regional: Amazon FSx, class: storage}
+  AWS Backup: {regional: AWS Backup, class: storage}
+  AWS Storage Gateway: {regional: AWS Storage Gateway, class: storage}
+  AWS Transfer Family: {regional: AWS Transfer Family, class: managed}
+  AWS DataSync: {regional: AWS DataSync, class: managed}
+  Amazon Relational Database Service: {regional: Amazon Relational Database Service (RDS), class: data}
+  Amazon Aurora DSQL: {regional: Amazon Aurora DSQL, class: data}
+  Amazon DynamoDB: {regional: Amazon DynamoDB, class: data}
+  Amazon DocumentDB (with MongoDB compatibility): {regional: Amazon DocumentDB (with MongoDB compatibility), class: data}
+  Amazon ElastiCache: {regional: Amazon ElastiCache, class: data}
+  Amazon MemoryDB: {regional: Amazon MemoryDB, class: data}
+  Amazon Keyspaces (for Apache Cassandra): {regional: Amazon Keyspaces (for Apache Cassandra), class: data}
+  Amazon Neptune: {regional: Amazon Neptune, class: data}
+  Amazon Timestream: {regional: null, class: data}
+  Amazon Quantum Ledger Database: {regional: null, class: data}
+  AWS Database Migration Service: {regional: AWS Database Migration Service (AWS DMS), class: managed}
+  Amazon Redshift: {regional: Amazon Redshift, class: analytics}
+  Amazon Athena: {regional: Amazon Athena, class: managed}
+  AWS Glue: {regional: AWS Glue, class: analytics}
+  Amazon Elastic MapReduce: {regional: Amazon Elastic MapReduce (EMR), class: analytics}
+  Amazon Kinesis: {regional: Amazon Kinesis Data Streams, class: data}
+  Amazon Kinesis Firehose: {regional: Amazon Data Firehose, class: managed}
+  Amazon Kinesis Analytics: {regional: Amazon Managed Service for Apache Flink, class: analytics}
+  Amazon Managed Streaming for Apache Kafka: {regional: Amazon Managed Streaming for Apache Kafka (MSK), class: data}
+  Amazon OpenSearch Service: {regional: Amazon OpenSearch Service, class: data}
+  Amazon QuickSight: {regional: Amazon Quick, class: business}
+  AWS Lake Formation: {regional: AWS Lake Formation, class: tooling}
+  Amazon Managed Workflows for Apache Airflow: {regional: Amazon Managed Workflows for Apache Airflow (MWAA), class: analytics}
+  AWS Data Pipeline: {regional: null, class: analytics}
+  Amazon Simple Queue Service: {regional: Amazon Simple Queue Service (SQS), class: managed}
+  Amazon Simple Notification Service: {regional: Amazon Simple Notification Service (SNS), class: managed}
+  Amazon EventBridge: {regional: Amazon EventBridge, class: managed}
+  Amazon AppFlow: {regional: Amazon AppFlow, class: managed}
+  AWS Step Functions: {regional: AWS Step Functions, class: managed}
+  Amazon Simple Workflow Service: {regional: Amazon Simple Workflow Service (SWF), class: managed}
+  Amazon MQ: {regional: Amazon MQ, class: data}
+  Amazon API Gateway: {regional: Amazon API Gateway, class: managed}
+  AWS AppSync: {regional: AWS AppSync, class: managed}
+  AWS IoT: {regional: AWS IoT Core, class: managed}
+  AWS IoT Greengrass: {regional: AWS IoT Greengrass, class: managed}
+  Amazon Virtual Private Cloud: {regional: Amazon Virtual Private Cloud (VPC), class: platform}
+  Amazon Elastic Load Balancing: {regional: Elastic Load Balancing (ELB), class: platform}
+  Amazon Route 53: {regional: global, class: global}
+  Amazon CloudFront: {regional: global, class: global}
+  AWS Direct Connect: {regional: AWS Direct Connect, class: platform}
+  AWS Global Accelerator: {regional: global, class: global}
+  AWS Network Firewall: {regional: AWS Network Firewall, class: platform}
+  AWS Cloud Map: {regional: AWS Cloud Map, class: platform}
+  AWS App Mesh: {regional: null, class: platform}
+  AWS Key Management Service: {regional: AWS Key Management Service (KMS), class: platform}
+  AWS Secrets Manager: {regional: AWS Secrets Manager, class: platform}
+  AWS Certificate Manager: {regional: AWS Certificate Manager (ACM), class: platform}
+  Amazon Cognito: {regional: Amazon Cognito, class: managed}
+  AWS Directory Service: {regional: AWS Directory Service, class: platform}
+  AWS WAF: {regional: AWS WAF, class: platform}
+  AWS Shield: {regional: global, class: global}
+  AWS Firewall Manager: {regional: AWS Firewall Manager, class: platform}
+  Amazon GuardDuty: {regional: Amazon GuardDuty, class: platform}
+  AWS Security Hub: {regional: AWS Security Hub, class: platform}
+  Amazon Inspector: {regional: Amazon Inspector, class: platform}
+  Amazon Macie: {regional: null, class: platform}
+  Amazon Detective: {regional: Amazon Detective, class: platform}
+  AWS CloudTrail: {regional: AWS CloudTrail, class: platform}
+  AWS Identity and Access Management Access Analyzer: {regional: AWS Identity and Access Management (IAM) Access Analyzer, class: platform}
+  AWS Service Catalog: {regional: AWS Service Catalog, class: tooling}
+  AWS Config: {regional: AWS Config, class: platform}
+  AmazonCloudWatch: {regional: Amazon CloudWatch, class: platform}
+  AWS X-Ray: {regional: AWS X-Ray, class: platform}
+  Amazon Managed Service for Prometheus: {regional: Amazon Managed Service for Prometheus, class: platform}
+  Amazon Managed Grafana: {regional: Amazon Managed Grafana, class: tooling}
+  AWS Systems Manager: {regional: AWS Systems Manager, class: platform}
+  AWS CloudFormation: {regional: AWS CloudFormation, class: tooling}
+  AWS CodeBuild: {regional: AWS CodeBuild, class: tooling}
+  AWS CodePipeline: {regional: AWS CodePipeline, class: tooling}
+  AWS CodeCommit: {regional: AWS CodeCommit, class: tooling}
+  AWS CodeArtifact: {regional: AWS CodeArtifact, class: tooling}
+  AWS CodeDeploy: {regional: AWS CodeDeploy, class: tooling}
+  AWS Amplify: {regional: AWS Amplify, class: managed}
+  Amazon SageMaker: {regional: Amazon SageMaker AI, class: ai}
+  Amazon Bedrock: {regional: Amazon Bedrock, class: ai}
+  Amazon Bedrock AgentCore: {regional: Amazon Bedrock AgentCore, class: ai}
+  AWSDevOpsAgent: {regional: AWS DevOps Agent, class: tooling}
+  Amazon Rekognition: {regional: Amazon Rekognition, class: ai}
+  Amazon Textract: {regional: Amazon Textract, class: ai}
+  Amazon Comprehend: {regional: Amazon Comprehend, class: ai}
+  Amazon Transcribe: {regional: Amazon Transcribe, class: ai}
+  Amazon Translate: {regional: Amazon Translate, class: ai}
+  Amazon Polly: {regional: null, class: ai}
+  Amazon Lex: {regional: Amazon Lex, class: ai}
+  Amazon Kendra: {regional: Amazon Kendra, class: ai}
+  Amazon Personalize: {regional: Amazon Personalize, class: ai}
+  Amazon Forecast: {regional: null, class: ai}
+  Amazon Q: {regional: Amazon Q Business, class: ai}
+  Amazon Connect: {regional: Amazon Connect, class: business}
+  Amazon Pinpoint: {regional: AWS End User Messaging, class: managed}
+  Amazon Simple Email Service: {regional: Amazon Simple Email Service (SES), class: managed}
+  Amazon WorkSpaces Applications: {regional: Amazon WorkSpaces Applications, class: business}
+  Amazon WorkSpaces: {regional: Amazon WorkSpaces, class: business}
+  AWS Elemental MediaConvert: {regional: AWS Elemental MediaConvert, class: managed}
+  Amazon GameLift: {regional: Amazon GameLift Servers, class: compute}
+  Amazon Location Service: {regional: Amazon Location Service, class: managed}
+  AWS Marketplace (third-party): {regional: global, class: global}
+  AWS Cost Explorer: {regional: global, class: global}
+
+# Service-specific multi-region risks: override the class failover and note.
+risks:
+  Amazon Elastic Compute Cloud - Compute: {failover: manual, note: "Manual failover: EC2 has no cross-region failover. Copy AMIs and EBS snapshots (or use Elastic Disaster Recovery) and start capacity in the second region; capacity there is not guaranteed without reservations."}
+  EC2 - Other: {failover: manual, note: "EBS snapshots must be copied cross-region on a schedule; NAT gateways and endpoints are rebuilt per region."}
+  Amazon Elastic Kubernetes Service: {failover: manual, note: "A second cluster per region (no cross-region control plane). Redeploy through GitOps; persistent volumes need their own replication."}
+  Amazon Elastic Container Service: {failover: manual, note: "Clusters and services are regional: deploy to both regions and fail over with Route 53."}
+  Amazon EC2 Container Registry (ECR): {failover: native, note: "Enable cross-region image replication so the second region can pull images when the first is down."}
+  AWS Lambda: {failover: manual, note: "Functions are regional: deploy to both regions and route with Route 53 or API Gateway; event sources (queues, streams) do not move with them."}
+  Amazon Relational Database Service: {failover: manual, note: "Cross-region read replica or Aurora Global Database. Promotion is a manual or scripted step (Aurora Global managed failover in about a minute); asynchronous, so a few seconds of writes can be lost."}
+  Amazon Aurora DSQL: {failover: native, note: "Multi-Region clusters are active-active with strong consistency, in supported region sets only."}
+  Amazon DynamoDB: {failover: native, note: "Global tables replicate both ways and both regions take writes; conflicting writes resolve last-writer-wins."}
+  Amazon DocumentDB (with MongoDB compatibility): {failover: manual, note: "Global clusters replicate to the second region; failover promotes the secondary cluster."}
+  Amazon ElastiCache: {failover: manual, note: "Global Datastore (Redis OSS / Valkey) replicates cross-region; without it the cache starts cold after failover."}
+  Amazon MemoryDB: {failover: manual, note: "Multi-Region clusters only in some regions; otherwise snapshot copy and restore."}
+  Amazon Neptune: {failover: manual, note: "Global Database for cross-region replicas; failover is a promotion step."}
+  Amazon Simple Storage Service: {failover: native, note: "Cross-Region Replication (15-minute SLA with Replication Time Control). Applications must re-point, or use Multi-Region Access Points."}
+  Amazon Elastic File System: {failover: native, note: "EFS replication to the second region (minutes of lag); fail over by mounting the replica."}
+  Amazon FSx: {failover: manual, note: "Cross-region backup copy, or SnapMirror for FSx for NetApp ONTAP; restore or break the mirror to fail over."}
+  AWS Backup: {failover: native, note: "Copy backups to a vault in the second region; restore time grows with data size."}
+  Amazon Redshift: {failover: rebuild, note: "No live cross-region replica. Copy snapshots to the second region and restore (hours for a large warehouse), or load both regions from the pipelines."}
+  AWS Glue: {failover: rebuild, note: "Jobs, crawlers and the Data Catalog are regional: replicate the catalog and re-run pipelines in the second region."}
+  Amazon Athena: {failover: rebuild, note: "Queries need the data and Glue catalog to exist in the second region."}
+  Amazon Elastic MapReduce: {failover: rebuild, note: "Clusters are rebuilt in the second region from code; data must be replicated to S3 there."}
+  Amazon Kinesis: {failover: manual, note: "No native cross-region replication: producers dual-write or a consumer replicates; consumers restart at a new position."}
+  Amazon Managed Streaming for Apache Kafka: {failover: manual, note: "MSK Replicator copies topics cross-region; consumers must handle offset translation on failover."}
+  Amazon OpenSearch Service: {failover: manual, note: "Cross-cluster replication to a domain in the second region; re-point clients on failover."}
+  Amazon Simple Queue Service: {failover: manual, note: "Queues are regional and messages are not replicated: in-flight messages are lost or delayed on failover."}
+  Amazon Simple Notification Service: {failover: manual, note: "Topics and subscriptions are regional: recreate in the second region and publish there."}
+  Amazon EventBridge: {failover: manual, note: "Global endpoints can fail event buses over between two regions; rules and targets must exist in both."}
+  AWS Step Functions: {failover: manual, note: "State machines are regional; running executions do not fail over and must be restarted."}
+  Amazon API Gateway: {failover: manual, note: "Deploy the API in both regions behind a custom domain with Route 53 failover."}
+  Amazon Cognito: {failover: rebuild, note: "User pools are regional with no replication and password hashes cannot be exported: users must be migrated or re-registered, or a sync built."}
+  AWS Key Management Service: {failover: manual, note: "Keys are regional. Data encrypted with single-Region keys cannot be decrypted in the second region: use multi-Region keys and re-encrypt."}
+  AWS Secrets Manager: {failover: native, note: "Turn on secret replication to the second region."}
+  AWS Direct Connect: {failover: manual, note: "Needs connections or a Direct Connect gateway association into the second region; physical lead times are weeks to months."}
+  Amazon Virtual Private Cloud: {failover: manual, note: "VPCs, subnets, endpoints and inter-region peering or Transit Gateway must be built in the second region."}
+  Amazon Elastic Load Balancing: {failover: manual, note: "Load balancers are regional; Route 53 health checks switch traffic between them."}
+  Amazon Connect: {failover: manual, note: "Connect Global Resiliency replicates instances and numbers between specific region pairs and is enabled by AWS on request; otherwise a second instance with its own numbers."}
+  Amazon WorkSpaces: {failover: manual, note: "Multi-Region Resilience gives standby WorkSpaces in a second region; directories and user data must exist there."}
+  Amazon SageMaker: {failover: manual, note: "Models and endpoints must be redeployed in the second region; training data replicated."}
+  Amazon Bedrock: {failover: native, note: "Cross-region inference spreads requests across regions, but model availability differs: check every model used exists in the second region."}
+  Amazon Route 53: {failover: native, note: "Global, and the usual failover mechanism: health checks and failover records switch traffic."}

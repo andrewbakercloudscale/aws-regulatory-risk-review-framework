@@ -88,6 +88,11 @@
     <p class="muted small">Just looking? <a href="#" id="lnkDemo">Load the demo organisation</a> - no AWS access needed. Permissions in detail: <a href="https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework/blob/main/docs/IAM_PERMISSIONS.md" target="_blank" rel="noopener noreferrer">IAM_PERMISSIONS.md</a>.</p>
   </div>
 
+  <nav id="viewTabs" class="viewtabs no-print" aria-label="Report" hidden>
+    <button type="button" class="vtab" data-view="exit" aria-pressed="true">Exit risk</button>
+    <button type="button" class="vtab" data-view="multiregion" aria-pressed="false">Multi-region</button>
+  </nav>
+
   <div id="content" hidden>
     <!-- Cover (print) / title -->
     <section class="cover">
@@ -319,6 +324,133 @@
       </div>
     </section>
     <footer class="report-footer" id="footer"></footer>
+  </div>
+
+  <!-- ================================================================ Multi-region view -->
+  <div id="mrContent" hidden>
+    <section class="cover">
+      <div class="eyebrow">Resilience review</div>
+      <h1 id="mrTitle">Multi-region: the cost of a second AWS region</h1>
+      <p id="mrSubtitle" class="muted">What it would take to survive the loss of a whole AWS region: run cost, build cost and time, people, and where to put it.</p>
+      <div id="mrCoverage" class="coverage" role="alert" hidden></div>
+      <dl id="mrMeta" class="meta"></dl>
+    </section>
+
+    <section class="section" id="mr-summary">
+      <h2><span class="num">1</span>Executive summary</h2>
+      <div class="card brief">
+        <p class="brief-eyebrow">Bottom line</p>
+        <p class="brief-headline" id="mrHeadline"></p>
+        <div class="provisional" id="mrProvisional" hidden>
+          <div><strong>Figures are provisional.</strong> They use default answers. Choose the recovery target and accounts, and answer the questions in section 2.</div>
+          <a href="#mr-questions" class="btn primary no-print">Answer the questions</a>
+        </div>
+        <div class="brief-cols">
+          <div><h3>What we found</h3><ul class="leads" id="mrFindings"></ul></div>
+          <div><h3>What we recommend</h3><ol class="leads" id="mrActions"></ol></div>
+        </div>
+      </div>
+      <div class="tiles" id="mrTiles"></div>
+    </section>
+
+    <section class="section" id="mr-questions">
+      <h2><span class="num">2</span>Your choices</h2>
+      <form class="card questionnaire mr-form" id="mrForm" autocomplete="off">
+        <p class="muted small">Saved in this browser only. Team, rates and delivery answers are shared with the exit estimate.</p>
+        <p class="q-status" id="mrStatus"></p>
+        <fieldset class="recovery">
+          <legend>Recovery target after a region-wide event</legend>
+          <label class="choice"><input type="radio" name="recovery" value="rto_3h"> <span><strong>Recover within 3 hours</strong><br><span class="muted small">Systemic risk event: data replicated continuously, a minimal footprint scaled up on failover (pilot light).</span></span></label>
+          <label class="choice"><input type="radio" name="recovery" value="instant"> <span><strong>On demand: instant</strong><br><span class="muted small">No outage: both regions serve traffic all the time (active-active).</span></span></label>
+        </fieldset>
+        <div class="mr-grid">
+          <label>Where may the second region be?<select name="residency"></select></label>
+          <label>Primary region<select name="primary"></select></label>
+          <label>Second region<select name="secondary"></select></label>
+          <label>AWS Support plan<select name="support_plan"></select></label>
+          <label>People in the core cloud team<input name="cloud_team_size" type="number" min="1" step="1" data-shared></label>
+          <label>% of their time on this programme<input name="allocation_pct" type="number" min="5" max="100" step="5"></label>
+          <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1" data-shared></label>
+          <label>Blended day rate<input name="day_rate" type="number" min="0" step="50" data-shared></label>
+          <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}" data-shared></label>
+          <label>Cost per extra FTE a year (0 = day rate × 220)<input name="fte_annual_cost" type="number" min="0" step="1000"></label>
+          <label>Standard CI/CD pipeline?<select name="cicd" data-shared></select></label>
+          <label>Terraform, and is it up to date?<select name="iac" data-shared></select></label>
+        </div>
+        <button type="button" id="btnMrConfirm" class="btn primary no-print">These answers are right: recalculate</button>
+      </form>
+    </section>
+
+    <section class="section" id="mr-accounts">
+      <h2><span class="num">3</span>Accounts to make multi-region</h2>
+      <div class="card">
+        <div class="mr-acct-bar no-print">
+          <span id="mrAcctCount" class="small"></span>
+          <span class="spacer"></span>
+          <button type="button" class="btn" id="btnMrAll">Select all</button>
+          <button type="button" class="btn" id="btnMrNone">Select none</button>
+          <button type="button" class="btn" id="btnMrTop">Top 10 by spend</button>
+        </div>
+        <p class="muted small">Sorted by spend. Readiness is the worst failover risk among an account's material services for the chosen recovery target; open an account to see each service's risk.</p>
+        <div class="table-wrap"><table class="data mr-accounts" id="mrAcctTable"></table></div>
+        <p class="table-more"><span id="mrAcctMoreNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnMrAcctMore" hidden></button></p>
+      </div>
+    </section>
+
+    <section class="section" id="mr-region">
+      <h2><span class="num">4</span>Which second region</h2>
+      <div class="grid-2">
+        <figure class="card chart-card">
+          <figcaption><h3>Where the chosen accounts run today</h3><p class="muted">Monthly spend by region.</p></figcaption>
+          <div class="chart-box short"><canvas id="chMrRegions" role="img" aria-label="Bar chart of monthly spend by AWS region"></canvas></div>
+        </figure>
+        <div class="card">
+          <h3>Recommended: <span id="mrRecName"></span></h3>
+          <p class="muted small" id="mrRecWhy"></p>
+          <table class="data compact" id="mrTargetFacts"></table>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Candidate regions <span class="muted small">ranked by service parity, latency and price</span></h3>
+        <div class="table-wrap"><table class="data" id="mrCandTable"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="mr-run">
+      <h2><span class="num">5</span>Cost to run, and the people</h2>
+      <div class="tiles" id="mrRunTiles"></div>
+      <div class="grid-2">
+        <figure class="card chart-card">
+          <figcaption><h3>Second-region infrastructure by service class</h3><p class="muted">Monthly, after the recovery target's share and regional prices.</p></figcaption>
+          <div class="chart-box short"><canvas id="chMrClass" role="img" aria-label="Bar chart of second-region monthly run cost by service class"></canvas></div>
+        </figure>
+        <div class="card">
+          <h3>Extra people to run two regions</h3>
+          <table class="data compact" id="mrStaffTable"></table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="mr-build">
+      <h2><span class="num">6</span>Cost and time to achieve</h2>
+      <div class="tiles" id="mrBuildTiles"></div>
+      <figure class="card chart-card">
+        <figcaption><h3>Where the effort goes</h3><p class="muted">Person-months, after the delivery-maturity adjustment.</p></figcaption>
+        <div class="chart-box short"><canvas id="chMrBuild" role="img" aria-label="Bar chart of build effort by component"></canvas></div>
+      </figure>
+    </section>
+
+    <section class="section" id="mr-parity">
+      <h2><span class="num">7</span>Service parity in the second region</h2>
+      <div class="card">
+        <div class="table-wrap"><table class="data compact" id="mrParityTable"></table></div>
+      </div>
+      <div class="card">
+        <h3>Assumptions</h3>
+        <ul id="mrAssumptions" class="assumptions"></ul>
+      </div>
+    </section>
+    <footer class="report-footer" id="mrFooter"></footer>
   </div>
 </main>
 

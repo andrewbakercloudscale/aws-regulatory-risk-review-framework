@@ -331,6 +331,31 @@ def _seasonality(month_index: int, rng: random.Random) -> float:
     return (0.9 + 0.035 * month_index) * rng.uniform(0.95, 1.05)
 
 
+_GLOBAL_SERVICES = {"Amazon CloudFront", "Amazon Route 53", "AWS Marketplace (third-party)", "Tax"}
+
+
+def _region_split(accounts: list[dict], costs: list[dict], months: int) -> list[dict]:
+    """Production runs mostly in London with a little in Ireland; everything else in Ireland."""
+    names = {a["id"]: a["name"] for a in accounts}
+    totals: dict[tuple, float] = {}
+    for r in costs:
+        key = (r["account_id"], r["service"])
+        totals[key] = totals.get(key, 0.0) + r["amount"]
+    rows = []
+    for (aid, svc), total in totals.items():
+        if svc in _GLOBAL_SERVICES or svc.startswith("AWS Marketplace"):
+            split = {"global": 1.0} if svc != "Tax" else {}
+        elif "prod" in names[aid]:
+            split = {"eu-west-2": 0.9, "eu-west-1": 0.1}
+        else:
+            split = {"eu-west-1": 1.0}
+        for region, share in split.items():
+            rows.append(
+                {"account_id": aid, "service": svc, "region": region, "monthly": round(total * share / months, 4)}
+            )
+    return rows
+
+
 def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
     rng = random.Random(seed)  # noqa: S311 - deterministic synthetic data, not security
     start, end = month_window(months)
@@ -393,6 +418,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
             }
 
     by_name = {a["name"]: a["id"] for a in accounts}
+    region_costs = _region_split(accounts, costs, months)
     issues = [
         Issue(
             "error",
@@ -446,6 +472,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
         "ou": {"id": "r-demo", "name": "Root", "path": "Root"},
         "accounts": accounts,
         "costs": costs,
+        "region_costs": region_costs,
         "period": {"start": start, "end": end, "months": months},
         "inventory": inventory,
         "issues": issues,

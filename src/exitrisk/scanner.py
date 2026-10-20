@@ -144,6 +144,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False) -> dict:
         "ous": data.get("ous"),
         "accounts": data.get("accounts", []),
         "costs": data.get("costs", []),
+        "region_costs": data.get("region_costs"),
         "period": data.get("period"),
         "inventory": data.get("inventory", {}),
         "issues": [i.to_dict() for i in job.issues],
@@ -263,7 +264,24 @@ def run_scan(job: ScanJob) -> dict:
     for a in accounts:
         if a.id not in billed:
             job.add_issue(Issue("info", "cost", f"no spend recorded for {a.name} in the period", account_id=a.id))
-    job.update("cost", 55, f"{len(data['costs'])} cost line(s) collected")
+    job.update("cost", 50, f"{len(data['costs'])} cost line(s) collected")
+
+    # 3b. Spend by region, for the multi-region estimate. Optional: the exit score does not need it.
+    job.update("cost", 52, "Querying Cost Explorer for spend by region")
+    try:
+        data["region_costs"] = cost.fetch_region_costs(session, [a.id for a in accounts], p.months)
+    except Exception as exc:  # optional data: never fail a scan for it
+        code, msg, hint = describe_exception(exc)
+        job.add_issue(
+            Issue(
+                "warning",
+                "cost",
+                f"spend by region unavailable: {msg}",
+                hint or "The multi-region view will assume all spend runs in one region.",
+                error_code=code,
+            )
+        )
+    job.update("cost", 55, f"{len(data.get('region_costs', []))} region cost line(s) collected")
 
     # 4. Optional deep inventory through a role in each member account.
     if p.inventory:

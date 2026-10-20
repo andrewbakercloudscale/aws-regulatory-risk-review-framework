@@ -38,7 +38,7 @@ Homepage = "https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-
 where = ["src"]
 
 [tool.setuptools.package-data]
-exitrisk = ["data/*.yaml", "web/*", "web/vendor/*"]
+exitrisk = ["data/*.yaml", "data/*.json", "web/*", "web/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

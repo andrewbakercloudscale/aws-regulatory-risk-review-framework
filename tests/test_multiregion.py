@@ -1,0 +1,111 @@
+from exitrisk.demo import build_demo_scan
+from exitrisk.estimate import Questionnaire
+from exitrisk.filtering import AccountFilter
+from exitrisk.multiregion import MultiRegionAnswers, build_multiregion, latency_ms, load_region_data, support_fee
+
+
+def _scan(costs, region_costs=None, accounts=None):
+    return {
+        "id": "20260101-000000-abcd",
+        "accounts": accounts or [{"id": "1", "name": "a-prod"}, {"id": "2", "name": "b-prod"}],
+        "costs": costs,
+        "region_costs": region_costs,
+        "issues": [],
+    }
+
+
+def test_every_catalog_service_has_region_behaviour():
+    from exitrisk.catalog import load_catalog
+
+    cfg = load_region_data()
+    names = {s.service for s in load_catalog().services if not s.excluded}
+    assert names <= set(cfg["services"])
+    for v in cfg["services"].values():
+        assert v["regional"] in (None, "global") or v["regional"] in cfg["availability"]
+
+
+def test_instant_costs_more_than_three_hour_recovery():
+    scan = build_demo_scan(12)
+    slow = build_multiregion(scan, mq=MultiRegionAnswers(recovery="rto_3h"))["summary"]
+    fast = build_multiregion(scan, mq=MultiRegionAnswers(recovery="instant"))["summary"]
+    assert fast["run"]["annual_total"] > slow["run"]["annual_total"]
+    assert fast["build"]["total_weeks"] > slow["build"]["total_weeks"]
+    assert fast["staff"]["fte"] > slow["staff"]["fte"]
+    for k in ("run_annual", "build_cost", "build_duration", "staff"):
+        assert "–" in slow["ranges"][k]  # always a range, never one figure
+
+
+def test_primary_region_is_where_spend_runs_and_recommendation_respects_residency():
+    scan = build_demo_scan(12)
+    r = build_multiregion(scan)
+    assert r["summary"]["primary"] == "eu-west-2"
+    assert r["summary"]["recommended"] != "eu-west-2"
+    eu = build_multiregion(scan, mq=MultiRegionAnswers(residency="same_continent"))["summary"]
+    assert load_region_data()["regions"][eu["recommended"]]["continent"] == "Europe"
+    uk = build_multiregion(scan, mq=MultiRegionAnswers(residency="same_country"))["summary"]
+    assert uk["recommended"] is None and uk["no_second_region_in_country"]
+
+
+def test_account_selection_scales_the_estimate_and_accounts_sort_by_spend():
+    scan = build_demo_scan(12)
+    every = build_multiregion(scan)
+    spends = [a["monthly_spend"] for a in every["accounts"]]
+    assert spends == sorted(spends, reverse=True)
+    top = [a["id"] for a in every["accounts"][:3]]
+    few = build_multiregion(scan, mq=MultiRegionAnswers(accounts=top))
+    assert few["summary"]["accounts_selected"] == 3
+    assert few["summary"]["run"]["annual_total"] < every["summary"]["run"]["annual_total"]
+    assert [a["selected"] for a in few["accounts"]][:4] == [True, True, True, False]
+
+
+def test_per_account_risks_name_the_failover_gap():
+    costs = [
+        {"month": "2026-09", "account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "amount": 5000},
+        {"month": "2026-09", "account_id": "1", "service": "Amazon DynamoDB", "amount": 2000},
+        {"month": "2026-09", "account_id": "1", "service": "Amazon Redshift", "amount": 3000},
+    ]
+    rc = [{"account_id": "1", "service": r["service"], "region": "af-south-1", "monthly": r["amount"]} for r in costs]
+    a = build_multiregion(_scan(costs, rc), mq=MultiRegionAnswers(recovery="rto_3h"))["accounts"][0]
+    risks = {r["service"]: r for r in a["risks"]}
+    assert risks["EC2"]["failover"] == "manual" and "Manual failover" in risks["EC2"]["note"]
+    assert risks["DynamoDB"]["failover"] == "native" and risks["DynamoDB"]["severity"] == "Low"
+    assert risks["Redshift"]["severity"] == "High"
+    assert a["readiness"] == "High"
+    instant = build_multiregion(_scan(costs, rc), mq=MultiRegionAnswers(recovery="instant"))["accounts"][0]
+    assert instant["readiness"] == "Critical"
+
+
+def test_missing_service_in_the_second_region_is_flagged():
+    costs = [{"month": "2026-09", "account_id": "1", "service": "Amazon Connect", "amount": 9000}]
+    rc = [{"account_id": "1", "service": "Amazon Connect", "region": "eu-west-2", "monthly": 9000}]
+    r = build_multiregion(_scan(costs, rc), mq=MultiRegionAnswers(secondary="eu-west-1"))
+    assert r["summary"]["target"]["missing"][0]["display"] == "Connect"
+    assert r["accounts"][0]["risks"][0]["severity"] == "Critical"
+    assert any(f["lead"] == "Service gaps." for f in r["summary"]["executive"]["findings"])
+
+
+def test_scan_without_region_data_assumes_one_region_and_says_so():
+    costs = [
+        {"month": "2026-09", "account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "amount": 5000}
+    ]
+    s = build_multiregion(_scan(costs), mq=MultiRegionAnswers(primary="eu-west-1"))["summary"]
+    assert not s["has_region_data"] and s["primary"] == "eu-west-1"
+    assert s["by_region"][0]["region"] == "eu-west-1"
+
+
+def test_staff_and_filter():
+    scan = build_demo_scan(12)
+    small = build_multiregion(scan, q=Questionnaire(cloud_team_size=5))["summary"]["staff"]["fte"]
+    big = build_multiregion(scan, q=Questionnaire(cloud_team_size=60))["summary"]["staff"]["fte"]
+    assert big > small
+    prod = build_multiregion(scan, AccountFilter(include="prod"))["summary"]
+    assert prod["accounts_in_scope"] < build_multiregion(scan)["summary"]["accounts_in_scope"]
+
+
+def test_latency_and_support_helpers():
+    r = load_region_data()["regions"]
+    assert 5 < latency_ms(r["eu-west-1"], r["eu-west-2"], r) < 25
+    assert latency_ms(r["af-south-1"], r["sa-east-1"], r) > 200  # routed via Europe, not the South Atlantic
+    assert support_fee(100_000, "enterprise") == 15_000
+    assert support_fee(1_000_000, "enterprise") == 15_000 + 24_500 + 25_000
+    assert support_fee(100_000, "none") == 0

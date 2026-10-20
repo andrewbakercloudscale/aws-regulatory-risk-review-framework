@@ -369,3 +369,30 @@ table.data.accounts td { vertical-align: middle; }
   /* Long cards must be allowed to split, or the browser pushes them whole onto the next page. */
   .appendix .card, #sec-issues .card { break-inside: auto; }
 }
+
+/* Report views: exit risk / multi-region */
+.viewtabs { display: flex; gap: 4px; margin: 0 0 8px; border-bottom: 1px solid var(--border); }
+.vtab { font: inherit; font-weight: 600; padding: 9px 16px; border: none; background: none; color: var(--ink-2); cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+.vtab[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.mr-form fieldset.recovery { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 0 0 14px; }
+.mr-form legend { font-weight: 650; font-size: 13px; padding: 0 6px; color: var(--ink); }
+.mr-form label.choice { flex-direction: row; align-items: flex-start; gap: 10px; color: var(--ink); font-size: 14px; cursor: pointer; }
+.mr-form label.choice input { width: auto; margin-top: 3px; flex: none; }
+.mr-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 14px; }
+.mr-acct-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.mr-acct-bar .spacer { flex: 1; }
+table.mr-accounts td { vertical-align: top; }
+table.mr-accounts td.sel { width: 28px; }
+table.mr-accounts tr.off td:not(.sel) { color: var(--muted); }
+table.mr-accounts details summary { cursor: pointer; font-weight: 600; }
+table.mr-accounts .risk-list { margin: 6px 0 2px; padding-left: 0; list-style: none; }
+table.mr-accounts .risk-list li { margin: 0 0 6px; font-size: 12.5px; line-height: 1.45; }
+table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+@media (max-width: 900px) { .mr-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .mr-grid { grid-template-columns: 1fr; } }
+@media print {
+  .mr-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  table.mr-accounts tr.off { display: none; }
+  table.mr-accounts details > *:not(summary) { display: block; }
+  .mr-form fieldset.recovery label.choice:has(input:not(:checked)) { display: none; }
+}

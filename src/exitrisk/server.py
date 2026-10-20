@@ -30,6 +30,7 @@ from .estimate import CICD_LABELS, IAC_LABELS, TARGET_LABELS, Questionnaire
 from .filtering import AccountFilter, FilterError
 from .issues import describe_exception
 from .logging_config import configure_logging, get_logger, tail_log
+from .multiregion import MultiRegionAnswers, build_multiregion
 from .scanner import ScanParams, get_job, start_scan
 from .scoring import build_report
 
@@ -91,6 +92,13 @@ class ReportRequest(BaseModel):
     filter: FilterModel = FilterModel()
     questionnaire: Questionnaire = Questionnaire()
     weighting: str = Field("spend", pattern=r"^(balanced|spend|equal)$")
+
+
+class MultiRegionRequest(BaseModel):
+    scan_id: str
+    filter: FilterModel = FilterModel()
+    questionnaire: Questionnaire = Questionnaire()
+    multiregion: MultiRegionAnswers = MultiRegionAnswers()
 
 
 def _host_name(header: str) -> str:
@@ -271,6 +279,18 @@ def create_app(allow_remote: bool = False) -> FastAPI:
         except FilterError as exc:
             raise HTTPException(400, str(exc)) from exc
         return build_report(scan, flt, req.questionnaire, weighting=req.weighting)
+
+    @app.post("/api/multiregion")
+    def multiregion(req: MultiRegionRequest):
+        try:
+            scan = store.load_scan(req.scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        try:
+            flt = AccountFilter(**req.filter.model_dump())
+        except FilterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return build_multiregion(scan, flt, req.questionnaire, req.multiregion)
 
     @app.get("/api/catalog")
     def catalog():
