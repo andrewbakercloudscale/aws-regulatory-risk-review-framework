@@ -92,7 +92,7 @@ exitrisk catalog                                                        # list s
 | | |
 |---|---|
 | ![Executive summary](docs/images/executive-summary.png) **Executive summary** — bottom line, findings, exit cost/time, recommendations, confidence; then scores and KPIs | ![Risk profile](docs/images/risk-profile.png) **Risk profile** — spend by tier and trend |
-| ![Accounts](docs/images/accounts.png) **Accounts** — risk vs spend; ranking by weighted contribution | ![Services](docs/images/services.png) **Services** — what drives lock-in |
+| ![Accounts](docs/images/accounts.png) **Accounts** — risk vs spend; ranking by spend at risk (spend × risk) | ![Services](docs/images/services.png) **Services** — what drives lock-in |
 | ![Estimate](docs/images/estimate.png) **Exit estimate** — questionnaire, timeline, effort | ![Issues](docs/images/issues.png) **Data quality** — what the report does not cover |
 | ![Appendix](docs/images/appendix-catalog.png) **Appendix** — tier, rationale, migration path, duration | ![Dark mode](docs/images/dashboard-dark.png) **Dark mode** |
 | ![Getting started](docs/images/getting-started.png) **Getting started** — connect, check access, scan | ![Check access](docs/images/access-check.png) **Check access** — ✓/✗ per permission and the request for your AWS admin |
@@ -114,6 +114,7 @@ A complete sample report generated from the demo data: [docs/sample-report.pdf](
 - **Weight** = the account's share of in-scope spend (or 1/N when counting by number of accounts).
 - **Contribution** = inherent risk × weight.
 - **OU exit-risk score** = sum of contributions, reported both **by spend** and **by number of accounts**.
+- **Spend at risk** = monthly spend × risk / 100. The account ranking sorts by it, so large, hard-to-move accounts come first.
 - Ratings: Low < 25 ≤ Moderate < 40 ≤ Elevated < 55 ≤ High < 70 ≤ Critical.
 
 Full detail, including the estimate model and its limitations: [docs/METHODOLOGY.md](docs/METHODOLOGY.md).

@@ -238,10 +238,23 @@ def test_growth_names_the_services_and_products_behind_it():
     ]
     findings = r["summary"]["executive"]["findings"]
     assert any("Connect $" in f and "a year (1 account)" in f for f in findings)
-    assert any("Biggest rises: Acme SaaS via Marketplace (3rd party) +$890 a month" in f for f in findings)
+    assert any("Biggest monthly rises: Acme SaaS via Marketplace +$890" in f for f in findings)
 
 
 def test_growth_needs_two_months():
     costs = [{"account_id": "1", "service": "Amazon Connect", "month": "2026-09", "amount": 100}]
     g = build_report(_scan(costs, [{"id": "1", "name": "a-prod"}]))["growth"]
     assert g["total"] is None and g["by_category"] == []
+
+
+def test_accounts_rank_by_spend_at_risk():
+    costs = [
+        # Big but portable: 100k x 10 = 10k at risk.
+        {"month": "2026-01", "account_id": "1", "service": "Amazon Elastic Kubernetes Service", "amount": 100000},
+        # Smaller but locked in: 20k x 95 = 19k at risk.
+        {"month": "2026-01", "account_id": "2", "service": "Amazon DynamoDB", "amount": 20000},
+    ]
+    r = build_report(_scan(costs))
+    assert [a["name"] for a in r["accounts"]] == ["small-prod", "big-prod"]
+    assert r["accounts"][0]["spend_at_risk"] == 19000 and r["accounts"][0]["rank"] == 1
+    assert r["accounts"][1]["spend_at_risk"] == 10000

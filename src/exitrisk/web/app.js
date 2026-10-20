@@ -155,6 +155,7 @@
     url.searchParams.set("scan", state.scanId);
     for (const [k, v] of Object.entries(filter)) { if (v && !(k === "mode" && v === "contains")) url.searchParams.set(k, v); else url.searchParams.delete(k); }
     if (weighting !== "spend") url.searchParams.set("weighting", weighting); else url.searchParams.delete("weighting");
+    if ($("#fMinRating").value) url.searchParams.set("min_rating", $("#fMinRating").value); else url.searchParams.delete("min_rating");
     if (!PRINT) history.replaceState(null, "", url);
     render();
   }
@@ -425,9 +426,9 @@
       plugins: [{
         id: "labels",
         afterDatasetsDraw(ch) {
-          // Direct-label only the accounts that matter: the top five contributors.
+          // Direct-label only the accounts that matter: the top five by spend at risk.
           const ctx = ch.ctx, meta = ch.getDatasetMeta(0);
-          const top = [...accts].sort((a, b) => b.contribution - a.contribution).slice(0, 5).map((a) => a.id);
+          const top = [...accts].sort((a, b) => b.spend_at_risk - a.spend_at_risk).slice(0, 5).map((a) => a.id);
           ctx.save();
           ctx.font = `600 11px ${css("--font")}`;
           ctx.fillStyle = css("--ink");
@@ -465,29 +466,31 @@
       }],
     });
 
-    renderAccountTable(r, maxC);
+    renderAccountTable(r, Math.max(...accts.map((a) => a.spend_at_risk), 0.01));
   }
 
   function renderAccountTable(r, maxC) {
-    const all = r.accounts;
+    // Display filter only: scores, charts and totals still count every account.
+    const min = RATING_TIER[$("#fMinRating").value] || 0;
+    const all = r.accounts.filter((a) => !min || (a.score != null && RATING_TIER[a.rating] >= min));
+    const hidden = r.accounts.length - all.length;
     const limit = state.showAllAccounts ? all.length : PRINT ? 25 : ACCOUNT_ROWS;
     const shown = all.slice(0, limit);
     // Only show the OU path when accounts sit in different OUs; otherwise it repeats on every row.
     const multiOu = new Set(all.map((a) => a.ou_path)).size > 1;
-    const rows = shown.map((a) => `<tr>
-      <td class="num-cell muted">${a.rank}</td>
+    const rows = shown.map((a, i) => `<tr>
+      <td class="num-cell muted">${i + 1}</td>
       <td class="acct"><strong>${esc(a.name)}</strong><div class="hint">${esc(a.id)}${multiOu ? ` · ${esc(a.ou_path)}` : ""}</div></td>
       <td class="num-cell">${money(a.monthly_spend)}</td>
-      <td class="num-cell">${a.score == null ? "–" : Math.round(a.score)}</td>
-      <td>${a.score == null ? "–" : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)}</span>`}</td>
-      <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.contribution / maxC).toFixed(1)}%"></i></div><span class="num-cell">${a.contribution.toFixed(1)}</span></div></td>
-      <td class="num-cell">${pct(a.high_risk_pct)}</td>
+      <td class="risk">${a.score == null ? "–" : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span><div class="hint">${pct(a.high_risk_pct)} High/Crit spend</div>`}</td>
+      <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.spend_at_risk / maxC).toFixed(1)}%"></i></div><span class="num-cell">${money(a.spend_at_risk)}</span></div></td>
       <td><div class="chips">${a.top_lockin.map((s) => `<span class="chip">${esc(s.service)}</span>`).join("") || '<span class="hint">none</span>'}</div></td>
       <td class="num-cell">${num(a.effort_weeks / 4.33, 1)}</td>
     </tr>`).join("");
-    $("#accountTable").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Account</th><th class="num-cell">Per month</th><th class="num-cell" title="Inherent exit-risk score, 0-100">Risk</th><th>Rating</th><th title="Points this account adds to the OU score under the selected weighting">Contribution (pts)</th><th class="num-cell" title="Share of the account's spend on High or Critical services">High/Critical</th><th>Main lock-in</th><th class="num-cell" title="Estimated engineering effort to move this account">Person-months</th></tr></thead><tbody>${rows}</tbody>`;
+    $("#accountTable").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Account</th><th class="num-cell">Per month</th><th title="Exit-risk rating and score (0-100); beneath, the share of the account's spend on High or Critical services">Risk</th><th title="Spend x risk / 100: monthly spend that is hard to move. The ranking sorts by this.">Spend at risk / month</th><th>Main lock-in</th><th class="num-cell" title="Estimated engineering effort to move this account">Person-months</th></tr></thead><tbody>${rows}</tbody>`;
     const more = all.length - shown.length;
-    $("#acctMoreNote").textContent = more > 0 ? `Top ${shown.length} of ${plural(all.length, "account")} by contribution.${PRINT ? " The JSON export lists every account." : ""}` : `${plural(all.length, "account")}.`;
+    const hiddenNote = hidden ? ` ${plural(hidden, "lower-risk account")} not listed (still counted in the scores).` : "";
+    $("#acctMoreNote").textContent = (more > 0 ? `Top ${shown.length} of ${plural(all.length, "account")} by spend at risk.${PRINT ? " The JSON export lists every account." : ""}` : `${plural(all.length, "account")}.`) + hiddenNote;
     $("#btnAcctMore").hidden = all.length <= ACCOUNT_ROWS || PRINT;
     $("#btnAcctMore").textContent = state.showAllAccounts ? `Show top ${ACCOUNT_ROWS} only` : `Show all ${num(all.length)} accounts`;
   }
@@ -969,6 +972,7 @@
     } catch (e) { toast(e.message, 8000); return; }
     fillQuestionnaire(loadQuestionnaire());
     if (["balanced", "spend", "equal"].includes(params.get("weighting"))) $("#fWeighting").value = params.get("weighting");
+    if (["Moderate", "High"].includes(params.get("min_rating"))) $("#fMinRating").value = params.get("min_rating");
     for (const k of ["include", "exclude", "mode"]) if (params.get(k)) $(`#f${k[0].toUpperCase()}${k.slice(1)}`).value = params.get(k);
 
     const scans = await refreshScans();
@@ -985,6 +989,12 @@
     });
     $("#btnApply").addEventListener("click", loadReport);
     $("#fWeighting").addEventListener("change", loadReport);
+    $("#fMinRating").addEventListener("change", () => {
+      const url = new URL(location.href);
+      if ($("#fMinRating").value) url.searchParams.set("min_rating", $("#fMinRating").value); else url.searchParams.delete("min_rating");
+      history.replaceState(null, "", url);
+      if (state.report) renderAccountTable(state.report, Math.max(...state.report.accounts.map((a) => a.spend_at_risk), 0.01));
+    });
     for (const id of ["#fInclude", "#fExclude"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") loadReport(); });
     // Any answer, or "these answers are right", makes the estimate the organisation's own.
     const confirmAnswers = () => { $("#qForm").confirmed.value = "true"; loadReport(); };
@@ -997,7 +1007,7 @@
     });
     $("#btnAcctMore").addEventListener("click", () => {
       state.showAllAccounts = !state.showAllAccounts;
-      renderAccountTable(state.report, Math.max(...state.report.accounts.map((a) => a.contribution), 0.01));
+      renderAccountTable(state.report, Math.max(...state.report.accounts.map((a) => a.spend_at_risk), 0.01));
     });
     $("#btnDemo").addEventListener("click", async () => {
       try { const { id } = await api("/api/scans/demo", { method: "POST" }); await refreshScans(id); state.scanId = id; await loadReport(); toast("Loaded synthetic demo organisation"); }

@@ -53,6 +53,7 @@ inherent_risk(a)  = Σ_i s(a,i) · t(i) / Σ_i s(a,i)          0–100, how hard
 weight(a)         = f(S(a)) / Σ_b f(S(b))                    S(a) = Σ_i s(a,i), monthly spend of the account
 contribution(a)   = inherent_risk(a) · weight(a)             points of the OU score this account carries
 OU score          = Σ_a contribution(a)
+spend_at_risk(a)  = monthly_spend(a) · inherent_risk(a) / 100  USD a month; the account ranking sorts by this
 ```
 
 The report gives **two headline scores**, because they answer different questions:

@@ -318,7 +318,7 @@ h3.sub { margin: 4px 0 10px; font-size: 13px; color: var(--ink-2); text-transfor
 .chart-box.donut { height: 150px; }
 .nowrap { white-space: nowrap; }
 td.cap { text-transform: capitalize; }
-table.data.accounts td.acct { white-space: nowrap; }
+table.data.accounts td.acct, table.data.accounts td.risk { white-space: nowrap; }
 table.data.accounts td { vertical-align: middle; }
 .table-more { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 0 0; }
 .g-ticks span.first { transform: none; }
@@ -350,6 +350,11 @@ table.data.accounts td { vertical-align: middle; }
   table.data.accounts .chips { flex-wrap: nowrap; }
   table.data.accounts .chip { font-size: 9.5px; padding: 0 5px; }
   .g-row, .g-axis { grid-template-columns: 150px 1fr !important; }
+  /* Compact key figures so they stay on the page with the executive summary. */
+  .hero-row .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 8px; }
+  .hero-row .tile { padding: 8px 10px; }
+  .hero-row .tile-value { font-size: 20px; }
+  .hero-row .tile-label, .hero-row .tile-sub { font-size: 10.5px; }
 }
 @media print {
   /* Long cards must be allowed to split, or the browser pushes them whole onto the next page. */

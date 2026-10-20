@@ -52,6 +52,14 @@
       <option value="balanced">Blend (√ spend)</option>
     </select>
   </div>
+  <div class="field narrow">
+    <label for="fMinRating" title="Which accounts the ranking lists. Scores and charts always include every account.">Accounts listed</label>
+    <select id="fMinRating">
+      <option value="">All risk levels</option>
+      <option value="Moderate">Hide Low risk</option>
+      <option value="High">High &amp; Critical only</option>
+    </select>
+  </div>
   <button id="btnApply" class="btn primary">Apply</button>
   <span id="filterError" class="error-text" role="alert"></span>
 </section>
@@ -185,7 +193,7 @@
         <div class="chart-box tall"><canvas id="chAccounts" role="img" aria-label="Bubble chart of account risk score against monthly spend"></canvas></div>
       </figure>
       <div class="card">
-        <h3>Account ranking <span class="muted small">by contribution to the score</span></h3>
+        <h3>Account ranking <span class="muted small">by criticality: spend × risk</span></h3>
         <div class="table-wrap"><table class="data accounts" id="accountTable"></table></div>
         <p class="table-more"><span id="acctMoreNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnAcctMore" hidden></button></p>
       </div>

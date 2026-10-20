@@ -6,6 +6,16 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- **Account ranking sorts by criticality: spend × risk** ("spend at risk", USD a month), so large,
+  hard-to-move accounts come first. The column replaces "Contribution"; the "accounts set the pace"
+  finding uses the same measure.
+- **"Accounts listed" filter** (scope bar; `exitrisk pdf --min-rating Moderate|High`): hide Low-risk
+  accounts, or show High & Critical only, in the account ranking. Display only: scores, charts and totals
+  still count every account.
+- Account table: Risk, Rating and High/Critical % merge into one Risk column (rating · score, with the
+  High/Critical share beneath).
+
 ## [0.2.2] - 2026-10-20
 
 ### Added

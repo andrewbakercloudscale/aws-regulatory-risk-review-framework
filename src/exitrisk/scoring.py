@@ -8,7 +8,9 @@ Scoring (see docs/METHODOLOGY.md):
 * an account's **weight** is, by default, its share of spend ("spend"), so a small account full
   of DynamoDB scores high on its own but contributes little;
 * its **contribution** = inherent risk x weight - how many points of the OU score it carries;
-* the **OU exit-risk score** is the sum of contributions.
+* the **OU exit-risk score** is the sum of contributions;
+* its **criticality** = spend x inherent risk / 100 ("spend at risk", USD a month) - what the
+  account ranking sorts by, so the accounts that matter most to an exit come first.
 
 Spend weighting lets one huge account (say a contact centre on Connect) dominate, so the report
 always gives a second headline score **by number of accounts** ("equal": one account, one vote)
@@ -275,6 +277,7 @@ def build_report(
                 "score": round(score, 1) if score is not None else None,
                 "rating": rating(score),
                 "contribution": round((score or 0) * weight, 2),
+                "spend_at_risk": round(monthly * (score or 0) / 100, 2),
                 "tier_spend": {t: round(v, 2) for t, v in tier_spend.items()},
                 "high_risk_pct": round(100 * (tier_spend[4] + tier_spend[5]) / monthly, 1) if monthly else 0.0,
                 "top_services": [
@@ -286,7 +289,8 @@ def build_report(
                 "inventory": inv_totals,
             }
         )
-    accounts_out.sort(key=lambda a: (-a["contribution"], -(a["score"] or 0)))
+    # Rank by criticality (spend x risk): large and hard to move first.
+    accounts_out.sort(key=lambda a: (-a["spend_at_risk"], -(a["score"] or 0)))
     for rank, a in enumerate(accounts_out, 1):
         a["rank"] = rank
 
@@ -565,8 +569,9 @@ def _executive_summary(
     # Name the bespoke services with what they cost and how widely they are used, not just a count.
     bespoke = [x for x in s["top_lockin_services"] if x["monthly_spend"] >= MATERIAL_TIER_SPEND]
     named = [
-        f"{x['display']} {_money(x['monthly_spend'] * 12, cur)} a year ({_plural(x['accounts'], 'account')})"
-        for x in bespoke[:3]
+        f"{x['display']} {_money(x['monthly_spend'] * 12, cur)}"
+        + (f" a year ({_plural(x['accounts'], 'account')})" if i == 0 else f" ({x['accounts']:,})")
+        for i, x in enumerate(bespoke[:3])
     ]
     rest = s["bespoke_services"] - len(named)
     rest_spend = (s["high_risk_monthly"] - sum(x["monthly_spend"] for x in bespoke[:3])) * 12
@@ -574,9 +579,9 @@ def _executive_summary(
         {
             "lead": f"{s['high_risk_pct']:.0f}% of spend ({_money(s['high_risk_monthly'] * 12)} a year)",
             "text": f"runs on {_plural(s['bespoke_services'], 'bespoke, AWS-only service')} that must be "
-            "re-engineered, not just moved"
+            "re-engineered"
             + (f": {_join(named)}" if named else "")
-            + (f"; the other {rest} cost {_money(rest_spend, cur)} a year (section 4)" if rest > 0 else "")
+            + (f"; {rest} others {_money(rest_spend, cur)}" if rest > 0 else "")
             + ".",
         },
         {
@@ -585,20 +590,21 @@ def _executive_summary(
             f"{s['high_risk_accounts_spend_pct']:.0f}% of spend.",
         },
     ]
-    top = [a for a in accounts if a["contribution"] > 0][:3]
-    if len(top) > 1 and s["score"]:
-        share = sum(a["contribution"] for a in top) / s["score"] * 100
+    at_risk = sum(a["spend_at_risk"] for a in accounts)
+    top = [a for a in accounts if a["spend_at_risk"] > 0][:3]
+    if len(top) > 1 and at_risk:
+        share = sum(a["spend_at_risk"] for a in top) / at_risk * 100
         findings.append(
             {
                 "lead": f"{len(top)} accounts set the pace:",
-                "text": f"{_join([a['name'] for a in top])} carry {share:.0f}% of the weighted risk.",
+                "text": f"{_join([a['name'] for a in top])} carry {share:.0f}% of the spend at risk (spend x risk).",
             }
         )
     g = s.get("growth") or {}
     if g.get("total") and g["total"]["pct"] is not None and g["lockin"]["pct"] is not None:
         t, lk = g["total"]["pct"], g["lockin"]["pct"]
         rises = [
-            (f"{x['product']} via {x['display']}" if x.get("product") else x["display"], x["change"])
+            (f"{x['product']} via {x['display'].split(' (')[0]}" if x.get("product") else x["display"], x["change"])
             for x in g.get("top_rises", [])
         ]
         pace = "faster than" if lk > t + 1 else "more slowly than" if lk < t - 1 else "in line with"
@@ -609,7 +615,7 @@ def _executive_summary(
                 "text": f"from {_month(g['first_month'])} to {_month(g['last_month'])}; High/Critical spend "
                 f"{verb(lk)}, so lock-in is growing {pace} the estate."
                 + (
-                    f" Biggest rises: {_join([f'{x[0]} +{_money(x[1], cur)} a month' for x in rises])}."
+                    f" Biggest monthly rises: {_join([f'{x[0]} +{_money(x[1], cur)}' for x in rises])}."
                     if rises
                     else ""
                 ),
@@ -750,12 +756,13 @@ def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire)
     if summary["top_lockin_services"]:
         names = _join([s["display"] for s in summary["top_lockin_services"][:3]])
         lines.append(f"The largest lock-in exposures are {names}.")
-    top = [a for a in accounts if a["contribution"] > 0][:3]
-    if len([a for a in accounts if a["contribution"] > 0]) > 1:
-        share = sum(a["contribution"] for a in top) / summary["score"] * 100 if summary["score"] else 0
+    at_risk = sum(a["spend_at_risk"] for a in accounts)
+    top = [a for a in accounts if a["spend_at_risk"] > 0][:3]
+    if len(top) > 1 and at_risk:
+        share = sum(a["spend_at_risk"] for a in top) / at_risk * 100
         lines.append(
             f"{len(top)} accounts ({_join([a['name'] for a in top])}) carry {share:.0f}% of the "
-            "weighted risk; they set the pace of any exit."
+            "spend at risk; they set the pace of any exit."
         )
     lines.append(
         f"A full exit to {TARGET_LABELS[q.target]} is estimated at {est['effort']['person_months']:,.0f} "

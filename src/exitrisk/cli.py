@@ -138,6 +138,7 @@ def _pdf(args) -> int:
                 "exclude": args.exclude,
                 "mode": args.mode,
                 "weighting": args.weighting,
+                "min_rating": getattr(args, "min_rating", None),
                 "q": json.dumps({"confirmed": True, **json.loads(Path(args.questionnaire).read_text())})
                 if args.questionnaire
                 else None,
@@ -223,6 +224,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         if name == "pdf":
             p.add_argument("--port", type=int, default=8741)
+            p.add_argument(
+                "--min-rating",
+                choices=["Moderate", "High"],
+                help="list only accounts at or above this rating in the account ranking (scores still count all)",
+            )
         p.set_defaults(fn=fn)
     sub.choices["pdf"].set_defaults(out="exit-risk-report.pdf")
 
