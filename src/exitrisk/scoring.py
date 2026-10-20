@@ -25,6 +25,9 @@ from .issues import Issue
 
 RATINGS = [(25, "Low"), (40, "Moderate"), (55, "Elevated"), (70, "High"), (101, "Critical")]
 
+# An account counts as exposed to a tier when it spends at least this much a month on it.
+MATERIAL_TIER_SPEND = 1.0
+
 
 def rating(score: float | None) -> str:
     if score is None:
@@ -85,7 +88,9 @@ def build_report(
         if r["amount"] < 0:
             negative_lines += 1
             continue
-        per_account[r["account_id"]][r["service"]] += r["amount"]
+        # Key by catalog entry so billing lines of one service (Connect, Contact Lens, telephony...)
+        # count once for effort and lock-in, not once per line.
+        per_account[r["account_id"]][info.service] += r["amount"]
         trend[r["month"]][info.tier] += r["amount"]
         if not info.classified:
             unclassified[r["service"]] += r["amount"]
@@ -194,6 +199,7 @@ def build_report(
                 "monthly_spend": round(spend, 2),
                 "pct": round(100 * spend / total_monthly, 1) if total_monthly else 0.0,
                 "services": sum(1 for s in services_agg.values() if s["tier"] == t),
+                "accounts": sum(1 for a in accounts_out if a["tier_spend"][t] >= MATERIAL_TIER_SPEND),
             }
         )
     services_out = sorted(services_agg.values(), key=lambda s: -s["monthly_spend"])

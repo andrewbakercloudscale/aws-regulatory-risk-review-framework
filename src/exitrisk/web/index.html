@@ -247,12 +247,17 @@
     <h2>New scan</h2>
     <p class="muted small">Read-only. Credentials come from your local AWS profile (or <a href="#" id="lnkSso">sign in with AWS SSO</a>); with aws-cli-zsp you will be asked for Touch ID once. Use a profile in the <strong>management (payer) account</strong> for an organisation-wide view.</p>
     <label>AWS profile<select name="profile" id="sProfile"></select></label>
-    <div class="row">
-      <button type="button" class="btn" id="btnScanCheck">Check access</button>
-      <button type="button" class="btn" id="btnLoadOus">Load OUs</button>
-      <span id="ouStatus" class="muted small"></span>
-    </div>
-    <label>Organizational Unit<select name="ou_id" id="sOu"><option value="">Organization root (all accounts)</option></select></label>
+    <div class="row"><button type="button" class="btn" id="btnScanCheck">Check access</button></div>
+    <fieldset class="scope">
+      <legend>What to include</legend>
+      <label>Organizational unit (e.g. Prod only)
+        <span class="select-row"><select name="ou_id" id="sOu"><option value="">Organization root (all accounts)</option></select>
+        <button type="button" class="btn ghost" id="btnLoadOus" title="Reload the OU list">↻</button></span>
+      </label>
+      <p id="ouStatus" class="muted small"></p>
+      <label>And/or account names containing<input id="sNameFilter" placeholder="e.g. prod, prd (comma = or)" maxlength="200"></label>
+      <p class="muted small">The OU limits what is scanned. The name filter limits the report and can be changed any time in the bar at the top.</p>
+    </fieldset>
     <label>Months of spend history<input name="months" type="number" min="1" max="12" value="3"></label>
     <label class="check"><input type="checkbox" name="inventory" id="sInventory"> Deep scan: count resources in each member account</label>
     <div id="invOpts" hidden>

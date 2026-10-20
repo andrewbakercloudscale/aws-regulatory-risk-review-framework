@@ -249,8 +249,8 @@
         },
       },
     });
-    $("#tierTable").innerHTML = `<tr><td></td><td class="num-cell muted">USD / month</td><td class="num-cell muted">Share</td><td class="num-cell muted">Services</td></tr>` +
-      tiers.map((t) => `<tr><td><span class="swatch" style="background:${tierColor(t.tier)}"></span>${t.tier} · ${esc(t.label)}</td><td class="num-cell">${money(t.monthly_spend)}</td><td class="num-cell">${pct(t.pct, 1)}</td><td class="num-cell">${t.services}</td></tr>`).join("");
+    $("#tierTable").innerHTML = `<tr><td></td><td class="num-cell muted">USD / month</td><td class="num-cell muted">Share</td><td class="num-cell muted">Services</td><td class="num-cell muted" title="Accounts spending at least $1/month on services in this tier">Accounts</td></tr>` +
+      tiers.map((t) => `<tr><td><span class="swatch" style="background:${tierColor(t.tier)}"></span>${t.tier} · ${esc(t.label)}</td><td class="num-cell">${money(t.monthly_spend)}</td><td class="num-cell">${pct(t.pct, 1)}</td><td class="num-cell">${t.services}</td><td class="num-cell">${num(t.accounts)}</td></tr>`).join("");
 
     chart("chTrend", {
       type: "bar",
@@ -466,10 +466,12 @@
     $("#scanError").textContent = "";
     $("#scanProgress").hidden = true;
     $("#btnStartScan").disabled = false;
+    $("#sNameFilter").value = $("#fInclude").value;
     try {
       const { profiles } = await api("/api/profiles");
       $("#sProfile").innerHTML = profiles.length ? profiles.map((p) => `<option>${esc(p)}</option>`).join("") : `<option value="">(no profiles found - default credential chain)</option>`;
       if (typeof selectProfile === "string" && profiles.includes(selectProfile)) $("#sProfile").value = selectProfile;
+      if (profiles.length) loadOus();
     } catch (e) { $("#scanError").textContent = e.message; }
     dlg.showModal();
   }
@@ -481,15 +483,19 @@
   }
 
   async function loadOus() {
-    $("#ouStatus").textContent = "Reading OU tree… approve Touch ID if prompted.";
+    $("#sOu").innerHTML = `<option value="">Organization root (all accounts)</option>`;
+    $("#ouStatus").textContent = "Loading organizational units… approve Touch ID if prompted.";
     $("#btnLoadOus").disabled = true;
+    const seq = (state.ouSeq = (state.ouSeq || 0) + 1); // a later profile change wins over a slow earlier reply
     try {
       const { tree, org } = await api("/api/org", { method: "POST", body: { profile: $("#sProfile").value || null } });
+      if (seq !== state.ouSeq) return;
       $("#sOu").innerHTML = flattenOus(tree).map((o) => `<option value="${o.id === tree.id ? "" : esc(o.id)}">${esc(o.label)}${o.id === tree.id ? " (all accounts)" : ""}</option>`).join("");
-      $("#ouStatus").textContent = `Organization ${org.id} · management account ${org.management_account_id}`;
+      const n = flattenOus(tree).length - 1;
+      $("#ouStatus").textContent = `${n} OU(s) in organization ${org.id} · management account ${org.management_account_id}`;
     } catch (e) {
-      $("#ouStatus").textContent = "";
-      $("#scanError").textContent = `${e.message}${e.hint ? " — " + e.hint : ""}`;
+      if (seq !== state.ouSeq) return;
+      $("#ouStatus").textContent = `OUs unavailable with this profile (${e.code || e.message}) - the scan covers what the profile can see. Use Check access to see why.`;
     } finally { $("#btnLoadOus").disabled = false; }
   }
 
@@ -529,6 +535,8 @@
         }
         await refreshScans(id);
         state.scanId = id;
+        const nameFilter = $("#sNameFilter").value.trim();
+        if (nameFilter && s.status !== "failed") { $("#fInclude").value = nameFilter; $("#fMode").value = "contains"; }
         await loadReport();
       } catch (e) {
         $("#scanError").textContent = e.message;
@@ -805,6 +813,7 @@
     $("#ssoDialog").addEventListener("close", () => clearInterval(sso.loginTimer));
     refreshSsoBadge();
     $("#btnLoadOus").addEventListener("click", loadOus);
+    $("#sProfile").addEventListener("change", loadOus);
     $("#btnStartScan").addEventListener("click", startScan);
     $("#sInventory").addEventListener("change", (e) => { $("#invOpts").hidden = !e.target.checked; });
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));

@@ -255,3 +255,9 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .verdict { font-weight: 600; margin: 10px 0 4px; }
 #aAdminText { width: 100%; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 8px; box-sizing: border-box; }
 .subpanel h3 { margin: 0 0 4px; font-size: 14px; }
+
+.scope { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px 4px; margin: 0 0 14px; background: var(--surface-2); }
+.scope legend { font-weight: 600; font-size: 13px; padding: 0 6px; color: var(--ink); }
+.scope p { margin: -6px 0 10px; }
+.select-row { display: flex; gap: 8px; }
+.select-row select { flex: 1; }

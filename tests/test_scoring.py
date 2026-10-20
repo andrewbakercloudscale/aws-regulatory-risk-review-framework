@@ -108,3 +108,16 @@ def test_filter_matching_nothing_explains_itself_and_has_no_estimate():
     assert r["estimate"]["empty"] is True
     assert any("No account matches the filter" in n for n in r["summary"]["coverage"])
     assert build_report(scan)["summary"]["coverage"] == []
+
+
+def test_billing_lines_of_one_service_merge_and_tiers_count_accounts():
+    costs = [
+        {"account_id": "1", "service": s, "month": "2026-09", "amount": a}
+        for s, a in (("Amazon Connect", 5000), ("Contact Lens for Amazon Connect", 3000), ("Amazon EC2", 100))
+    ] + [{"account_id": "2", "service": "Amazon Elastic Compute Cloud - Compute", "month": "2026-09", "amount": 50}]
+    r = build_report(_scan(costs, [{"id": "1", "name": "a-prd"}, {"id": "2", "name": "b-prd"}]))
+    a1 = next(a for a in r["accounts"] if a["id"] == "1")
+    assert [s["service"] for s in a1["top_lockin"]] == ["Connect"]
+    connect = next(s for s in r["services"] if s["display"] == "Connect")
+    assert connect["monthly_spend"] == 8000 and connect["accounts"] == 1
+    assert {t["tier"]: t["accounts"] for t in r["tiers"]}[5] == 1

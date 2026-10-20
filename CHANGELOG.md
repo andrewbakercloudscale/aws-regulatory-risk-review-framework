@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Fixed
+- Billing lines of one service (e.g. Connect, Contact Lens, Connect telephony) are merged per account: they no
+  longer repeat in the lock-in column or multiply that service's migration effort.
+
 ### Added
 - **AWS sign-in (IAM Identity Center / SSO) in the console header**: add a portal by start URL (region
   auto-detected), approve on AWS's page, pick account and role, and scan. Tokens are written to the AWS
@@ -18,6 +22,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 - Report banner explaining partial views (member-account fallback) and filters that match no account.
 
 ### Changed
+- New scan: OUs load automatically and sit with the account-name filter under **What to include**.
+- Tier table shows how many accounts use each tier (≥ $1/month).
 - With no spend in scope the estimate shows "–" instead of a fixed landing-zone figure.
 - Catalog 2026.10.1: Amazon Connect billing lines (Contact Lens, Customer Profiles, Contact Center
   Telecommunications) map to Connect; new entries for AppFlow, Service Catalog, IAM Access Analyzer and
