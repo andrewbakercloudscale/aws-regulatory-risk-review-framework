@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Documentation
+- README explains why regulated entities need this: Regulatory Risk as the proposed seventh pillar of
+  the AWS Well-Architected Framework, and the exit-plan rules it supports (DORA, EBA, PRA, APRA, SARB).
+
 ## [0.2.4] - 2026-10-20
 
 ### Added

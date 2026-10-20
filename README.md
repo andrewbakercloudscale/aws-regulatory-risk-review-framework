@@ -4,10 +4,45 @@
 Unit, in a form an executive committee can act on: one exit-risk score, weighted by where the money
 is actually spent, the services and accounts that drive it, and an indicative cost and time to exit.
 
-Regulators increasingly expect a credible, tested exit plan for material cloud outsourcing
-(EU DORA Art. 28, EBA outsourcing guidelines, PRA SS2/21, APRA CPS 230, SARB Directive 3/2018 among
-others). This framework gives that plan an evidence base drawn from your own billing data rather
-than a workshop opinion.
+> **Risk without transparency is just fear and anxiety.** Every bank board has heard "we are locked
+> into AWS". Few can say by how much, where, or what it would cost to get out. This framework turns
+> that worry into a number, a ranked list and a plan.
+
+## Why this exists: Regulatory Risk, the missing pillar
+
+The [AWS Well-Architected Framework](https://aws.amazon.com/architecture/well-architected/) has six
+pillars: Operational Excellence, Security, Reliability, Performance Efficiency, Cost Optimization and
+Sustainability. They describe a workload that runs well **on AWS**. None of them asks the question a
+regulator asks first: **could you leave if you had to?**
+
+For regulated entities (banks, insurers, payment providers, market infrastructure, healthcare) that
+question is not optional. Running material workloads in the cloud is outsourcing, and outsourcing
+rules require a documented, credible and tested exit strategy:
+
+| Regulation | What it expects |
+|---|---|
+| EU **DORA** (Art. 28) | Exit strategies for ICT third-party services supporting critical or important functions, tested and documented |
+| **EBA** Guidelines on outsourcing | Documented exit plans, with an assessment of how complex and costly exit would be |
+| UK **PRA SS2/21** | Stressed exit plans for material outsourcing, including alternative providers and timelines |
+| **APRA CPS 230** | Exit plans for material service providers, covering how long exit takes and how much it costs |
+| **SARB Directive 3/2018** and Joint Standard on cloud | Exit and contingency arrangements for material cloud usage |
+
+This framework proposes **Regulatory Risk as the seventh pillar**: the measured degree to which your
+architecture keeps you free to exit, change providers, or bring workloads back in house. Like the
+other pillars, it is a design property you can measure, track and improve:
+
+- **Measure** it: a spend-weighted 0–100 exit-risk score per OU and per account, from your own billing
+  data, against an open [catalog](docs/SERVICE_CATALOG.md) of 112 AWS services ranked by portability.
+- **Explain** it: which services (Connect, Redshift, DynamoDB, Lambda…) and which accounts drive the
+  score, why each service is hard to move, the migration path, and how long it typically takes.
+- **Plan** it: indicative effort, duration and cost of a full exit, adjusted for your delivery maturity
+  (CI/CD, Terraform, team size), ready for the exit plan your regulator asks to see.
+- **Track** it: rescan each quarter, so new lock-in shows up as it is adopted, not when the exit is
+  needed. Choosing a proprietary service can still be the right call; this makes it a known,
+  priced choice rather than an accident.
+
+The aim is not to discourage AWS. It is to replace "we are locked in" (fear) with "38/100, with three accounts holding 57% of the spend at risk and about 3.3 years to exit"
+(a fact a board can govern).
 
 ![Dashboard overview](docs/images/dashboard-overview.png)
 
@@ -52,7 +87,7 @@ exitrisk serve              # opens http://127.0.0.1:8740
 | **Check access** | Tests the five read-only calls a scan needs and shows ✓ / ✗ with the fix for each. If anything is missing it writes the **request to send your AWS administrator**: your identity, the account, the policy, ready to copy or download. |
 | **Scan and report** | Seconds for hundreds of accounts. Type `prod` in the filter bar, answer the questionnaire in section 5, **Export PDF**. |
 
-No AWS access yet? **Load demo data** shows a synthetic 21-account bank.
+No AWS access yet? **Load demo data** shows a synthetic bank estate (49 accounts, made-up numbers).
 
 **What your AWS administrator grants** (read-only, in the management account): an IAM Identity Center
 permission set with [this inline policy](iam/management-account-policy.json) — or the AWS-managed
