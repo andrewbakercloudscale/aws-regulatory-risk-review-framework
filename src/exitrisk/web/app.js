@@ -109,7 +109,10 @@
     for (const form of [f, $("#resForm"), $("#timeForm")]) {
       for (const [k, v] of Object.entries(q)) {
         if (!form[k]) continue;
-        if (form[k].type === "checkbox") form[k].checked = !!v; else form[k].value = v;
+        if (form[k].type === "checkbox") form[k].checked = !!v;
+        // A saved answer an older or newer version no longer offers keeps the default instead of blanking the select.
+        else if (form[k].tagName === "SELECT" && ![...form[k].options].some((o) => o.value === v)) continue;
+        else form[k].value = v;
       }
     }
     syncDatacenter();
