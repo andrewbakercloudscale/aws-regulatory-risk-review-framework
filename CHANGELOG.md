@@ -7,9 +7,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 ## [Unreleased]
 
 ### Changed
-- **OU score weighting defaults to "balanced" (square root of spend)** so one very large account cannot
-  dominate the score. Spend-linear and equal-per-account weightings are selectable (console *Score
-  weighting*, CLI `--weighting`); the hero shows the score under all three.
+- **Two headline scores: exit risk by spend and by number of accounts**, side by side with a one-line
+  reading of the gap (concentrated vs widespread). Spend stays the default weighting for contributions;
+  per-account and a √spend blend are selectable (console *Score weighting*, CLI `--weighting`).
 
 ### Added
 - Breadth view: accounts per rating vs share of spend (section 3), "Portable accounts X of N" KPI tile and

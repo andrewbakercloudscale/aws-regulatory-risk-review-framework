@@ -265,3 +265,7 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .hero-alt { font-size: 12px; color: var(--ink-2); margin: 6px 0 2px; }
 .data.compact td, .data.compact th { padding: 6px 8px; }
 .data tr.total td { border-top: 2px solid var(--border); }
+.hero-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hero-pair .hero-value { font-size: 44px; }
+.scale-marker.acc { background: var(--surface); border: 2px solid var(--ink); width: 5px; }
+.hero-pair .hero-label { font-size: 12px; margin-top: 4px; white-space: nowrap; }

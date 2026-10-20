@@ -125,7 +125,7 @@
   async function loadReport() {
     if (!state.scanId) return;
     const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
-    const weighting = $("#fWeighting").value || "balanced";
+    const weighting = $("#fWeighting").value || "spend";
     $("#filterError").textContent = "";
     try {
       state.report = await api("/api/report", { method: "POST", body: { scan_id: state.scanId, filter, questionnaire: readQuestionnaire(), weighting } });
@@ -137,7 +137,7 @@
     const url = new URL(location.href);
     url.searchParams.set("scan", state.scanId);
     for (const [k, v] of Object.entries(filter)) { if (v && !(k === "mode" && v === "contains")) url.searchParams.set(k, v); else url.searchParams.delete(k); }
-    if (weighting !== "balanced") url.searchParams.set("weighting", weighting); else url.searchParams.delete("weighting");
+    if (weighting !== "spend") url.searchParams.set("weighting", weighting); else url.searchParams.delete("weighting");
     if (!PRINT) history.replaceState(null, "", url);
     render();
   }
@@ -192,12 +192,18 @@
 
   function renderSummary(r) {
     const s = r.summary, e = r.estimate, cur = e.cost.currency;
-    $("#heroScore").textContent = s.score == null ? "–" : Math.round(s.score);
-    ratingBadge($("#heroRating"), s.rating, s.score == null ? "No spend in scope" : `${s.rating} exit risk`);
+    $("#heroScore").textContent = s.score_by_spend == null ? "–" : Math.round(s.score_by_spend);
+    ratingBadge($("#heroRating"), s.rating_by_spend, s.score_by_spend == null ? "No spend in scope" : s.rating_by_spend);
+    $("#heroScoreAcc").textContent = s.score_by_accounts == null ? "–" : Math.round(s.score_by_accounts);
+    ratingBadge($("#heroRatingAcc"), s.rating_by_accounts, s.score_by_accounts == null ? "–" : s.rating_by_accounts);
     $(".scale-bands").innerHTML = [1, 2, 3, 4, 5].map((t) => `<div style="background:${tierColor(t)};border-radius:3px"></div>`).join("");
-    const sb = s.score_by_weighting || {}, wl = { balanced: "balanced", spend: "by spend", equal: "per account" };
-    $("#heroAlt").textContent = s.score == null ? "" : `${s.weighting_label}. Other weightings: ` + Object.keys(wl).filter((k) => k !== s.weighting && sb[k] != null).map((k) => `${wl[k]} ${Math.round(sb[k])}`).join(" · ");
-    $("#scaleMarker").style.left = `${Math.min(100, Math.max(0, s.score || 0))}%`;
+    $("#heroAlt").textContent = s.score == null ? "" : s.score_by_spend - s.score_by_accounts >= 5
+      ? "Risk is concentrated in a few large accounts: most accounts are easier to move than the spend view suggests."
+      : s.score_by_accounts - s.score_by_spend >= 5
+        ? "Risk is spread across many smaller accounts: the spend view understates how many workloads need re-engineering."
+        : "Spend and account views agree: risk is spread in line with spend.";
+    $("#scaleMarker").style.left = `${Math.min(100, Math.max(0, s.score_by_spend || 0))}%`;
+    $("#scaleMarkerAcc").style.left = `${Math.min(100, Math.max(0, s.score_by_accounts || 0))}%`;
     $("#kpiTiles").innerHTML = [
       tile("Annual spend in scope", money(s.annual_spend), `${money(s.monthly_spend)} / month, amortised`),
       tile("Spend on High/Critical services", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
@@ -295,10 +301,10 @@
       rows.map((b) => `<tr><td><span class="swatch" style="background:${tierColor(RATING_TIER[b.rating])}"></span>${esc(b.rating)}</td><td class="num-cell">${num(b.accounts)}</td><td class="num-cell">${pct(b.pct_accounts, 1)}</td><td class="num-cell">${money(b.monthly_spend)}</td><td class="num-cell">${pct(b.pct_spend, 1)}</td></tr>`).join("") +
       `<tr class="total"><td><strong>Portable</strong> (Low + Moderate)</td><td class="num-cell"><strong>${num(s.portable_accounts)}</strong></td><td class="num-cell">${s.accounts_rated ? pct(100 * s.portable_accounts / s.accounts_rated, 1) : "–"}</td><td></td><td></td></tr></tbody>`;
     $("#weightingNote").textContent = `OU score weighting: ${s.weighting_label}. ` + ({
-      balanced: "Bigger accounts count for more, but one very large account cannot dominate the score.",
-      spend: "Each account counts in proportion to its spend; one large account can dominate.",
+      spend: "Each account counts in proportion to its spend, so a small high-risk account adds little.",
       equal: "Every account with spend counts the same, whatever its size.",
-    })[s.weighting] + " Change it in the bar at the top.";
+      balanced: "A blend: bigger accounts count for more, but no single account dominates.",
+    })[s.weighting] + " It sets bubble sizes and contributions; change it in the bar at the top.";
   }
 
   function renderAccounts(r) {

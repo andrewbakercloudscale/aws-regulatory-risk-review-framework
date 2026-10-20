@@ -47,9 +47,9 @@
   <div class="field narrow">
     <label for="fWeighting" title="How much a bigger account counts in the OU score">Score weighting</label>
     <select id="fWeighting">
-      <option value="balanced">Balanced (√ spend)</option>
       <option value="spend">By spend</option>
-      <option value="equal">Per account</option>
+      <option value="equal">By number of accounts</option>
+      <option value="balanced">Blend (√ spend)</option>
     </select>
   </div>
   <button id="btnApply" class="btn primary">Apply</button>
@@ -96,10 +96,20 @@
       <div class="hero-row">
         <div class="hero card">
           <div class="hero-label">OU exit-risk score</div>
-          <div class="hero-value"><span id="heroScore">–</span><span class="hero-of">/100</span></div>
-          <div id="heroRating" class="badge"></div>
+          <div class="hero-pair">
+            <div>
+              <div class="hero-label">By spend</div>
+              <div class="hero-value"><span id="heroScore">–</span><span class="hero-of">/100</span></div>
+              <div id="heroRating" class="badge"></div>
+            </div>
+            <div>
+              <div class="hero-label">By no. of accounts</div>
+              <div class="hero-value"><span id="heroScoreAcc">–</span><span class="hero-of">/100</span></div>
+              <div id="heroRatingAcc" class="badge"></div>
+            </div>
+          </div>
           <div id="heroAlt" class="hero-alt"></div>
-          <div class="scale" aria-hidden="true"><div class="scale-bands"></div><div id="scaleMarker" class="scale-marker"></div></div>
+          <div class="scale" aria-hidden="true"><div class="scale-bands"></div><div id="scaleMarker" class="scale-marker" title="By spend"></div><div id="scaleMarkerAcc" class="scale-marker acc" title="By number of accounts"></div></div>
           <div class="scale-labels" aria-hidden="true"><span>Low</span><span>Mod.</span><span>Elev.</span><span>High</span><span>Critical</span></div>
         </div>
         <div class="tiles" id="kpiTiles"></div>

@@ -55,23 +55,29 @@ contribution(a)   = inherent_risk(a) · weight(a)             points of the OU s
 OU score          = Σ_a contribution(a)
 ```
 
-The weighting function *f* is selectable (console: **Score weighting**; CLI: `--weighting`):
+The report gives **two headline scores**, because they answer different questions:
 
-| Weighting | f(S) | Use when |
+| Score | f(S) | Question it answers |
 |---|---|---|
-| **Balanced** (default) | √S | The headline number. Bigger accounts count for more, but one very large account cannot dominate. |
-| Spend | S | You want "share of the bill that is hard to move". One large account can set the whole score. |
-| Equal per account | 1 | You want "how many of our accounts are hard to move", whatever their size. |
+| **By spend** (default weighting) | S | "How much of our business is hard to move?" A small account full of proprietary services adds little. |
+| **By number of accounts** | 1 | "How many of our workloads are hard to move?" One very large account cannot dominate. |
+| Blend (optional) | √S | A compromise between the two; selectable, not a headline. |
 
-**Why balanced by default.** Pure spend weighting answers "how much of our business is hard to move",
-but in a real estate a single account (say, a contact centre on Amazon Connect at 20% of the bill)
-can move the OU score by ten points on its own, which misrepresents an estate where 90% of accounts
-are portable. The square root keeps the ordering — a $100k account still outweighs a $1k account —
-while compressing a 100× spend gap to a 10× weight gap. A $2k/month account built entirely on
-DynamoDB (inherent risk 95) still appears in red on the account chart, but adds only a few points.
-The report always shows all three scores side by side, so the choice is never hidden.
+**Why both.** Spend weighting keeps the original rule — a $2k/month account built entirely on
+DynamoDB (inherent risk 95) appears in red on the account chart but adds 0.3 points — yet it lets a
+single large account set the whole score: a contact centre on Amazon Connect at 20% of the bill moves
+it by ten points on its own. Any single compromise weighting (such as √S) fixes the second problem by
+weakening the first. Showing both, side by side, keeps each honest:
 
-**Breadth view.** Alongside the score, the report counts accounts per rating and sets the share of
+- spend score well **above** account score → risk is concentrated in a few large accounts;
+- account score well **above** spend score → risk is spread across many smaller accounts;
+- similar → risk is spread in line with spend.
+
+The weighting selector (console *Score weighting*, CLI `--weighting spend|equal|balanced`) only chooses
+which view drives the per-account weights, contributions and bubble sizes; both headline scores are
+always reported.
+
+**Breadth view.** Alongside the scores, the report counts accounts per rating and sets the share of
 accounts against the share of spend (section 3). *Portable* accounts are those rated Low or Moderate;
 *higher-risk* accounts are High or Critical. "10 of 145 accounts are High/Critical but hold 25% of
 spend" is a concentration to manage, not an estate-wide problem — and the chart makes that visible.

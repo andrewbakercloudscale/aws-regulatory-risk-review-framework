@@ -5,14 +5,14 @@ Scoring (see docs/METHODOLOGY.md):
 * every service has a tier 1-5 and a tier score (10, 30, 50, 75, 95);
 * an account's **inherent risk** is the spend-weighted mean tier score of its services
   (0-100) - how hard *that account* is to move;
-* an account's **weight** grows with its spend. By default ("balanced") it is proportional to
-  the square root of spend, so a large account counts for more than a small one but one huge
-  account (say a contact centre on Connect) cannot dominate the whole estate; "spend" (linear)
-  and "equal" (one account, one vote) are available for comparison;
+* an account's **weight** is, by default, its share of spend ("spend"), so a small account full
+  of DynamoDB scores high on its own but contributes little;
 * its **contribution** = inherent risk x weight - how many points of the OU score it carries;
-* the **OU exit-risk score** is the sum of contributions. A small account full of DynamoDB
-  scores high on its own but contributes little, which is the behaviour the executive view
-  needs. The report also counts accounts by rating, so breadth is visible beside the score.
+* the **OU exit-risk score** is the sum of contributions.
+
+Spend weighting lets one huge account (say a contact centre on Connect) dominate, so the report
+always gives a second headline score **by number of accounts** ("equal": one account, one vote)
+plus counts of accounts per rating. "balanced" (square root of spend) is a selectable blend.
 """
 
 from __future__ import annotations
@@ -30,15 +30,19 @@ from .issues import Issue
 RATINGS = [(25, "Low"), (40, "Moderate"), (55, "Elevated"), (70, "High"), (101, "Critical")]
 
 WEIGHTINGS = {
-    "balanced": ("Balanced (square root of spend)", math.sqrt),
-    "spend": ("Spend (linear)", lambda m: m),
-    "equal": ("Equal per account", lambda m: 1.0 if m > 0 else 0.0),
+    "spend": ("By spend", lambda m: m),
+    "equal": ("By number of accounts", lambda m: 1.0 if m > 0 else 0.0),
+    "balanced": ("Blend (square root of spend)", math.sqrt),
 }
-DEFAULT_WEIGHTING = "balanced"
+DEFAULT_WEIGHTING = "spend"
 RATING_NAMES = [label for _, label in RATINGS]
 
 # An account counts as exposed to a tier when it spends at least this much a month on it.
 MATERIAL_TIER_SPEND = 1.0
+
+
+def _round(v: float | None) -> float | None:
+    return round(v, 1) if v is not None else None
 
 
 def rating(score: float | None) -> str:
@@ -264,6 +268,10 @@ def build_report(
         "weighting": weighting,
         "weighting_label": WEIGHTINGS[weighting][0],
         "score_by_weighting": {k: (round(v, 1) if v is not None else None) for k, v in scores_by_weighting.items()},
+        "score_by_spend": _round(scores_by_weighting["spend"]),
+        "rating_by_spend": rating(scores_by_weighting["spend"]),
+        "score_by_accounts": _round(scores_by_weighting["equal"]),
+        "rating_by_accounts": rating(scores_by_weighting["equal"]),
         "accounts_rated": rated,
         "accounts_by_rating": list(by_rating.values()),
         "portable_accounts": by_rating["Low"]["accounts"] + by_rating["Moderate"]["accounts"],
@@ -337,8 +345,10 @@ def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire)
         return ["No in-scope spend was found, so no exit-risk score could be calculated."]
     cur = q.currency
     lines = [
-        f"The in-scope estate scores {int(summary['score'] + 0.5)}/100 ({summary['rating']}) for exit difficulty, "
-        f"across {summary['accounts_with_spend']} account(s) spending {_money(summary['annual_spend'], 'USD')} a year.",
+        f"The in-scope estate scores {int(summary['score_by_spend'] + 0.5)}/100 ({summary['rating_by_spend']}) "
+        f"for exit difficulty weighted by spend, and {int(summary['score_by_accounts'] + 0.5)}/100 "
+        f"({summary['rating_by_accounts']}) counting every account equally, across {summary['accounts_with_spend']} "
+        f"account(s) spending {_money(summary['annual_spend'], 'USD')} a year.",
         f"{summary['high_risk_pct']:.0f}% of spend ({_money(summary['high_risk_monthly'] * 12, 'USD')}/yr) runs on "
         "High or Critical services that have no direct equivalent outside AWS and need re-engineering.",
     ]

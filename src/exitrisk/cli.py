@@ -205,9 +205,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--out")
         p.add_argument(
             "--weighting",
-            default="balanced",
-            choices=["balanced", "spend", "equal"],
-            help="how accounts are weighted in the OU score (default: balanced = square root of spend)",
+            default="spend",
+            choices=["spend", "equal", "balanced"],
+            help="how accounts are weighted in the OU score: spend (default), equal = by number of accounts, "
+            "balanced = square root of spend",
         )
         if name == "report":
             p.add_argument("--questionnaire", help="JSON file with questionnaire answers")

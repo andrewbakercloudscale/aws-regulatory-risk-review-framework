@@ -16,10 +16,10 @@ than a workshop opinion.
 - **Scores every account** by the spend-weighted exit difficulty of the AWS services it uses.
   EKS, EC2 and Postgres/Aurora score low; DynamoDB, Lambda, Step Functions, Redshift and Connect score
   high. 112 services are classified in an open, reviewable [catalog](docs/SERVICE_CATALOG.md).
-- **Weights by size, without letting one account dominate.** By default an account's weight is the
-  square root of its spend, so a small account full of proprietary services is flagged without
-  distorting the headline number, and one very large account (e.g. a contact centre on Connect) cannot
-  set the whole score. Spend-linear and equal-per-account weightings are one click away.
+- **Two headline scores: by spend and by number of accounts.** Weighted by spend, a small account full
+  of proprietary services is flagged without distorting the number; counted per account, one very
+  large account (e.g. a contact centre on Connect) cannot set the whole picture. The gap between the
+  two tells you whether risk is concentrated or widespread.
 - **Counts portable vs higher-risk accounts**: how many accounts sit in each rating, against the share
   of spend they hold.
 - **Filters to production** (or anything else) by account name: contains / starts with / ends with /
@@ -111,9 +111,9 @@ A complete sample report generated from the demo data: [docs/sample-report.pdf](
 | 5 | Critical | 95 | DynamoDB, Connect, Greengrass, SWF, QLDB |
 
 - **Inherent risk** of an account = spend-weighted mean of its services' scores (0–100).
-- **Weight** = √spend of the account ÷ Σ √spend (default "balanced"; or linear spend, or equal per account).
+- **Weight** = the account's share of in-scope spend (or 1/N when counting by number of accounts).
 - **Contribution** = inherent risk × weight.
-- **OU exit-risk score** = sum of contributions. The report shows the score under all three weightings.
+- **OU exit-risk score** = sum of contributions, reported both **by spend** and **by number of accounts**.
 - Ratings: Low < 25 ≤ Moderate < 40 ≤ Elevated < 55 ≤ High < 70 ≤ Critical.
 
 Full detail, including the estimate model and its limitations: [docs/METHODOLOGY.md](docs/METHODOLOGY.md).

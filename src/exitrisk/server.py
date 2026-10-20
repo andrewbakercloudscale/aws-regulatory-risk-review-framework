@@ -83,7 +83,7 @@ class ReportRequest(BaseModel):
     scan_id: str
     filter: FilterModel = FilterModel()
     questionnaire: Questionnaire = Questionnaire()
-    weighting: str = Field("balanced", pattern=r"^(balanced|spend|equal)$")
+    weighting: str = Field("spend", pattern=r"^(balanced|spend|equal)$")
 
 
 def _host_name(header: str) -> str:
