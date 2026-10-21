@@ -13,6 +13,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ### Changed
 
+- New scan: the progress bar and any error sit in the dialog's footer, so they stay in view however
+  far the form is scrolled, and the bar shows the moment you click Start scan.
+- Close, Add a portal, Download and Open the log are bordered buttons, not plain text.
 - AWS sign-in dialog: it says the account and role are only the credentials, and that the scan
   covers the OUs chosen next (the whole organisation by default). With the management account found
   it shows one line ("Signing in through the management account … as …") with a Change link

@@ -1708,11 +1708,15 @@
     readQuestionnaire();
     $("#scanError").textContent = "";
     $("#btnStartScan").disabled = true;
+    // Show the bar at once: the first AWS calls can take a few seconds before any progress comes back.
+    $("#scanBar").style.width = "2%";
+    $("#scanMsg").textContent = "Starting the scan…";
+    $("#scanProgress").hidden = false;
     try {
       const job = await api("/api/scans", { method: "POST", body });
-      $("#scanProgress").hidden = false;
       pollScan(job.id);
     } catch (e) {
+      $("#scanProgress").hidden = true;
       $("#scanError").textContent = e.message;
       $("#btnStartScan").disabled = false;
     }

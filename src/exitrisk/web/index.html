@@ -438,7 +438,7 @@
     <h2>The multi-region estimate could not be calculated</h2>
     <p id="mrErrorText" class="error-text"></p>
     <p id="mrErrorHint" class="muted"></p>
-    <p><button type="button" class="btn primary" id="btnMrRetry">Try again</button> <button type="button" class="btn ghost" id="btnMrLog">Open the log</button></p>
+    <p><button type="button" class="btn primary" id="btnMrRetry">Try again</button> <button type="button" class="btn" id="btnMrLog">Open the log</button></p>
   </div>
   <div id="mrContent" hidden>
     <section class="cover">
@@ -694,14 +694,17 @@
         </div>
         <label><span>Label <span class="opt">optional</span></span><input name="label" maxlength="120" placeholder="e.g. Q4 board pack"></label>
       </section>
-      <div id="scanProgress" class="progress" hidden>
-        <div class="bar"><div id="scanBar"></div></div>
-        <div id="scanMsg" class="small"></div>
-      </div>
-      <p id="scanError" class="error-text" role="alert"></p>
     </div>
     <footer class="fd-foot">
-      <button value="cancel" class="btn ghost" formnovalidate>Close</button>
+      <!-- In the footer, so the progress and any error stay in view however far the form is scrolled. -->
+      <div class="fd-status">
+        <div id="scanProgress" class="progress" hidden>
+          <div class="bar"><div id="scanBar"></div></div>
+          <div id="scanMsg" class="small"></div>
+        </div>
+        <p id="scanError" class="error-text" role="alert"></p>
+      </div>
+      <button value="cancel" class="btn" formnovalidate>Close</button>
       <button type="button" id="btnStartScan" class="btn primary">Start scan</button>
     </footer>
   </form>
@@ -717,7 +720,7 @@
     <div id="ssoBusy" class="busy" role="status" aria-live="polite" hidden><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text"></span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar" aria-hidden="true"><i></i></div></div>
     <div class="row">
       <button type="button" class="btn primary" id="btnSsoLogin">Sign in</button>
-      <button type="button" class="btn ghost" id="btnSsoAddToggle">Add a portal…</button>
+      <button type="button" class="btn" id="btnSsoAddToggle">Add a portal…</button>
     </div>
     <div id="ssoAdd" class="subpanel" hidden>
       <label>Name<input id="ssoNewName" placeholder="e.g. mycompany" maxlength="64" pattern="[A-Za-z0-9_.\-]+"></label>
@@ -741,7 +744,7 @@
     <p id="ssoError" class="error-text" role="alert"></p>
     <div class="dialog-actions">
       <button type="button" id="btnSsoLogout" class="btn push-left" hidden>Sign out</button>
-      <button value="cancel" class="btn ghost" formnovalidate>Close</button>
+      <button value="cancel" class="btn" formnovalidate>Close</button>
       <button type="button" id="btnSsoUse" class="btn primary" hidden>Next: check access</button>
     </div>
   </form>
@@ -771,7 +774,7 @@
       <h3>Ask your AWS administrator</h3>
       <p class="small muted">Ready to send: names your identity, the account and exactly what to grant.</p>
       <textarea id="aAdminText" rows="9" readonly></textarea>
-      <div class="row"><button type="button" class="btn" id="btnAdminCopy">Copy</button><button type="button" class="btn ghost" id="btnAdminSave">Download .txt</button></div>
+      <div class="row"><button type="button" class="btn" id="btnAdminCopy">Copy</button><button type="button" class="btn" id="btnAdminSave">Download .txt</button></div>
     </div>
   </form>
 </dialog>
@@ -791,7 +794,7 @@
     <p id="cmpError" class="error-text" role="alert"></p>
     <div id="cmpOut"></div>
   </div>
-  <footer class="fd-foot"><button type="button" class="btn ghost" id="btnCmpClose">Close</button></footer>
+  <footer class="fd-foot"><button type="button" class="btn" id="btnCmpClose">Close</button></footer>
 </dialog>
 
 <dialog id="schedDialog" class="dialog form-dialog sched-dialog" aria-labelledby="schedTitle">
@@ -815,7 +818,7 @@
     </details>
   </div>
   <footer class="fd-foot">
-    <button type="button" class="btn ghost" id="btnSchedClose">Close</button>
+    <button type="button" class="btn" id="btnSchedClose">Close</button>
     <button type="button" class="btn ghost push-right" id="btnSchedOff" hidden>Turn off</button>
     <button type="button" class="btn" id="btnSchedRun" hidden>Run now</button>
     <button type="button" class="btn primary" id="btnSchedSave">Save</button>
