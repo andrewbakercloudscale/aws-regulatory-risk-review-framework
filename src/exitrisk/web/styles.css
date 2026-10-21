@@ -315,6 +315,8 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 }
 
 /* Print / PDF: always light, cover page, no controls */
+/* Same margins as the scripted PDF, so a browser "Save as PDF" is not printed hard against the paper edge. */
+@page { size: A4; margin: 14mm 12mm; }
 @media print {
   :root, :root[data-theme="dark"] {
     color-scheme: light;
@@ -578,6 +580,10 @@ table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(-
 .op-prov { border-left: 3px solid var(--t4); padding: 4px 10px; background: var(--surface-2); margin: 0 0 10px; }
 .op-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
 .op-tiles .tile { padding: 8px 10px; }
+.op-tiles.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* Four narrow columns: the provisional callout above the tiles already says which figures are provisional. */
+.op-tiles.cols-4 .prov-tag { display: none; }
+.op-tiles .tile.span-2 { grid-column: span 2; }
 .op-tiles .tile-value { font-size: 15px; }
 .op-tiles .tile .prov-tag { font-size: 8.5px; }
 .op-tiers { margin-bottom: 8px; }
@@ -598,6 +604,12 @@ table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(-
   body.onepage #onePager { display: block !important; }
   body.onepage .onepager table.data { font-size: 10px; }
   body.onepage .onepager table.data td, body.onepage .onepager table.data th { padding-top: 3px; padding-bottom: 3px; }
+  /* Seven tiles take a second row: win the height back so the page still fits one A4 sheet. */
+  body.onepage .op-tiles.cols-4 .tile { padding: 6px 10px; }
+  body.onepage .op-tiles.cols-4 { gap: 6px; margin-bottom: 8px; }
+  body.onepage .onepager ol.leads li { line-height: 1.32; margin-bottom: 2px; }
+  body.onepage .onepager h2 { margin: 7px 0 4px; }
+  body.onepage .op-foot { margin-top: 6px; padding-top: 4px; }
 }
 .ou-pick > .busy { margin: 0; }
 @media (max-width: 900px) {

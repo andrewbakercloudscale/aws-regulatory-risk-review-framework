@@ -238,8 +238,13 @@ def main() -> int:
         pp.wait_for_selector("body[data-ready='1']")
         pp.emulate_media(media="print")
         pp.wait_for_timeout(500)
+        # A white page margin round the image, as on paper; the PDF gets its margins from page.pdf.
+        pad = pp.add_style_tag(content="#onePager { padding: 34px 40px; background: #fff; }")
+        pp.set_viewport_size({"width": 880, "height": 1200})
         pp.locator("#onePager").screenshot(path=str(OUT / "one-page-summary.png"))
         print("wrote", OUT / "one-page-summary.png")
+        pad.evaluate("el => el.remove()")
+        pp.set_viewport_size({"width": 800, "height": 1130})
         pdf = ROOT / "docs" / "sample-summary.pdf"
         pp.pdf(
             path=str(pdf),

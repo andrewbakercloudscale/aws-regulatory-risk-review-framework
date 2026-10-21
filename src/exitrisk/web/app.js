@@ -419,7 +419,7 @@
 
   // Tiles are tinted by what they say: lock-in and risk (warm), cost and time to act (violet), plain facts (blue).
   const TILE_TONE = [
-    [/high\/critical|bespoke|rapid exit|correlated|critical accounts|failover|commitments|edp/i, "risk"],
+    [/high\/critical|bespoke|aws-only|rapid exit|correlated|critical accounts|failover|commitments|edp/i, "risk"],
     [/cost|window|effort|time to|finishes|deadline|notice|people|uplift|infrastructure/i, "est"],
   ];
   function tile(label, value, sub, provisional) {
@@ -482,9 +482,11 @@
   }
 
   // Savings Plans, reservations and EDP still running when the exit finishes: paid for, no longer used.
-  function writtenOffTile(x, provisional) {
+  function writtenOffTile(x, provisional, short) {
     const f = (x.exit_facts || []).find((v) => v.label === "Commitments written off");
-    return f ? [tile(f.label, f.value, f.value === "None" ? "all end before the fastest exit finishes" : "still owed after the exit; whole organisation, even when filtered", provisional)] : [];
+    const sub = f?.value === "None" ? "all end before the fastest exit finishes"
+      : short ? "still owed after the exit; whole organisation" : "still owed after the exit; whole organisation, even when filtered";
+    return f ? [tile(f.label, f.value, sub, provisional)] : [];
   }
 
   // Chart.js defaults - recessive chrome, thin marks, tooltips on.
@@ -1094,8 +1096,8 @@
       $("#timeTable").innerHTML = "";
       return;
     }
-    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Written off is what would still be owed between the exit finishing and the commitment ending: paid for, no longer used.${orgWide(r)}${undated}`;
-    $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Written off</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
+    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Written off is what would still be owed between the exit finishing and the commitment ending: paid for, no longer used.${undated}`;
+    $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Written off</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded?.[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
   }
 
   // Commitments by month, and what is written off if the exit finishes in that month. Months after the
@@ -1171,16 +1173,21 @@
     $("#opHeadline").textContent = x.headline || x.bottom_line;
     $("#opProv").hidden = !x.provisional;
     $("#opTiles").innerHTML = [
-      tile("Spend on High/Critical services", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
+      tile("High/Critical spend", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
       tile("High/Critical accounts", s.accounts_rated ? `${num(s.high_risk_accounts)} of ${num(s.accounts_rated)}` : "–", s.accounts_rated ? `${pct(s.high_risk_accounts_spend_pct)} of spend` : ""),
-      tile("Bespoke (AWS-only) services", num(s.bespoke_services), s.top_lockin_services.slice(0, 3).map((v) => v.display).join(", ") || "none in use"),
+      tile("AWS-only services", num(s.bespoke_services), s.top_lockin_services.slice(0, 3).map((v) => v.display).join(", ") || "none in use"),
       ...(e.empty ? [] : [
-        tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend` : "", e.provisional),
+        tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's spend` : "", e.provisional),
         tile("Exit window", e.ranges.duration, `bound by ${e.duration.constrained_by}`, e.provisional),
-        d?.set && d.status !== "unknown" ? tile("Notice period", d.label, `${d.months} months${d.short_months ? `; slow end ${num(d.short_months, 0)} months over` : ""}`, e.provisional)
+        d?.set && d.status !== "unknown" ? tile("Notice period", d.label, `${d.months}-month notice${d.short_months ? `, ${num(d.short_months, 0)} over` : ""}`, e.provisional)
           : tile("Engineering effort", e.ranges.effort, teamSize(e.team.capacity_fte), e.provisional),
+        ...writtenOffTile(x, e.provisional, true),
       ]),
     ].join("");
+    // Seven tiles sit in four columns, the last spanning two, so no row is left with one tile.
+    const n = $("#opTiles").children.length;
+    $("#opTiles").classList.toggle("cols-4", n > 6);
+    $("#opTiles").lastElementChild?.classList.toggle("span-2", n === 7);
     $("#opTierBar").innerHTML = r.tiers.map((v) => `<i style="width:${v.pct}%;background:${tierColor(v.tier)}" title="${esc(v.label)}"></i>`).join("");
     $("#opTierLegend").innerHTML = `<span>Spend by exit-risk tier:</span>` + r.tiers.map((v) => `<span><span class="swatch" style="background:${tierColor(v.tier)}"></span>${esc(v.label)} ${pct(v.pct, 0)}</span>`).join("");
     const lead = (i) => `<li><strong>${esc(i.lead)}</strong> ${esc(i.text)}</li>`;

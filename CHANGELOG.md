@@ -6,6 +6,18 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- One-page summary: a "Commitments written off" tile (Savings Plans and reservations still owed after
+  the exit). The tiles move to four columns so the page still fits one A4 sheet.
+
+### Fixed
+
+- Printing from the browser ("Save as PDF") now keeps a page margin instead of printing hard against
+  the paper edge; the one-page summary image in the docs has a white margin too.
+- The whole-organisation note on Savings Plans is shown once in Timing (under the chart), not twice.
+- The report no longer fails to draw for a commitment with no written-off figure.
+
 ## [0.11.1] - 2026-10-21
 
 ### Changed
