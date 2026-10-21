@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-21
+
 ### Added
 - **AI coding agents** in the Exit model: each catalog service carries an `agentic` rating (high,
   medium, low, none). With the toggle on, engineering weeks drop about 50% for high (Lambda, API
