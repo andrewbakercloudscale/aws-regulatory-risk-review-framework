@@ -6,6 +6,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Fixed
+
+- Clearer wording: "Up to $100k of commitments would be written off" (was "About up to"), and the
+  Data to move tile reads "13 to 52 days on 1 to 4 new 10 Gbps links".
+
 ### Documentation
 
 - README, exco guide, IAM permissions, operations and contributing guide cover the Direct Connect

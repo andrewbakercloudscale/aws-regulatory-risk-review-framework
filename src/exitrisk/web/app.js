@@ -955,7 +955,7 @@
     ];
     if (d.available && !d.empty) {
       const o = d.migration_links.options;
-      tiles.push(tile("Data to move", tb(d.move_tb), `${days(o.at(-1).days)} to ${days(o[0].days)} over ${o.at(-1).links} to ${o[0].links} new ${d.migration_links.link_gbps} Gbps link${o[0].links === 1 ? "" : "s"}`));
+      tiles.push(tile("Data to move", tb(d.move_tb), `${days(o.at(-1).days).replace(/ days$/, days(o[0].days).endsWith(" days") ? "" : " days")} to ${days(o[0].days)} on ${o[0].links} to ${o.at(-1).links} new ${d.migration_links.link_gbps} Gbps links`));
     }
     $("#resTiles").innerHTML = tiles.join("");
 
@@ -1067,7 +1067,7 @@
     }
     if (c.available && !c.empty) {
       pts.push(c.stranded_range
-        ? `About ${c.stranded_range} of commitments would be written off: still owed after the exit finishes; ${money(c.monthly_past_exit)}/mo runs past the fastest finish.`
+        ? `${c.stranded_range.startsWith("up to") ? "Up to " + c.stranded_range.slice(6) : "About " + c.stranded_range} of commitments would be written off: still owed after the exit finishes; ${money(c.monthly_past_exit)}/mo runs past the fastest finish.`
         : `Every Savings Plan and reservation ends before the fastest exit finishes, so a planned exit pays nothing to break them. Leaving in a hurry would still owe ${c.stressed_range}.`);
       if (c.buy_by?.["3yr"]) pts.push(`A new 3-year term bought after ${monthYear(c.buy_by["3yr"])} would outlast the fastest exit; ${c.buy_by["1yr"] ? `1-year terms stay safe until ${monthYear(c.buy_by["1yr"])}` : "buy 1-year terms"}.`);
       else if (c.buy_by?.["1yr"]) pts.push(`3-year terms already outlast the fastest exit; 1-year terms stay safe until ${monthYear(c.buy_by["1yr"])}.`);
