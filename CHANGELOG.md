@@ -7,11 +7,17 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 ## [Unreleased]
 
 ### Fixed
+- Charts no longer stay blank: they redraw when the tab comes back to the foreground, after printing,
+  after a back/forward restore, and when Chrome restores a dropped canvas; a chart that cannot draw
+  says so instead of showing an empty card.
 - Restarting the console no longer loses a running scan. A stop signal now waits for running scans to
   finish while the console keeps serving (a second signal stops at once). `exitrisk serve --replace`
   restarts safely, and `/api/health` and `/api/scans` list the scans still running.
 
 ### Changed
+- **Exit model** is a top-level menu: the delivery questions, notice period and EDP, and critical
+  accounts now sit in one dialog opened from the top bar, not inside the report. Each report section
+  shows the answers it used, with a button that opens the right part of the dialog.
 - Faster scans in large organisations: Cost Explorer queries by region, storage service and
   reservation type run four at a time; account tags are read alongside the cost queries; accounts
   under the chosen OUs are listed four OUs at a time; every scan reads the OU tree fresh, so an OU or

@@ -303,9 +303,27 @@
   }
 
   function chart(id, config) {
-    if (!window.Chart) { console.error("Chart.js not loaded"); return; }
+    const canvas = document.getElementById(id);
+    const box = canvas.parentElement;
+    box.querySelector(".chart-error")?.remove();
+    if (!window.Chart) {
+      console.error("Chart.js not loaded");
+      box.insertAdjacentHTML("beforeend", `<p class="chart-error">The chart library did not load. Reload the page (Cmd+Shift+R).</p>`);
+      return;
+    }
     state.charts[id]?.destroy();
-    state.charts[id] = new window.Chart(document.getElementById(id), config);
+    try {
+      state.charts[id] = new window.Chart(canvas, config);
+    } catch (e) {
+      console.error(`chart ${id} failed`, e);
+      box.insertAdjacentHTML("beforeend", `<p class="chart-error">This chart could not be drawn (${esc(e.message)}).</p>`);
+    }
+  }
+
+  // Chrome may drop a canvas's pixels when the tab sits in the background or memory runs short, and
+  // printing resizes charts for paper; redraw them all when that happens so none is left blank.
+  function redrawCharts() {
+    for (const c of Object.values(state.charts)) { c.resize(); c.update("none"); }
   }
 
   function renderProfile(r) {
@@ -630,6 +648,11 @@
       : c.by_tag
         ? `${plural(c.by_tag, "account")} tagged critical in AWS Organizations (a Criticality or Tier tag of Tier 1, Critical, Mission critical or similar).`
         : `${plural(c.tagged_accounts, "account")} carry tags, but none marks criticality. Add Criticality = Tier1, or name the critical accounts below.`;
+    const rf = $("#resForm");
+    answerStrip("#resAnswers", [
+      ["Critical accounts", c.by_tag ? `${plural(c.by_tag, "account")} tagged${rf.critical_accounts.value.trim() ? `, plus names containing ${rf.critical_accounts.value.trim()}` : ""}` : rf.critical_accounts.value.trim() ? `Names containing ${rf.critical_accounts.value.trim()}` : "None marked"],
+      ["Link speed for moving data", `${num(Number(rf.transfer_gbps.value) || d.transfer_gbps || 0)} Gbps`],
+    ]);
     const basis = crit ? "critical spend" : "in-scope spend";
     const none = st.buckets.find((b) => b.key === "none");
     const tiles = [
@@ -688,8 +711,19 @@
   const monthYear = (iso) => (iso ? new Date(`${iso.slice(0, 7)}-15`).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : "–");
   const mrange = (x) => (x[0] === x[1] ? money(x[0]) : `${money(x[0])} to ${money(x[1])}`);
 
+  // The Exit model answers a section uses, shown above its results (the forms live in the dialog).
+  function answerStrip(sel, pairs) {
+    $(sel).innerHTML = pairs.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+  }
+
   function renderTiming(r) {
     const t = r.timing, d = t.deadline, c = t.commitments, e = t.edp;
+    const tf = $("#timeForm");
+    answerStrip("#timeAnswers", [
+      ["Notice period", d.set ? `${d.months} months` : "None"],
+      ["EDP ends", tf.edp_end.value ? monthYear(`${tf.edp_end.value}-15`) : "No EDP"],
+      ["EDP annual commit", Number(tf.edp_annual_commit.value) > 0 ? money(Number(tf.edp_annual_commit.value)) : "–"],
+    ]);
     const exitEnd = t.exit_end ? `${monthYear(t.exit_end[0])} to ${monthYear(t.exit_end[1])}` : "–";
     const tiles = [
       tile("Exit finishes", exitEnd, t.duration_range ? `${t.duration_range} if it starts now` : "No spend in scope", t.provisional),
@@ -1520,11 +1554,17 @@
       $(id).addEventListener("change", loadReport);
       $(id).addEventListener("submit", (ev) => { ev.preventDefault(); loadReport(); });
     }
-    $("#btnAnswerQs").addEventListener("click", (ev) => {
-      ev.preventDefault();
-      $("#sec-estimate").scrollIntoView({ behavior: "smooth", block: "start" });
-      setTimeout(() => $("#qForm").cicd.focus({ preventScroll: true }), 400);
-    });
+    // Exit model: one top-level dialog holds every answer; each report section links to its part.
+    const openModel = (formId = "qForm") => {
+      $("#modelDialog").showModal();
+      const f = $(`#${formId}`);
+      f.scrollIntoView({ block: "nearest" });
+      f.querySelector("input:not([type=hidden]), select")?.focus({ preventScroll: true });
+    };
+    $("#btnModel").addEventListener("click", () => openModel());
+    $("#btnAnswerQs").addEventListener("click", (ev) => { ev.preventDefault(); openModel(); });
+    document.querySelectorAll("[data-model]").forEach((b) => b.addEventListener("click", () => openModel(b.dataset.model)));
+    for (const id of ["#btnCloseModel", "#btnCloseModelX"]) $(id).addEventListener("click", () => $("#modelDialog").close());
     $("#btnAcctMore").addEventListener("click", () => {
       state.showAllAccounts = !state.showAllAccounts;
       renderAccountTable(state.report, Math.max(...state.report.accounts.map((a) => a.spend_at_risk), 0.01));
@@ -1585,6 +1625,10 @@
     $("#logThisRun").addEventListener("change", openLog);
     $("#btnCloseLog").addEventListener("click", () => $("#logDialog").close());
     window.addEventListener("beforeprint", () => Object.values(state.charts).forEach((c) => c.resize()));
+    window.addEventListener("afterprint", () => requestAnimationFrame(redrawCharts));
+    window.addEventListener("pageshow", (e) => { if (e.persisted) redrawCharts(); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) redrawCharts(); });
+    document.querySelectorAll("canvas").forEach((c) => c.addEventListener("contextrestored", redrawCharts));
   }
 
   document.addEventListener("DOMContentLoaded", boot);

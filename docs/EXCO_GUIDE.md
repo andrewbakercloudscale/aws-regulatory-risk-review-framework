@@ -7,7 +7,7 @@ presenting it.
 
 Section 1 opens with a written brief you can read out as-is: the **bottom line**, **what we found**,
 **what leaving would take**, **what we recommend** and a **confidence** rating that says why the numbers
-might move (for example, the delivery questions in section 5 not yet answered). The key figures follow.
+might move (for example, the delivery questions under Exit model not yet answered). The key figures follow.
 
 Figures below are from the synthetic demo organisation (made-up numbers, 12 months) filtered to `prod`.
 
@@ -26,7 +26,7 @@ Figures below are from the synthetic demo organisation (made-up numbers, 12 mont
    processing (DynamoDB and Lambda) and the contact centre (Amazon Connect)."
 4. **What leaving would take**: "Roughly 2.5 to 5 years and $7m to $16m, with our current team and
    delivery maturity." The report gives ranges, never a single figure: at this stage a point
-   estimate would claim precision it does not have. Cost and time appear only once the delivery questions in section 5 are
+   estimate would claim precision it does not have. Cost and time appear only once the delivery questions under Exit model are
    answered; until then they are marked provisional.
 
 ## Questions to expect, and where the answer is

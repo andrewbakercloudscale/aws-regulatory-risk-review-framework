@@ -20,6 +20,7 @@
     <button id="btnSso" class="btn" title="Sign in through your AWS access portal (IAM Identity Center)"><span class="dot" id="ssoDot"></span><span id="ssoLabel">AWS sign-in</span></button>
     <button id="btnNewScan" class="btn primary">New scan</button>
     <button id="btnDemo" class="btn">Load demo data</button>
+    <button id="btnModel" class="btn" title="Your answers behind the cost, time, deadline and resilience figures">Exit model</button>
     <button id="btnPdf" class="btn">Export PDF</button>
     <button id="btnOnePage" class="btn" title="One A4 page for the executive committee: score, cost and time, top risks, decisions">One-page PDF</button>
     <button id="btnLogs" class="btn ghost" title="Application log">Log</button>
@@ -114,7 +115,7 @@
         <div class="provisional" id="briefProvisional" hidden>
           <div><strong>Cost and time are provisional.</strong> They use default answers, not your organisation's.
             Answer the delivery questions (CI/CD, Terraform, team size, day rate) to estimate them for you.</div>
-          <a href="#sec-estimate" class="btn primary no-print" id="btnAnswerQs">Answer the questions</a>
+          <a href="#" class="btn primary no-print" id="btnAnswerQs">Answer the questions</a>
         </div>
         <dl class="exit-facts" id="briefFacts"></dl>
         <div class="brief-cols">
@@ -228,41 +229,7 @@
     <!-- 5. Estimate -->
     <section class="section" id="sec-estimate">
       <h2><span class="num">5</span>Exit cost &amp; time estimate</h2>
-      <div class="grid-est">
-        <form class="card questionnaire" id="qForm" autocomplete="off">
-          <h3>About your organisation</h3>
-          <p class="muted small">These answers drive the estimate. They are saved in this browser only.</p>
-          <p class="q-status" id="qStatus"></p>
-          <input type="hidden" name="confirmed" value="false">
-          <label>Do teams use a standard CI/CD pipeline to create assets?
-            <select name="cicd"></select></label>
-          <label>Do you use Terraform, and is it up to date?
-            <select name="iac"></select></label>
-          <div class="pair">
-            <label>People in the core cloud team<input name="cloud_team_size" type="number" min="1" step="1"></label>
-            <label>% of their time on the exit<input name="cloud_team_allocation_pct" type="number" min="5" max="100" step="5"></label>
-          </div>
-          <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1"></label>
-          <label>Target platform<select name="target"></select></label>
-          <div id="dcFields" class="dc-fields" hidden>
-            <label>Where will the hardware go?<select name="dc_facility"></select></label>
-            <label class="check"><input name="dc_dr_site" type="checkbox"> Buy a second site for disaster recovery</label>
-          </div>
-          <div class="pair">
-            <label>Blended day rate<input name="day_rate" type="number" min="0" step="50"></label>
-            <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}"></label>
-          </div>
-          <div class="pair">
-            <label>FX: currency per 1 USD<input name="fx_per_usd" type="number" min="0.0001" step="0.01"></label>
-            <label>Contingency %<input name="contingency_pct" type="number" min="0" max="100" step="5"></label>
-          </div>
-          <div class="pair">
-            <label>Parallel-run months<input name="parallel_run_months" type="number" min="0" max="36" step="1"></label>
-            <label>Materiality (USD/month)<input name="materiality" type="number" min="0" step="5"></label>
-          </div>
-          <label class="check"><input name="regulated" type="checkbox"> Regulated entity (exit plan evidence, regulator notification, assurance testing)</label>
-          <button type="button" id="btnRecalc" class="btn primary no-print">These answers are right: recalculate</button>
-        </form>
+      <div class="est-full">
         <div class="est-results">
           <div id="estEmpty" class="card hint" hidden>No spend is in scope, so there is nothing to estimate. Change the account filter or run a scan that covers more accounts.</div>
           <div id="estBody">
@@ -279,22 +246,14 @@
         </div>
       </div>
       <div class="card">
-        <h3>Your answers and the assumptions behind the estimate</h3>
+        <div class="card-head"><h3>Your answers and the assumptions behind the estimate</h3><button type="button" class="btn no-print" data-model="qForm">Change answers</button></div>
         <dl class="answers" id="answers"></dl>
         <ul id="assumptions" class="assumptions"></ul>
       </div>
       <div id="timing">
       <h3 class="sub-head">Timing: your deadline and AWS commitments</h3>
-      <div class="grid-est">
-        <form class="card questionnaire" id="timeForm" autocomplete="off">
-          <h3>Deadline and contract</h3>
-          <label>Regulator or board notice period (months, 0 = none)<input name="exit_deadline_months" type="number" min="0" max="240" step="1"></label>
-          <div class="pair">
-            <label>Enterprise Discount Program ends<input name="edp_end" type="month"></label>
-            <label>EDP annual commit (USD)<input name="edp_annual_commit" type="number" min="0" step="100000"></label>
-          </div>
-          <p class="muted small">Leave the EDP blank if you have none. Saved in this browser only; these do not change the estimate.</p>
-        </form>
+      <div class="model-strip"><dl class="answers inline" id="timeAnswers"></dl><button type="button" class="btn no-print" data-model="timeForm">Change deadline and contract</button></div>
+      <div class="est-full">
         <div class="est-results">
           <div class="tiles" id="timeTiles"></div>
           <div class="card">
@@ -315,14 +274,8 @@
     <section class="section" id="sec-resilience">
       <h2><span class="num">6</span>Resilience: critical accounts, data and a stressed exit</h2>
       <p class="muted section-lede">A planned exit is one question. Regulators also ask what happens to critical services if AWS, or one region, fails, and what could move in weeks rather than years. These figures inform; they do not change the score or the estimate.</p>
-      <div class="grid-est">
-        <form class="card questionnaire" id="resForm" autocomplete="off">
-          <h3>Which accounts are critical?</h3>
-          <p class="muted small" id="resTagNote"></p>
-          <label>Also treat as critical (name contains, comma-separated)<input name="critical_accounts" maxlength="200" placeholder="payments, cards, core-banking"></label>
-          <label>Link speed for moving data out (Gbps)<input name="transfer_gbps" type="number" min="0.1" max="1000" step="1"></label>
-          <p class="muted small">Half the link speed is assumed usable. Saved in this browser only.</p>
-        </form>
+      <div class="model-strip"><dl class="answers inline" id="resAnswers"></dl><button type="button" class="btn no-print" data-model="resForm">Change critical accounts</button></div>
+      <div class="est-full">
         <div class="est-results">
           <div class="tiles" id="resTiles"></div>
         </div>
@@ -564,6 +517,67 @@
 </main>
 
 <!-- New scan dialog -->
+<!-- Exit model: the answers behind the estimate, timing and resilience -->
+<dialog id="modelDialog" class="dialog wide" aria-labelledby="modelTitle">
+  <div class="dialog-head"><h2 id="modelTitle">Exit model</h2><button type="button" class="btn ghost" id="btnCloseModelX" aria-label="Close">✕</button></div>
+  <p class="muted small">Your answers drive the cost and time estimate, the timing and the resilience figures. The report updates as you change them. Saved in this browser only.</p>
+  <div class="model-grid">
+  <form class="card questionnaire" id="qForm" autocomplete="off">
+    <h3>About your organisation</h3>
+    <p class="muted small">These answers drive the estimate. They are saved in this browser only.</p>
+    <p class="q-status" id="qStatus"></p>
+    <input type="hidden" name="confirmed" value="false">
+    <label>Do teams use a standard CI/CD pipeline to create assets?
+      <select name="cicd"></select></label>
+    <label>Do you use Terraform, and is it up to date?
+      <select name="iac"></select></label>
+    <div class="pair">
+      <label>People in the core cloud team<input name="cloud_team_size" type="number" min="1" step="1"></label>
+      <label>% of their time on the exit<input name="cloud_team_allocation_pct" type="number" min="5" max="100" step="5"></label>
+    </div>
+    <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1"></label>
+    <label>Target platform<select name="target"></select></label>
+    <div id="dcFields" class="dc-fields" hidden>
+      <label>Where will the hardware go?<select name="dc_facility"></select></label>
+      <label class="check"><input name="dc_dr_site" type="checkbox"> Buy a second site for disaster recovery</label>
+    </div>
+    <div class="pair">
+      <label>Blended day rate<input name="day_rate" type="number" min="0" step="50"></label>
+      <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}"></label>
+    </div>
+    <div class="pair">
+      <label>FX: currency per 1 USD<input name="fx_per_usd" type="number" min="0.0001" step="0.01"></label>
+      <label>Contingency %<input name="contingency_pct" type="number" min="0" max="100" step="5"></label>
+    </div>
+    <div class="pair">
+      <label>Parallel-run months<input name="parallel_run_months" type="number" min="0" max="36" step="1"></label>
+      <label>Materiality (USD/month)<input name="materiality" type="number" min="0" step="5"></label>
+    </div>
+    <label class="check"><input name="regulated" type="checkbox"> Regulated entity (exit plan evidence, regulator notification, assurance testing)</label>
+    <button type="button" id="btnRecalc" class="btn primary no-print">These answers are right: recalculate</button>
+  </form>
+    <div class="model-col">
+  <form class="card questionnaire" id="timeForm" autocomplete="off">
+    <h3>Deadline and contract</h3>
+    <label>Regulator or board notice period (months, 0 = none)<input name="exit_deadline_months" type="number" min="0" max="240" step="1"></label>
+    <div class="pair">
+      <label>Enterprise Discount Program ends<input name="edp_end" type="month"></label>
+      <label>EDP annual commit (USD)<input name="edp_annual_commit" type="number" min="0" step="100000"></label>
+    </div>
+    <p class="muted small">Leave the EDP blank if you have none. Saved in this browser only; these do not change the estimate.</p>
+  </form>
+  <form class="card questionnaire" id="resForm" autocomplete="off">
+    <h3>Which accounts are critical?</h3>
+    <p class="muted small" id="resTagNote"></p>
+    <label>Also treat as critical (name contains, comma-separated)<input name="critical_accounts" maxlength="200" placeholder="payments, cards, core-banking"></label>
+    <label>Link speed for moving data out (Gbps)<input name="transfer_gbps" type="number" min="0.1" max="1000" step="1"></label>
+    <p class="muted small">Half the link speed is assumed usable. Saved in this browser only.</p>
+  </form>
+    </div>
+  </div>
+  <div class="dialog-actions"><button type="button" class="btn primary" id="btnCloseModel">Done</button></div>
+</dialog>
+
 <dialog id="scanDialog" class="dialog">
   <form method="dialog" id="scanForm">
     <h2>New scan</h2>

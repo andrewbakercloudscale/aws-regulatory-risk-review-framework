@@ -107,7 +107,7 @@ because annualising two or three months magnifies noise.
 Until someone answers (or confirms) these questions, the estimate runs on defaults and describes a
 made-up organisation. The report then marks cost, exit window and effort **Provisional**, keeps them out
 of the bottom line, and makes "answer the delivery questions" the first recommendation. Changing any
-answer in section 5, or pressing *These answers are right*, makes the figures the organisation's own;
+answer under Exit model, or pressing *These answers are right*, makes the figures the organisation's own;
 on the command line, `--questionnaire answers.json` does the same.
 
 | Question | Options → delivery factor |
@@ -219,7 +219,7 @@ the full report deterministically; the report footer carries the tool version, c
 The estimate gives an exit window; this part asks whether the window fits, and what AWS is still owed
 when it closes. None of it changes the score or the estimate.
 
-**Deadline.** A notice period typed in section 5 (`exit_deadline_months`; 0 means none), measured from
+**Deadline.** A notice period typed under Exit model (`exit_deadline_months`; 0 means none), measured from
 today. *Fits* when even the slow end of the duration range finishes inside it, *At risk* when only the
 fast end does, *Does not fit* when neither does.
 
@@ -234,7 +234,7 @@ nothing; leaving in a hurry would owe everything still to run, which is shown in
 gives the last date a new 1-year or 3-year term can start and still end before the fastest exit.
 
 **Enterprise discount (EDP or PPA).** No AWS API exposes it, so its end month and annual commitment are
-typed in section 5. The shortfall is the commitment from the exit finishing to the agreement's end:
+typed under Exit model. The shortfall is the commitment from the exit finishing to the agreement's end:
 spend stops when the exit finishes. Real agreements often allow the shortfall to roll forward or be
 renegotiated; treat the figure as the opening position for that discussion.
 

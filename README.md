@@ -65,7 +65,7 @@ exit" (a fact a board can govern).
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs
   manual failover). See [MULTI_REGION.md](docs/MULTI_REGION.md).
-- **Times the exit** (section 5): whether it fits a regulator or board notice period you enter, which
+- **Times the exit** (section 5): whether it fits a regulator or board notice period you enter under **Exit model**, which
   Savings Plans and reservations run off before it finishes and what would still be owed, the last
   date a 3-year term stays inside the window, and any EDP shortfall.
 - **Tests resilience** (section 6): which accounts are critical (from account tags such as
@@ -96,7 +96,7 @@ exitrisk serve              # opens http://127.0.0.1:8740
 |---|---|
 | **Connect to AWS** | **AWS sign-in** for SSO / IAM Identity Center (paste your portal's start URL once), or any AWS CLI profile already on the machine, including aws-cli-zsp. Use the **management (payer) account**. |
 | **Check access** | Tests the five read-only calls a scan needs and shows ✓ / ✗ with the fix for each. If anything is missing it writes the **request to send your AWS administrator**: your identity, the account, the policy, ready to copy or download. |
-| **Scan and report** | Seconds for hundreds of accounts. Type `prod` in the filter bar, answer the questionnaire in section 5, **Export PDF**. |
+| **Scan and report** | Seconds for hundreds of accounts. Type `prod` in the filter bar, answer the questions under **Exit model** in the top bar, **Export PDF**. |
 
 No AWS access yet? **Load demo data** shows a synthetic bank estate (49 accounts, made-up numbers).
 
