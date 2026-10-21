@@ -359,12 +359,18 @@ table.data.accounts td { vertical-align: middle; }
 .switch-hint .btn { margin-top: 8px; display: block; }
 .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 4px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.busy { margin: 10px 0; }
-.busy p { margin: 0 0 6px; color: var(--muted); }
-.busy-bar { display: block; margin-top: 6px; position: relative; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
-.busy-bar i { position: absolute; top: 0; bottom: 0; width: 35%; border-radius: 2px; background: var(--accent); animation: busy 1.2s ease-in-out infinite; }
+/* Waiting on AWS: a tinted panel with a large spinner, what we wait for, a ticking timer and a moving bar.
+   It must be impossible to miss, also with reduced motion (the timer still counts up). */
+.busy { margin: 10px 0; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-left: 4px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--ink); }
+.busy-head { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14px; }
+.busy-head .spin { width: 18px; height: 18px; border-width: 3px; border-color: var(--accent); border-top-color: transparent; margin: 0; flex: none; }
+.busy-time { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--accent); }
+.busy-sub { margin: 4px 0 0 28px; font-size: 12.5px; color: var(--ink-2); }
+.busy-bar { display: block; margin-top: 10px; position: relative; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 18%, var(--surface)); overflow: hidden; }
+.busy-bar i { position: absolute; top: 0; bottom: 0; width: 35%; border-radius: 3px; background: var(--accent); animation: busy 1.1s ease-in-out infinite; }
 @keyframes busy { from { left: -35%; } to { left: 100%; } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; } .busy-bar i { animation: none; left: 0; width: 100%; opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; border-top-color: var(--accent) !important; border-right-color: transparent !important; } .busy-bar i { animation: none; left: 0; width: 100%; } }
 .tile-value .prov-tag { font-size: 10px; vertical-align: 5px; margin-left: 4px; letter-spacing: .03em; }
 .questionnaire label.check input { width: auto; flex: none; }
 .tier-split table.data td, .tier-split table.data th { padding: 6px 6px; }
@@ -466,3 +472,4 @@ table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(-
   body.onepage #onePager { display: block !important; }
   body.onepage .onepager table.data { font-size: 10px; }
 }
+.ou-pick > .busy { margin: 0; }

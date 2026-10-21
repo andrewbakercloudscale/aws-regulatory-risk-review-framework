@@ -1187,8 +1187,8 @@
   async function loadOus(ev) {
     const refresh = ev?.currentTarget?.id === "btnLoadOus";
     const was = new Set(pickedOus());
-    $("#sOu").innerHTML = `<p class="muted small">Loading organizational units…</p>`;
-    $("#ouStatus").innerHTML = `<span class="spin" aria-hidden="true"></span> Loading organizational units (a few seconds)… approve Touch ID if prompted.<span class="busy-bar" aria-hidden="true"><i></i></span>`;
+    $("#sOu").innerHTML = busyPanel("Loading organizational units…", "Usually a few seconds. Approve Touch ID if prompted.");
+    $("#ouStatus").textContent = "";
     $("#btnLoadOus").disabled = true;
     const seq = (state.ouSeq = (state.ouSeq || 0) + 1); // a later profile change wins over a slow earlier reply
     try {
@@ -1306,8 +1306,23 @@
   function busy(sel, text) {
     const el = $(sel);
     el.hidden = !text;
-    if (text) el.querySelector(".busy-text").textContent = text;
+    if (text) { el.querySelector(".busy-text").textContent = text; el.dataset.started = Date.now(); tickBusy(); }
+    else delete el.dataset.started;
   }
+
+  // A loading panel for content areas (the OU list): same look as busy(), built in place.
+  function busyPanel(title, sub) {
+    return `<div class="busy" role="status" aria-live="polite" data-started="${Date.now()}"><div class="busy-head"><span class="spin" aria-hidden="true"></span><span>${esc(title)}</span><span class="busy-time" aria-hidden="true">0s</span></div>${sub ? `<p class="busy-sub">${esc(sub)}</p>` : ""}<div class="busy-bar" aria-hidden="true"><i></i></div></div>`;
+  }
+
+  // Seconds waited so far, on every visible loading panel: shows it is alive even with reduced motion.
+  function tickBusy() {
+    document.querySelectorAll(".busy[data-started]").forEach((el) => {
+      const t = el.querySelector(".busy-time");
+      if (t) t.textContent = `${Math.floor((Date.now() - Number(el.dataset.started)) / 1000)}s`;
+    });
+  }
+  setInterval(tickBusy, 500);
 
   function currentSso() { return sso.sessions.find((s) => s.name === $("#ssoSession").value); }
 
