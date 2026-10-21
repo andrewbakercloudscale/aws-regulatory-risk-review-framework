@@ -151,10 +151,10 @@ Direct Connect, Marketplace). The factor applies before the delivery factor, so 
 and testing the agents' changes are still counted. It shortens the work, not the lock-in: the score
 does not change. The rating per service is in [SERVICE_CATALOG.md](SERVICE_CATALOG.md).
 
-**Products left out.** The Exit model can leave named AWS products out (for example Marketplace
+**Products left out.** **Exclusions** in the top bar can leave named AWS products out (for example Marketplace
 software re-contracted anyway, or a service being retired). Their spend is removed from the score,
 the tiers, the estimate and the trend, and the report says what was left out and how much it spends
-a month at the top of the report and in the answers.
+a month at the top of the report.
 
 ### Duration
 

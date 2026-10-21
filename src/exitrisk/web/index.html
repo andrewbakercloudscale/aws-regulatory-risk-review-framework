@@ -20,7 +20,9 @@
     <button id="btnSso" class="btn" title="Sign in through your AWS access portal (IAM Identity Center)"><span class="dot" id="ssoDot"></span><span id="ssoLabel">AWS sign-in</span></button>
     <button id="btnNewScan" class="btn primary">New scan</button>
     <button id="btnDemo" class="btn">Load demo data</button>
+    <button id="btnExcl" class="btn" title="AWS products left out of the score and estimate">Exclusions<span id="exclCount" class="count-badge" hidden></span></button>
     <button id="btnModel" class="btn" title="Your answers behind the cost, time, deadline and resilience figures">Exit model</button>
+    <button id="btnIssues" class="btn" title="Data quality and scan issues (section 7)" hidden>Issues<span id="issueBadge" class="count-badge"></span></button>
     <button id="btnPdf" class="btn">Export PDF</button>
     <button id="btnOnePage" class="btn" title="One A4 page for the executive committee: score, cost and time, top risks, decisions">One-page PDF</button>
     <button id="btnLogs" class="btn ghost" title="Application log">Log</button>
@@ -573,17 +575,24 @@
         <label>Link speed for moving data out (Gbps)<input name="transfer_gbps" type="number" min="0.1" max="1000" step="1"></label>
         <p class="muted small">Half the link speed is assumed usable. Saved in this browser only.</p>
       </form>
-      <div class="card questionnaire" id="exclForm">
-        <h3>Leave out of the score and estimate</h3>
-        <p class="muted small">Tick AWS products to ignore, for example Marketplace software you re-contract anyway or a service you are retiring. The report says what was left out.</p>
-        <label class="sr-only" for="exclFilter">Find a product</label>
-        <input id="exclFilter" type="search" placeholder="Find a product" autocomplete="off">
-        <div id="exclList" class="excl-list"></div>
-        <p class="muted small" id="exclNote"></p>
-      </div>
     </div>
   </div>
   <div class="dialog-actions"><button type="button" class="btn primary" id="btnCloseModel">Done</button></div>
+</dialog>
+
+<!-- Exclusions: AWS products left out of the score and estimate -->
+<dialog id="exclDialog" class="dialog" aria-labelledby="exclTitle">
+  <div class="dialog-head"><h2 id="exclTitle">Exclusions</h2><button type="button" class="btn ghost" id="btnExclX" aria-label="Close">✕</button></div>
+  <p class="muted small">Tick AWS products to leave out of the score and the estimate, for example Marketplace software you re-contract anyway or a service you are retiring. No new scan is needed: the scan keeps every product's spend, so you can undo this at any time. The report says what was left out. Saved in this browser only.</p>
+  <label class="sr-only" for="exclFilter">Find a product</label>
+  <input id="exclFilter" type="search" placeholder="Find a product" autocomplete="off">
+  <div id="exclList" class="excl-list"></div>
+  <p class="muted small" id="exclNote"></p>
+  <div class="dialog-actions">
+    <button type="button" class="btn ghost" id="btnExclClear">Clear all</button>
+    <button type="button" class="btn" id="btnExclCancel">Cancel</button>
+    <button type="button" class="btn primary" id="btnExclApply">Apply and regenerate</button>
+  </div>
 </dialog>
 
 <!-- New scan dialog -->

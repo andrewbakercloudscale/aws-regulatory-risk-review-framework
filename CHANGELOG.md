@@ -10,6 +10,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 - Loading states are hard to miss: a tinted panel with a large spinner, what it is waiting for, a
   seconds counter and a thicker moving bar (OU list, AWS sign-in, Check access). With reduced motion
   the counter still ticks.
+- Product exclusions moved out of the Exit model into their own **Exclusions** button in the top
+  bar (with a count of products left out): search, tick, then **Apply and regenerate**. Cancel
+  discards unapplied ticks. No rescan needed.
+- New **Issues** button in the top bar: count of data quality and scan issues, coloured by the
+  worst severity, jumping to section 7. Scan progress and the completion toast point to it.
 
 ## [0.7.0] - 2026-10-21
 

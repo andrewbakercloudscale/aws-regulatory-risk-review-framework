@@ -558,7 +558,7 @@ def _coverage_notes(scan: dict, summary: dict, all_accounts: list, account_filte
         left = _join(s["display"] for s in summary["excluded_services"][:6])
         more = len(summary["excluded_services"]) - 6
         notes.append(
-            f"Left out of the score and estimate at your request (Exit model): {left}"
+            f"Left out of the score and estimate at your request (Exclusions): {left}"
             + (f" and {more} more" if more > 0 else "")
             + f", {_money(summary['excluded_services_monthly'])}/month."
         )

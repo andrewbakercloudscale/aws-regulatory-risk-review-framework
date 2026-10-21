@@ -810,6 +810,12 @@
 
   function renderIssues(r) {
     const c = r.issue_counts;
+    // Top-bar shortcut: count and colour of the worst severity, so issues are never only at the bottom.
+    const worst = ["critical", "error", "warning", "info"].find((s) => c[s]);
+    $("#btnIssues").hidden = !r.issues.length;
+    $("#issueBadge").textContent = r.issues.length;
+    $("#issueBadge").className = `count-badge sev-${worst || "info"}`;
+    $("#btnIssues").title = `${plural(r.issues.length, "issue")}${worst ? `, worst: ${worst}` : ""} (section 7)`;
     $("#issueCounts").innerHTML = ["critical", "error", "warning", "info"].map((s) => `<span class="chip"><span class="sev" style="--dot:${css(SEV_COLOR[s])}">${s}: ${c[s] || 0}</span></span>`).join("");
     const names = Object.fromEntries(r.accounts.map((a) => [a.id, a.name]));
     $("#issueTable").innerHTML = r.issues.length
@@ -821,15 +827,23 @@
       : `<tbody><tr><td class="hint">No issues recorded. Every API call in the scan succeeded.</td></tr></tbody>`;
   }
 
-  // Exit model: the products with spend in scope, ticked when left out of the score and estimate.
+  // Exclusions dialog: every product with spend in scope; ticks are a draft until "Apply and regenerate".
   function renderExclusions(r) {
+    const draft = state.exclDraft || state.exclude;
     const find = $("#exclFilter").value.trim().toLowerCase();
-    const rows = (r.product_choices || []).filter((p) => !find || p.display.toLowerCase().includes(find) || p.service.toLowerCase().includes(find));
+    const choices = r.product_choices || [];
+    const rows = choices.filter((p) => !find || p.display.toLowerCase().includes(find) || p.service.toLowerCase().includes(find));
     $("#exclList").innerHTML = rows.length
-      ? rows.map((p) => `<label class="check"><input type="checkbox" data-svc="${esc(p.service)}"${state.exclude.has(p.service) ? " checked" : ""}><span>${esc(p.display)}</span><span class="excl-spend">${money(p.monthly_spend)}/mo</span></label>`).join("")
+      ? rows.map((p) => `<label class="check"><input type="checkbox" data-svc="${esc(p.service)}"${draft.has(p.service) ? " checked" : ""}><span>${esc(p.display)}</span><span class="excl-spend">${money(p.monthly_spend)}/mo</span></label>`).join("")
       : `<p class="muted small">${find ? "No product matches." : "No spend in scope."}</p>`;
-    const left = r.summary.excluded_services;
-    $("#exclNote").textContent = left.length ? `${plural(left.length, "product")} left out: ${money(r.summary.excluded_services_monthly)}/month.` : "Nothing left out.";
+    const picked = choices.filter((p) => draft.has(p.service));
+    const changed = [...draft].sort().join("|") !== [...state.exclude].sort().join("|");
+    $("#exclNote").textContent = (picked.length ? `${plural(picked.length, "product")} ticked: ${money(picked.reduce((a, p) => a + p.monthly_spend, 0))}/month.` : "Nothing ticked.")
+      + (changed ? " Not applied yet." : "");
+    $("#btnExclApply").disabled = !changed;
+    const n = r.summary.excluded_services.length;
+    $("#exclCount").hidden = !n;
+    $("#exclCount").textContent = n;
   }
 
   function renderAppendix(r) {
@@ -1251,14 +1265,14 @@
       try {
         const s = await api(`/api/scans/${encodeURIComponent(id)}/status`);
         $("#scanBar").style.width = `${s.pct}%`;
-        $("#scanMsg").textContent = `${s.message || s.phase}${s.issues ? ` · ${s.issues} issue(s)` : ""}`;
+        $("#scanMsg").textContent = `${s.message || s.phase}${s.issues ? ` · ${plural(s.issues, "issue")} so far (listed under Issues when the scan finishes)` : ""}`;
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         $("#btnStartScan").disabled = false;
         if (s.status === "failed") {
           $("#scanError").textContent = `Scan failed: ${s.message}. See section 7 and the log for details.`;
         } else {
           $("#scanDialog").close();
-          toast(`Scan ${s.status}${s.issues ? ` with ${s.issues} issue(s) - see section 7` : ""}`);
+          toast(`Scan ${s.status}${s.issues ? ` with ${plural(s.issues, "issue")}: click Issues in the top bar` : ""}`);
         }
         await refreshScans(id);
         state.scanId = id;
@@ -1593,14 +1607,36 @@
       f.querySelector("input:not([type=hidden]), select")?.focus({ preventScroll: true });
     };
     $("#btnModel").addEventListener("click", () => openModel());
+    $("#btnIssues").addEventListener("click", () => {
+      setView("exit");
+      $("#sec-issues").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    // Exclusions: tick in a draft, then apply once; closing without applying discards the draft.
+    $("#btnExcl").addEventListener("click", () => {
+      if (!state.report) { toast("Load a scan first"); return; }
+      state.exclDraft = new Set(state.exclude);
+      $("#exclFilter").value = "";
+      renderExclusions(state.report);
+      $("#exclDialog").showModal();
+    });
+    $("#exclDialog").addEventListener("close", () => { state.exclDraft = null; });
     $("#exclFilter").addEventListener("input", () => state.report && renderExclusions(state.report));
     $("#exclFilter").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
     $("#exclList").addEventListener("change", (e) => {
       const svc = e.target.dataset.svc;
-      if (!svc) return;
-      if (e.target.checked) state.exclude.add(svc); else state.exclude.delete(svc);
+      if (!svc || !state.exclDraft) return;
+      if (e.target.checked) state.exclDraft.add(svc); else state.exclDraft.delete(svc);
+      renderExclusions(state.report);
+    });
+    $("#btnExclClear").addEventListener("click", () => { state.exclDraft = new Set(); renderExclusions(state.report); });
+    for (const id of ["#btnExclCancel", "#btnExclX"]) $(id).addEventListener("click", () => $("#exclDialog").close());
+    $("#btnExclApply").addEventListener("click", async () => {
+      state.exclude = new Set(state.exclDraft);
+      $("#exclDialog").close();
       readQuestionnaire();
-      loadReport();
+      await loadReport();
+      const n = state.exclude.size;
+      toast(n ? `Regenerated without ${plural(n, "product")}` : "Regenerated with every product");
     });
     $("#btnAnswerQs").addEventListener("click", (ev) => { ev.preventDefault(); openModel(); });
     document.querySelectorAll("[data-model]").forEach((b) => b.addEventListener("click", () => openModel(b.dataset.model)));
