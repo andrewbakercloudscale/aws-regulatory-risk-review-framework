@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-21
+
 ### Added
 - **One-page ExCo summary**: score, headline, six tiles, tier bar, top three findings and decisions,
   and the five accounts that drive the exit on one A4 page. **One-page PDF** button, or
