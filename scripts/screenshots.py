@@ -225,6 +225,22 @@ def main() -> int:
             margin={"top": "14mm", "bottom": "14mm", "left": "12mm", "right": "12mm"},
         )
         print("wrote", pdf)
+        # The one-page ExCo summary: the PDF plus an image of it for the README.
+        pp.set_viewport_size({"width": 800, "height": 1130})
+        pp.goto(base + "&include=prod&print=1&onepage=1")
+        pp.wait_for_selector("body[data-ready='1']")
+        pp.emulate_media(media="print")
+        pp.wait_for_timeout(500)
+        pp.locator("#onePager").screenshot(path=str(OUT / "one-page-summary.png"))
+        print("wrote", OUT / "one-page-summary.png")
+        pdf = ROOT / "docs" / "sample-summary.pdf"
+        pp.pdf(
+            path=str(pdf),
+            format="A4",
+            print_background=True,
+            margin={"top": "14mm", "bottom": "14mm", "left": "12mm", "right": "12mm"},
+        )
+        print("wrote", pdf)
         browser.close()
 
     server.should_exit = True

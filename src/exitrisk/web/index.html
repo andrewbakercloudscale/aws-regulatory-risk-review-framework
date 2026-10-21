@@ -21,6 +21,7 @@
     <button id="btnNewScan" class="btn primary">New scan</button>
     <button id="btnDemo" class="btn">Load demo data</button>
     <button id="btnPdf" class="btn">Export PDF</button>
+    <button id="btnOnePage" class="btn" title="One A4 page for the executive committee: score, cost and time, top risks, decisions">One-page PDF</button>
     <button id="btnLogs" class="btn ghost" title="Application log">Log</button>
     <button id="btnTheme" class="btn ghost" title="Toggle dark mode" aria-label="Toggle dark mode">◐</button>
   </div>
@@ -396,6 +397,37 @@
     </section>
     <footer class="report-footer" id="footer"></footer>
   </div>
+
+  <!-- One-page executive summary: print only (One-page PDF button, or exitrisk pdf --onepage) -->
+  <section id="onePager" class="onepager" hidden>
+    <header class="op-head">
+      <div>
+        <p class="eyebrow">AWS exit risk · one-page summary</p>
+        <h1 id="opTitle"></h1>
+        <p class="muted" id="opScope"></p>
+      </div>
+      <div class="op-score">
+        <div class="hero-label">Exit-risk score</div>
+        <div class="op-num"><span id="opScore"></span><span class="hero-of">/100</span></div>
+        <div class="badge" id="opRating"></div>
+        <div class="muted small" id="opScoreAcc"></div>
+      </div>
+    </header>
+    <p class="op-headline" id="opHeadline"></p>
+    <p class="op-prov" id="opProv" hidden><strong>Cost and time are provisional.</strong> They use default delivery answers, not this organisation's: answer the questions in section 5 of the full report.</p>
+    <div class="op-tiles" id="opTiles"></div>
+    <div class="op-tiers">
+      <div class="op-tierbar" id="opTierBar"></div>
+      <div class="op-legend" id="opTierLegend"></div>
+    </div>
+    <div class="op-cols">
+      <div><h2>What we found</h2><ol class="leads" id="opRisks"></ol></div>
+      <div><h2>Decisions needed</h2><ol class="leads" id="opDecisions"></ol></div>
+    </div>
+    <h2>Accounts that drive the exit</h2>
+    <table class="data compact" id="opAccounts"></table>
+    <p class="op-foot muted" id="opFoot"></p>
+  </section>
 
   <!-- ================================================================ Multi-region view -->
   <div id="mrError" class="card mr-error no-print" role="alert" hidden>

@@ -7,6 +7,7 @@
 
   const params = new URLSearchParams(location.search);
   const PRINT = params.get("print") === "1";
+  if (params.get("onepage") === "1") document.body.classList.add("onepage");
   const LS_Q = "exitrisk.questionnaire.v1";
   const LS_THEME = "exitrisk.theme";
   const LS_ORG_PROFILE = "exitrisk.orgProfile"; // last profile that could read the OU tree
@@ -191,6 +192,7 @@
       renderTiming(r);
       renderIssues(r);
       renderAppendix(r);
+      renderOnePager(r);
     } catch (e) {
       // A rendering bug must not leave a half-drawn report that looks complete, or hang the PDF export.
       console.error("render failed", e);
@@ -732,6 +734,39 @@
     }
     $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Stranded is what would still be owed between the exit finishing and the commitment ending.${undated}`;
     $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Stranded</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
+  }
+
+  // One A4 page for the executive committee, printed on its own (body.onepage).
+  function renderOnePager(r) {
+    const m = r.meta, s = r.summary, e = r.estimate, x = s.executive, d = r.timing?.deadline;
+    $("#opTitle").textContent = m.mode === "demo" ? "Demo organisation (synthetic data)" : m.ou?.path || "Organisation";
+    $("#opScope").textContent = [m.filter.description, `${num(s.accounts_in_scope)} accounts`, `${money(s.annual_spend)} a year on AWS`,
+      m.scanned_at ? `scanned ${new Date(m.scanned_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""].filter(Boolean).join(" · ");
+    $("#opScore").textContent = s.score_by_spend == null ? "–" : Math.round(s.score_by_spend);
+    ratingBadge($("#opRating"), s.rating_by_spend, s.score_by_spend == null ? "No spend in scope" : s.rating_by_spend);
+    $("#opScoreAcc").textContent = s.score_by_accounts == null ? "" : `By spend · ${Math.round(s.score_by_accounts)} by no. of accounts`;
+    $("#opHeadline").textContent = x.headline || x.bottom_line;
+    $("#opProv").hidden = !x.provisional;
+    $("#opTiles").innerHTML = [
+      tile("Spend on High/Critical services", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
+      tile("High/Critical accounts", s.accounts_rated ? `${num(s.high_risk_accounts)} of ${num(s.accounts_rated)}` : "–", s.accounts_rated ? `${pct(s.high_risk_accounts_spend_pct)} of spend` : ""),
+      tile("Bespoke (AWS-only) services", num(s.bespoke_services), s.top_lockin_services.slice(0, 3).map((v) => v.display).join(", ") || "none in use"),
+      ...(e.empty ? [] : [
+        tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend` : "", e.provisional),
+        tile("Exit window", e.ranges.duration, `bound by ${e.duration.constrained_by}`, e.provisional),
+        d?.set && d.status !== "unknown" ? tile("Notice period", d.label, `${d.months} months${d.short_months ? `; slow end ${num(d.short_months, 0)} months over` : ""}`, e.provisional)
+          : tile("Engineering effort", e.ranges.effort, `team capacity ${num(e.team.capacity_fte, 1)} FTE`, e.provisional),
+      ]),
+    ].join("");
+    $("#opTierBar").innerHTML = r.tiers.map((v) => `<i style="width:${v.pct}%;background:${tierColor(v.tier)}" title="${esc(v.label)}"></i>`).join("");
+    $("#opTierLegend").innerHTML = `<span>Spend by exit-risk tier:</span>` + r.tiers.map((v) => `<span><span class="swatch" style="background:${tierColor(v.tier)}"></span>${esc(v.label)} ${pct(v.pct, 0)}</span>`).join("");
+    const lead = (i) => `<li><strong>${esc(i.lead)}</strong> ${esc(i.text)}</li>`;
+    $("#opRisks").innerHTML = (x.findings_rich || []).slice(0, 3).map(lead).join("");
+    $("#opDecisions").innerHTML = (x.actions_rich || []).slice(0, 3).map(lead).join("");
+    const top = r.accounts.filter((a) => a.score != null && a.monthly_spend > 0).slice(0, 5);
+    $("#opAccounts").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Per month</th><th>Risk</th><th class="num-cell">Spend at risk / month</th><th>Main lock-in</th></tr></thead><tbody>` +
+      top.map((a) => `<tr><td><strong>${esc(a.name)}</strong></td><td class="num-cell">${money(a.monthly_spend)}</td><td><span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span></td><td class="num-cell">${money(a.spend_at_risk)}</td><td>${esc(a.top_lockin.slice(0, 3).map((v) => v.service).join(", ") || "none")}</td></tr>`).join("") + "</tbody>";
+    $("#opFoot").textContent = `Confidence: ${x.confidence}. ${x.confidence_reasons.join(" ")} Cost and time are ranges for a planning decision, not a delivery quote. Generated ${new Date(m.generated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} by aws-regulatory-risk-review-framework v${m.tool_version}, scan ${m.scan_id}. The full report has the method, every account and service, and the data gaps.`;
   }
 
   function renderIssues(r) {
@@ -1487,6 +1522,14 @@
       toast("Choose “Save as PDF” in the print dialog. For a scripted PDF: exitrisk pdf <scan-id>", 6000);
       setTimeout(() => window.print(), 300);
     });
+    $("#btnOnePage").addEventListener("click", () => {
+      if (!state.report) { toast("Load a scan first"); return; }
+      if (state.view === "multiregion") { toast("The one-page summary covers the exit-risk report: switch to the Exit risk tab"); return; }
+      document.body.classList.add("onepage");
+      toast("Choose “Save as PDF” in the print dialog. For a scripted PDF: exitrisk pdf <scan-id> --onepage", 6000);
+      setTimeout(() => window.print(), 300);
+    });
+    window.addEventListener("afterprint", () => { if (params.get("onepage") !== "1") document.body.classList.remove("onepage"); });
     $("#btnTheme").addEventListener("click", () => {
       const dark = document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
       const next = dark ? "light" : "dark";

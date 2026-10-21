@@ -130,6 +130,7 @@ exitrisk scan --profile mgmt --ou ou-ab12-cdef3456 --months 3          # spend-o
 exitrisk scan --profile mgmt --inventory --role ExitRiskReadOnly        # plus resource counts
 exitrisk scan --profile mgmt --target gcp                               # exit target: azure (default), gcp, oci, sovereign, onprem, datacenter
 exitrisk pdf <scan-id> --include prod --questionnaire answers.json --out board-pack.pdf  # PDF without a browser
+exitrisk pdf <scan-id> --include prod --onepage                      # one-page ExCo summary
 exitrisk report <scan-id> --include prod --questionnaire answers.json   # JSON for other tools
 exitrisk catalog                                                        # list service tiers
 ```
@@ -200,12 +201,17 @@ exitrisk catalog                                                        # list s
 
 ![New scan](docs/images/new-scan-dialog.png)
 
+**One-page ExCo summary**: score, headline, six tiles, tier bar, top findings and decisions, and the
+accounts that drive the exit, on one A4 page. **One-page PDF** in the header, or `exitrisk pdf --onepage`.
+
+![One-page summary](docs/images/one-page-summary.png)
+
 **Dark mode**
 
 ![Dark mode](docs/images/dashboard-dark.png)
 
 Complete sample reports generated from the demo data: [exit risk](docs/sample-report.pdf),
-[multi-region](docs/sample-multiregion.pdf).
+[one-page summary](docs/sample-summary.pdf), [multi-region](docs/sample-multiregion.pdf).
 
 ## How the score works
 

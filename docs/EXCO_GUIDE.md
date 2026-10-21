@@ -54,3 +54,6 @@ Figures below are from the synthetic demo organisation (made-up numbers, 12 mont
 Filter by name (`prod`), toggle the questionnaire (e.g. "Terraform current" vs "with drift") and the
 estimate updates in under a second. Export the PDF afterwards so the minutes reference a fixed version:
 the footer carries the scan id, catalog version and generation time.
+
+For the board pack cover or a pre-read, **One-page PDF** prints the summary on a single A4 page
+(`exitrisk pdf <scan-id> --onepage` from the command line). The full report stays the reference.

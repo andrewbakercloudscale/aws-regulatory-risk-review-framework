@@ -6,6 +6,21 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **One-page ExCo summary**: score, headline, six tiles, tier bar, top three findings and decisions,
+  and the five accounts that drive the exit on one A4 page. **One-page PDF** button, or
+  `exitrisk pdf <scan-id> --onepage` (warns if long names push it to a second page). Sample in
+  `docs/sample-summary.pdf`.
+
+### Changed
+- Ranges read "$7m to $16m" and "2.5 to 5.5 years"; no dashes in report text or docs.
+- Phone layout: no sideways scroll at 390px; wide tables scroll inside their card.
+
+### Fixed
+- Commitments: term and end date are read from other Cost Explorer attributes (lease term, purchase
+  term, start date plus term) when the usual ones are missing. Undated commitments are counted and
+  shown in Timing instead of being dropped silently.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added

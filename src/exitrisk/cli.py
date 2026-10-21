@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import threading
 import time
@@ -144,6 +145,11 @@ def _pdf(args) -> int:
 
     import uvicorn
 
+    if args.onepage and args.view == "multiregion":
+        raise UsageError("--onepage summarises the exit-risk report; drop --view multiregion")
+    if args.onepage and args.out == "exit-risk-report.pdf":
+        args.out = "exit-risk-summary.pdf"
+
     from .server import create_app
 
     server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=args.port, log_level="warning"))
@@ -174,6 +180,7 @@ def _pdf(args) -> int:
                 "q": json.dumps(_answers(args.questionnaire, "questionnaire")) if args.questionnaire else None,
                 "view": "multiregion" if args.view == "multiregion" else None,
                 "mr": json.dumps(_answers(args.multiregion, "multi-region answers")) if args.multiregion else None,
+                "onepage": "1" if args.onepage else None,
                 "print": "1",
             }.items()
             if v
@@ -210,8 +217,16 @@ def _pdf(args) -> int:
             browser.close()
     finally:
         server.should_exit = True
+    if args.onepage and (pages := _pdf_pages(Path(args.out))) > 1:
+        log.warning("the one-page summary ran to %d pages; long account or service names can push it over", pages)
     log.info("wrote %s", args.out)
     return 0
+
+
+def _pdf_pages(path: Path) -> int:
+    """Pages in a PDF Chromium wrote: its page objects, not counting the page tree."""
+    data = path.read_bytes()
+    return len(re.findall(rb"/Type\s*/Page\b", data))
 
 
 def _catalog(args) -> int:
@@ -287,6 +302,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         if name == "pdf":
             p.add_argument("--port", type=int, default=8741)
+            p.add_argument(
+                "--onepage",
+                action="store_true",
+                help="one A4 page for the executive committee (default file exit-risk-summary.pdf)",
+            )
             p.add_argument(
                 "--min-rating",
                 choices=["Moderate", "High"],

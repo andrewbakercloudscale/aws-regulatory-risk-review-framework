@@ -54,3 +54,15 @@ def test_scan_passes_the_exit_target(monkeypatch):
     monkeypatch.setattr(scanner, "run_scan", fake_run)
     assert cli.main(["scan", "--profile", "x", "--target", "onprem"]) == 0
     assert seen["target"] == "onprem"
+
+
+def test_onepage_is_for_the_exit_view_only(errors):
+    scan_id = create_demo_scan()["id"]
+    assert cli.main(["pdf", scan_id, "--onepage", "--view", "multiregion"]) == 2
+    assert "--onepage summarises the exit-risk report" in errors[0]
+
+
+def test_pdf_pages_counts_page_objects(tmp_path):
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"<< /Type /Pages /Count 2 >> << /Type /Page >> << /Type /Page/Parent 1 0 R >>")
+    assert cli._pdf_pages(pdf) == 2
