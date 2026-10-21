@@ -367,7 +367,7 @@
   function render() {
     const r = state.report;
     $("#empty").hidden = true;
-    $("#viewTabs").hidden = false;
+    $("#reportBar").hidden = false;
     $("#content").hidden = state.view === "multiregion";
     try {
       renderCover(r);
@@ -1205,6 +1205,11 @@
     $("#content").hidden = state.view !== "exit" || !state.report;
     $("#mrContent").hidden = state.view !== "multiregion" || !state.mr;
     if (state.view !== "multiregion") $("#mrError").hidden = true;
+    // Export follows the report on screen; the one-page summary exists only for exit risk.
+    const mr = state.view === "multiregion";
+    $("#btnPdf b").textContent = mr ? "Multi-region report" : "Full report";
+    $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : "Every section and the appendix";
+    $("#btnOnePage").hidden = mr;
     if (!PRINT) {
       const url = new URL(location.href);
       if (state.view === "multiregion") url.searchParams.set("view", "multiregion"); else url.searchParams.delete("view");
@@ -1307,7 +1312,7 @@
   function renderMr() {
     const m = state.mr, s = m.summary, rg = s.ranges, x = s.executive, t = s.target;
     const cur = s.run.currency;
-    $("#viewTabs").hidden = false;
+    $("#reportBar").hidden = false;
     fillMrForm(m);
     $("#mrMeta").innerHTML = [
       ["Scope", state.report?.meta.filter.description || "All accounts"],

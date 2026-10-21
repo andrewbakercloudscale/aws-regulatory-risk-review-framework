@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- **Export PDF** sits on the report, next to the Exit risk and Multi-region tabs, instead of the top
+  bar, and offers what fits the tab on screen (the one-page summary only under Exit risk).
+
 ## [0.9.0] - 2026-10-21
 
 ### Added

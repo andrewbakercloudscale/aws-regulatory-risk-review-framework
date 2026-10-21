@@ -510,7 +510,11 @@ table.data.accounts td { vertical-align: middle; }
 
 /* Report views: exit risk / multi-region */
 /* Report views: two large tabs, the active one filled so it is obvious which report you are in. */
-.viewtabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; max-width: 640px; margin: 4px 0 18px; padding: 5px;
+/* Tabs on the left, Export PDF on the right: the export belongs to the report being read. */
+.report-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 18px; }
+.report-bar > .menu { margin-left: auto; }
+.report-bar #btnExport svg:first-child { width: 16px; height: 16px; }
+.viewtabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; flex: 0 1 640px; min-width: 0; padding: 5px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; }
 .vtab { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));

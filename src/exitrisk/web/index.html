@@ -26,13 +26,6 @@
     <button id="btnIssues" class="btn" title="Data quality and scan issues (section 7)" hidden>Issues<span id="issueBadge" class="count-badge"></span></button>
     <span class="tb-sep" aria-hidden="true"></span>
     <div class="menu">
-      <button id="btnExport" class="btn" aria-haspopup="menu" aria-expanded="false" aria-controls="exportMenu">Export PDF<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>
-      <div id="exportMenu" class="menu-pop right" role="menu" hidden>
-        <button id="btnPdf" role="menuitem"><b>Full report</b><span>Every section and the appendix</span></button>
-        <button id="btnOnePage" role="menuitem"><b>One-page summary</b><span>Exit risk on one A4 page for the executive committee: score, cost and time, top risks, decisions</span></button>
-      </div>
-    </div>
-    <div class="menu">
       <button id="btnSettings" class="btn icon" aria-haspopup="menu" aria-expanded="false" aria-controls="settingsMenu" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
       <div id="settingsMenu" class="menu-pop right" role="menu" hidden>
         <div class="menu-label">Appearance</div>
@@ -118,10 +111,19 @@
     <p class="muted small">Just looking? <a href="#" id="lnkDemo">Load the demo organisation</a> - no AWS access needed. Permissions in detail: <a href="https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework/blob/main/docs/IAM_PERMISSIONS.md" target="_blank" rel="noopener noreferrer">IAM_PERMISSIONS.md</a>.</p>
   </div>
 
-  <nav id="viewTabs" class="viewtabs no-print" aria-label="Report" hidden>
-    <button type="button" class="vtab" data-view="exit" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></svg><span><b>Exit risk</b><small>How hard it is to leave AWS</small></span></button>
-    <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-region</b><small>Cost of a second AWS region</small></span></button>
-  </nav>
+  <div id="reportBar" class="report-bar no-print" hidden>
+    <nav id="viewTabs" class="viewtabs" aria-label="Report">
+      <button type="button" class="vtab" data-view="exit" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></svg><span><b>Exit risk</b><small>How hard it is to leave AWS</small></span></button>
+      <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-region</b><small>Cost of a second AWS region</small></span></button>
+    </nav>
+    <div class="menu">
+      <button id="btnExport" class="btn" aria-haspopup="menu" aria-expanded="false" aria-controls="exportMenu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>Export PDF<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>
+      <div id="exportMenu" class="menu-pop right" role="menu" hidden>
+        <button id="btnPdf" role="menuitem"><b>Full report</b><span>Every section and the appendix</span></button>
+        <button id="btnOnePage" role="menuitem"><b>One-page summary</b><span>Exit risk on one A4 page for the executive committee: score, cost and time, top risks, decisions</span></button>
+      </div>
+    </div>
+  </div>
 
   <div id="content" hidden>
     <!-- Cover (print) / title -->
