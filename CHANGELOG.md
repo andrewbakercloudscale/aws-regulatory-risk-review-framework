@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-21
+
 ### Added
 
 - Executive summary: "Commitments written off", the Savings Plans, reservations and any enterprise
