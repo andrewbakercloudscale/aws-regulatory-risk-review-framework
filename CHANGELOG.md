@@ -6,6 +6,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- Exclusions dialog: Cancel sits on the left and Clear all is a full button. Dialog buttons wrap
+  on a phone instead of running off the edge.
+
 ## [0.11.2] - 2026-10-21
 
 ### Added
