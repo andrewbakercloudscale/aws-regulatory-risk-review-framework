@@ -359,6 +359,7 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .code-big { font: 600 22px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
 #btnSso { display: inline-flex; align-items: center; gap: 8px; }
 #btnSso .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+#btnSso.signed-in { border-color: #2f9e5b; background: color-mix(in srgb, #2f9e5b 14%, var(--surface)); color: var(--ink); }
 #btnSso.signed-in .dot { background: #2f9e5b; }
 #btnSso.needs-sign-in { border-color: var(--t4); animation: sso-flash 1.2s ease-in-out infinite; }
 #btnSso.needs-sign-in .dot { background: var(--t4); }
@@ -440,6 +441,13 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .brief-cols li::marker { color: var(--muted); font-weight: 600; }
 .brief-cols li strong { color: var(--ink); }
 .brief-conf { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12.5px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.conf-steps { margin: 10px 0 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 13px; }
+.conf-steps h4 { margin: 0 0 6px; font-size: 13px; }
+.conf-steps ol { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.conf-steps li span { margin-right: 6px; }
+.conf-steps .btn.sm { vertical-align: middle; }
+.conf-steps a { color: var(--accent); }
+@media print { .conf-steps { break-inside: avoid; } }
 h3.sub { margin: 4px 0 10px; font-size: 13px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; }
 @media (max-width: 900px) {
   .brief-cols { grid-template-columns: 1fr; }

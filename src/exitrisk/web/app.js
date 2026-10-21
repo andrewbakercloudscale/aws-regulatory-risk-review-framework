@@ -479,6 +479,12 @@
     const confRating = { High: "Low", Medium: "High", Low: "Critical" }[x.confidence];
     ratingBadge($("#briefConf"), confRating, `Confidence: ${x.confidence}`);
     $("#briefConfWhy").textContent = x.confidence_reasons.join(" ");
+    // Each reason confidence is not High, with the step (and the console control) that removes it.
+    const steps = x.confidence_steps || [];
+    const iamDoc = "https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework/blob/main/docs/IAM_PERMISSIONS.md#2-deep-scan-member-accounts";
+    const btnLabel = { model: "Answer the questions", scan: "New scan", deep: "New deep scan" };
+    $("#briefConfSteps").hidden = !steps.length;
+    $("#briefConfSteps").innerHTML = steps.length ? `<h4>To raise confidence</h4><ol>${steps.map((st) => `<li><span>${esc(st.fix).replace("IAM_PERMISSIONS.md", `<a href="${iamDoc}" target="_blank" rel="noopener noreferrer">IAM_PERMISSIONS.md</a>`)}</span>${st.action ? ` <button type="button" class="btn sm no-print" data-conf-action="${esc(st.action)}">${btnLabel[st.action]}</button>` : ""}</li>`).join("")}</ol>` : "";
   }
 
   // Savings Plans, reservations and EDP still running when the exit finishes: paid for, no longer used.
@@ -1768,7 +1774,7 @@
     const needed = sso.sessions.length > 0 && !on.length;
     $("#btnSso").classList.toggle("signed-in", on.length > 0);
     $("#btnSso").classList.toggle("needs-sign-in", needed);
-    $("#ssoLabel").textContent = on.length ? `SSO: ${on.map((s) => s.name).join(", ")}` : "AWS sign-in";
+    $("#ssoLabel").textContent = on.length ? `Signed in: ${on.map((s) => s.name).join(", ")}` : needed ? "Signed out: sign in" : "AWS sign-in";
     $("#btnSso").title = on.length ? `Signed in until ${new Date(on[0].expires_at).toLocaleString()}`
       : needed ? "Your AWS sign-in has expired: sign in again before you scan" : "Sign in through your AWS access portal (IAM Identity Center)";
   }
@@ -2148,6 +2154,14 @@
       toast(n ? `Regenerated without ${plural(n, "product")}` : "Regenerated with every product");
     });
     $("#btnAnswerQs").addEventListener("click", (ev) => { ev.preventDefault(); openModel(); });
+    $("#briefConfSteps").addEventListener("click", async (ev) => {
+      const action = ev.target.closest("[data-conf-action]")?.dataset.confAction;
+      if (action === "model") openModel();
+      else if (action === "scan" || action === "deep") {
+        await openScanDialog();
+        if (action === "deep") { $("#sInventory").checked = true; $("#sInventory").dispatchEvent(new Event("change", { bubbles: true })); $("#sInventory").focus(); }
+      }
+    });
     document.querySelectorAll("[data-model]").forEach((b) => b.addEventListener("click", () => openModel(b.dataset.model)));
     for (const id of ["#btnCloseModel", "#btnCloseModelX"]) $(id).addEventListener("click", () => $("#modelDialog").close());
     $("#btnAcctMore").addEventListener("click", () => {

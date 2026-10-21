@@ -168,6 +168,11 @@ def test_executive_summary_flags_concentration_and_default_answers():
     assert "default answers" in x["actions"][0]  # answering the questions comes first
     assert x["confidence"] in {"Medium", "Low"} and x["exit"].startswith("Exit window: roughly ")
     assert "of a year's AWS spend" in x["exit"] and all("account(s)" not in f for f in x["findings"])
+    # Every reason confidence is below High comes with the step that removes it.
+    steps = {st["key"]: st for st in x["confidence_steps"]}
+    assert len(steps) == len(x["confidence_reasons"])
+    assert steps["defaults"]["action"] == "model" and steps["deep"]["action"] == "deep"
+    assert "Deep scan" in steps["deep"]["fix"]
 
 
 def test_default_answers_keep_cost_and_time_out_of_the_headline():

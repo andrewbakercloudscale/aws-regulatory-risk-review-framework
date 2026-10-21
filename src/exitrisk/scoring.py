@@ -611,6 +611,7 @@ _NO_SPEND_SUMMARY = {
     "actions_rich": [{"lead": "Widen the scope.", "text": "Change the account filter or scan an OU that has spend."}],
     "confidence": "Low",
     "confidence_reasons": ["No spend in scope."],
+    "confidence_steps": [],
 }
 
 
@@ -639,7 +640,7 @@ def _executive_summary(
     if exit_facts and (written_off := _written_off(timing or {})):
         exit_facts.insert(2, {**written_off, "provisional": defaults})
     actions = _actions(summary, accounts, defaults, deep_scan, resilience or {}, timing or {})
-    confidence, reasons = _confidence(summary, scan, defaults, deep_scan)
+    confidence, reasons, steps = _confidence(summary, scan, defaults, deep_scan)
     plain = lambda x: f"{x['lead']} {x['text']}"  # noqa: E731
     return {
         "headline": headline,
@@ -654,6 +655,7 @@ def _executive_summary(
         "actions_rich": actions[:5],
         "confidence": confidence,
         "confidence_reasons": reasons,
+        "confidence_steps": steps,
     }
 
 
@@ -963,25 +965,43 @@ def _actions(
     return actions
 
 
-def _confidence(s: dict, scan: dict, defaults: bool, deep_scan: bool) -> tuple[str, list[str]]:
-    reasons, level = [], 3
+# What to do about each reason confidence is below High; "action" names the console control that does it.
+_CONFIDENCE_FIX = {
+    "demo": ("Scan your own organisation.", "scan"),
+    "coverage": ("Fix the access gaps in the note at the top, then scan again.", "scan"),
+    "defaults": ("Answer the delivery questions under Exit model (about ten minutes).", "model"),
+    "deep": (
+        "Deploy the read-only ExitRiskReadOnly role to every member account (one CloudFormation StackSet, "
+        "see IAM_PERMISSIONS.md), then run a new scan with Deep scan ticked.",
+        "deep",
+    ),
+    "catalog": ("Add the missing services to the service catalog (Appendix A lists them).", None),
+}
+
+
+def _confidence(s: dict, scan: dict, defaults: bool, deep_scan: bool) -> tuple[str, list[str], list[dict]]:
+    """The confidence level, the reasons it is not higher, and the step that fixes each reason."""
+    found, level = [], 3
     if scan.get("mode") == "demo":
-        reasons.append("Synthetic demo data.")
+        found.append(("demo", "Synthetic demo data."))
         level = 1
     if s["coverage"]:
-        reasons.append("Partial coverage of the estate (see the note at the top).")
+        found.append(("coverage", "Partial coverage of the estate (see the note at the top)."))
         level = min(level, 2)
     if defaults:
-        reasons.append("Cost and time use default delivery answers, not yours.")
+        found.append(("defaults", "Cost and time use default delivery answers, not yours."))
         level = min(level, 2)
     if not deep_scan:
-        reasons.append("Spend data only; no resource counts.")
+        found.append(("deep", "Spend data only; no resource counts."))
         level = min(level, 2)
     if s["unclassified_services"]:
-        reasons.append(f"{_plural(s['unclassified_services'], 'service')} not in the catalog, scored as Moderate.")
-    if not reasons:
-        reasons.append("Full scan, answered questionnaire, every service classified.")
-    return {1: "Low", 2: "Medium", 3: "High"}[level], reasons
+        found.append(
+            ("catalog", f"{_plural(s['unclassified_services'], 'service')} not in the catalog, scored as Moderate.")
+        )
+    if not found:
+        return "High", ["Full scan, answered questionnaire, every service classified."], []
+    steps = [{"key": k, "reason": r, "fix": _CONFIDENCE_FIX[k][0], "action": _CONFIDENCE_FIX[k][1]} for k, r in found]
+    return {1: "Low", 2: "Medium", 3: "High"}[level], [r for _, r in found], steps
 
 
 def _pace_setters(accounts: list[dict]) -> tuple[list[dict], float]:

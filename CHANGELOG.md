@@ -6,8 +6,16 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- **To raise confidence** under the confidence rating: one step per reason it is not High, with a
+  button that does it (answer the delivery questions, or open a new scan with Deep scan ticked) and a
+  link to the member-role setup. The executive summary data has a new `confidence_steps` list.
+
 ### Changed
 
+- The AWS sign-in button says **Signed out: sign in** when the sign-in has expired, and turns green
+  (**Signed in: <portal>**) when it is live.
 - The AWS sign-in button flashes when an access portal is set up but the sign-in has expired (checked
   every five minutes), so a scan is not started without one. It stays still if you prefer reduced motion.
 - Exclusions dialog: Cancel sits on the left and Clear all is a full button. Dialog buttons wrap
