@@ -368,6 +368,23 @@ _TAGS = {
     "fraud-analytics-prod": {"Criticality": "Tier 2"},
 }
 
+# Owner and executive tags (fictional people), by the business area in the account name. Sandbox and
+# shared tooling accounts are left untagged, as they often are.
+_OWNERS = [
+    (("payments", "cards"), "Alex Morgan", "Priya Shah"),
+    (("digital", "contact", "marketing", "web", "mobile"), "Sam Patel", "Lerato Mokoena"),
+    (("core-banking", "identity", "lending", "treasury"), "Jordan Lee", "Thabo Dlamini"),
+    (("data", "fraud", "analytics", "ml", "reporting"), "Chris Ndlovu", "Emma Botha"),
+]
+
+
+def _owner_tags(name: str) -> dict[str, str]:
+    for keys, executive, owner in _OWNERS:
+        if any(k in name for k in keys):
+            return {"Executive": executive, "Owner": owner}
+    return {}
+
+
 # Storage per account, sized from the service's spend: (usage type, kind, GB per USD a month).
 _STORAGE = {
     "Amazon Simple Storage Service": [
@@ -469,7 +486,11 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
                 "status": "SUSPENDED" if ou == "Suspended" else "ACTIVE",
                 "ou_id": f"ou-demo-{i:02d}",
                 "ou_path": f"Root / {ou}",
-                "tags": {"Environment": "prod" if "prod" in name else "non-prod", **_TAGS.get(name, {})},
+                "tags": {
+                    "Environment": "prod" if "prod" in name else "non-prod",
+                    **_owner_tags(name),
+                    **_TAGS.get(name, {}),
+                },
             }
         )
         for mi, month in enumerate(month_keys):

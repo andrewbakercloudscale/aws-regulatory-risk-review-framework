@@ -26,6 +26,17 @@ from .multiregion import GLOBAL_REGIONS, load_region_data
 # Tag keys are compared lowercased with spaces, dashes and underscores removed.
 CRITICALITY_KEYS = ("criticality", "businesscriticality", "tier", "servicetier", "workloadtier", "critical")
 CHANNEL_KEYS = ("channel", "businesschannel", "customerchannel")
+# Who to talk to about an account, in order of preference. Keys are compared with everything but
+# letters and digits removed, so "Account_Holder_/_Product_Head" matches "accountholderproducthead".
+OWNER_KEYS = (
+    "owner", "accountowner", "accountholder", "accountholderproducthead", "productowner", "producthead",
+    "businessowner", "applicationowner", "appowner", "serviceowner", "systemowner", "technicalowner",
+    "techowner", "ownedby", "ownerteam", "team", "linkedhod", "hod", "headofdepartment", "contact",
+)  # fmt: skip
+EXECUTIVE_KEYS = (
+    "executive", "linkedexecutive", "accountableexecutive", "executiveowner", "executivesponsor",
+    "businessexecutive", "sponsor", "exec",
+)  # fmt: skip
 # Tag values (lowercased, letters and digits only) that mark an account as critical.
 CRITICAL_VALUES = {
     "critical",
@@ -124,6 +135,47 @@ def classify(account: dict, patterns: list[str]) -> tuple[bool, str, str]:
     if any(p in name for p in patterns):
         return True, "name", channel
     return False, "", channel
+
+
+def owner_of(account: dict) -> tuple[str, str]:
+    """(owner, executive) from the account's tags; empty when not tagged."""
+    tags = {re.sub(r"[^a-z0-9]", "", k.lower()): v.strip() for k, v in (account.get("tags") or {}).items()}
+    owner = next((tags[k] for k in OWNER_KEYS if tags.get(k)), "")
+    executive = next((tags[k] for k in EXECUTIVE_KEYS if tags.get(k)), "")
+    return owner, executive
+
+
+def _owners(rows: dict[str, dict]) -> dict:
+    """Spend and spend at risk by accountable executive (or owner where no executive is tagged).
+    When every account with spend has the same owner, say so once instead of per account."""
+    spending = [a for a in rows.values() if a["monthly_spend"] > 0]
+    owners = {a["owner"] for a in spending}
+    executives = {a["executive"] for a in spending}
+    groups: dict[str, dict] = {}
+    for a in spending:
+        who = a["executive"] or a["owner"]
+        if not who:
+            continue
+        key = " ".join(who.casefold().split())  # the same person typed with other spacing or case
+        g = groups.setdefault(key, {"name": who, "accounts": 0, "high_risk_accounts": 0, "owners": set()})
+        g["accounts"] += 1
+        g["monthly_spend"] = g.get("monthly_spend", 0.0) + a["monthly_spend"]
+        g["spend_at_risk"] = g.get("spend_at_risk", 0.0) + a.get("spend_at_risk", 0.0)
+        g["high_risk_accounts"] += a.get("rating") in ("High", "Critical")
+        if a["owner"] and a["owner"] != who:
+            g["owners"].add(a["owner"])
+    by = sorted(groups.values(), key=lambda g: -g["spend_at_risk"])
+    for g in by:
+        g["monthly_spend"], g["spend_at_risk"] = round(g["monthly_spend"], 2), round(g["spend_at_risk"], 2)
+        g["owners"] = sorted(g["owners"])
+    return {
+        "tagged_accounts": sum(1 for a in spending if a["owner"] or a["executive"]),
+        "accounts_with_spend": len(spending),
+        "single_owner": next(iter(owners)) if len(owners) == 1 else "",
+        "single_executive": next(iter(executives)) if len(executives) == 1 else "",
+        "by_executive": by,
+        "untagged_monthly": round(sum(a["monthly_spend"] for a in spending if not (a["owner"] or a["executive"])), 2),
+    }
 
 
 def _tb(gb: float) -> float:
@@ -362,6 +414,7 @@ def build_resilience(scan: dict, accounts: list[dict], q: Questionnaire) -> dict
     for row in accounts:
         critical, source, channel = classify(scan_accounts.get(row["id"], {}), patterns)
         row["critical"], row["critical_source"], row["channel"] = critical, source, channel
+        row["owner"], row["executive"] = owner_of(scan_accounts.get(row["id"], {}))
     rows = {a["id"]: a for a in accounts}
     critical = {aid: a for aid, a in rows.items() if a["critical"]}
     population = critical or {aid: a for aid, a in rows.items() if a["monthly_spend"] > 0}
@@ -381,6 +434,7 @@ def build_resilience(scan: dict, accounts: list[dict], q: Questionnaire) -> dict
             "pct_spend": round(100 * crit_spend / total_spend, 1) if total_spend else 0.0,
             "channels": sorted({a["channel"] for a in rows.values() if a["channel"]}),
         },
+        "owners": _owners(rows),
         "data": _data(scan.get("storage"), rows, q, regions),
         "concentration": _concentration(scan.get("region_costs"), population, basis, regions),
         "stressed_exit": _stressed(population, basis),

@@ -610,6 +610,36 @@
     });
 
     renderAccountTable(r, Math.max(...accts.map((a) => a.spend_at_risk), 0.01));
+    renderOwners(r);
+  }
+
+  function renderOwners(r) {
+    const o = r.resilience?.owners;
+    $("#ownersCard").hidden = !o;
+    if (!o) return;
+    const lead = $("#ownersLead"), rows = o.by_executive;
+    $("#ownersTable").hidden = true;
+    if (!o.tagged_accounts) {
+      lead.textContent = "No account has an owner or executive tag, so the report cannot say who to talk to about each account.";
+      $("#ownersNote").textContent = "Tag accounts in AWS Organizations with Owner and Executive (or Account holder, Team, Linked executive) and scan again.";
+      return;
+    }
+    if (o.single_owner && o.tagged_accounts === o.accounts_with_spend) {
+      lead.textContent = `All ${plural(o.accounts_with_spend, "account")} are owned by ${o.single_owner}` +
+        (o.single_executive && o.single_executive !== o.single_owner ? `, executive ${o.single_executive}.` : ".");
+      $("#ownersNote").textContent = "";
+      return;
+    }
+    const top = rows[0];
+    lead.textContent = rows.length === 1 ? `Every tagged account reports to ${top.name}.`
+      : `${top.name} carries the most spend at risk: ${money(top.spend_at_risk)} a month across ${plural(top.accounts, "account")}.`;
+    $("#ownersTable").hidden = false;
+    $("#ownersTable").innerHTML = `<thead><tr><th>Executive or owner</th><th class="num-cell">Accounts</th><th class="num-cell">Per month</th><th class="num-cell" title="Spend x risk / 100">Spend at risk / month</th><th class="num-cell">High/Critical accounts</th><th>Account owners</th></tr></thead><tbody>` +
+      rows.slice(0, PRINT ? 12 : 20).map((g) => `<tr><td><strong>${esc(g.name)}</strong></td><td class="num-cell">${num(g.accounts)}</td><td class="num-cell">${money(g.monthly_spend)}</td><td class="num-cell">${money(g.spend_at_risk)}</td><td class="num-cell">${num(g.high_risk_accounts)}</td>
+        <td class="small">${esc(g.owners.slice(0, 3).join(", "))}${g.owners.length > 3 ? ` +${g.owners.length - 3} more` : ""}</td></tr>`).join("") + "</tbody>";
+    const untagged = o.accounts_with_spend - o.tagged_accounts;
+    $("#ownersNote").textContent = `${plural(o.tagged_accounts, "account")} of ${num(o.accounts_with_spend)} with spend carry an owner or executive tag.` +
+      (untagged ? ` ${plural(untagged, "account")} (${money(o.untagged_monthly)} a month) have none and are left out of this table.` : "");
   }
 
   function renderAccountTable(r, maxC) {
@@ -621,9 +651,11 @@
     const shown = all.slice(0, limit);
     // Only show the OU path when accounts sit in different OUs; otherwise it repeats on every row.
     const multiOu = new Set(all.map((a) => a.ou_path)).size > 1;
+    // Likewise the owner: when one person owns every account, the owners card says it once.
+    const perOwner = !r.resilience?.owners?.single_owner;
     const rows = shown.map((a, i) => `<tr>
       <td class="num-cell muted">${i + 1}</td>
-      <td class="acct"><strong>${esc(a.name)}</strong>${a.critical ? ` <span class="chip crit" title="${a.critical_source === "tag" ? "Criticality tag on the account" : "Matches a critical name in section 6"}">Critical</span>` : ""}<div class="hint">${esc(a.id)}${a.channel ? ` · ${esc(a.channel)}` : ""}${multiOu ? ` · ${esc(a.ou_path)}` : ""}</div></td>
+      <td class="acct"><strong>${esc(a.name)}</strong>${a.critical ? ` <span class="chip crit" title="${a.critical_source === "tag" ? "Criticality tag on the account" : "Matches a critical name in section 6"}">Critical</span>` : ""}<div class="hint">${esc(a.id)}${a.channel ? ` · ${esc(a.channel)}` : ""}${multiOu ? ` · ${esc(a.ou_path)}` : ""}${perOwner && a.owner ? ` · Owner: ${esc(a.owner)}` : ""}</div></td>
       <td class="num-cell">${money(a.monthly_spend)}</td>
       <td class="risk">${a.score == null ? "–" : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span><div class="hint">${pct(a.high_risk_pct)} High/Crit spend</div>`}</td>
       <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.spend_at_risk / maxC).toFixed(1)}%"></i></div><span class="num-cell">${money(a.spend_at_risk)}</span></div></td>

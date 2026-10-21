@@ -6,6 +6,12 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **Who owns the risk**: owner and executive are read from account tags (Owner, Account holder,
+  Team, Executive, Linked executive and similar, in any spelling) and shown per account, with a
+  table of spend and spend at risk by executive. When one person owns every account it is said once
+  instead of on every row. The demo organisation has owner tags.
+
 ## [0.7.4] - 2026-10-21
 
 ### Changed
