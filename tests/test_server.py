@@ -11,7 +11,8 @@ def client():
 
 def test_health_and_index():
     c = client()
-    assert c.get("/api/health").json()["status"] == "ok"
+    h = c.get("/api/health").json()
+    assert h["status"] == "ok" and h["scans_running"] == [] and h["pid"] > 0
     r = c.get("/")
     assert r.status_code == 200 and "AWS Exit Risk Review" in r.text
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]

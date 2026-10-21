@@ -1138,7 +1138,7 @@
     const refresh = ev?.currentTarget?.id === "btnLoadOus";
     const was = new Set(pickedOus());
     $("#sOu").innerHTML = `<p class="muted small">Loading organizational units…</p>`;
-    $("#ouStatus").innerHTML = `<span class="spin" aria-hidden="true"></span> Loading organizational units (a few seconds)… approve Touch ID if prompted.`;
+    $("#ouStatus").innerHTML = `<span class="spin" aria-hidden="true"></span> Loading organizational units (a few seconds)… approve Touch ID if prompted.<span class="busy-bar" aria-hidden="true"><i></i></span>`;
     $("#btnLoadOus").disabled = true;
     const seq = (state.ouSeq = (state.ouSeq || 0) + 1); // a later profile change wins over a slow earlier reply
     try {

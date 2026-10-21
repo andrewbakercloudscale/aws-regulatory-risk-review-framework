@@ -1,4 +1,6 @@
 import json
+import signal
+import time
 
 import pytest
 
@@ -66,3 +68,29 @@ def test_pdf_pages_counts_page_objects(tmp_path):
     pdf = tmp_path / "x.pdf"
     pdf.write_bytes(b"<< /Type /Pages /Count 2 >> << /Type /Page >> << /Type /Page/Parent 1 0 R >>")
     assert cli._pdf_pages(pdf) == 2
+
+
+def test_stop_signal_waits_for_running_scans(monkeypatch):
+    import uvicorn
+
+    running = ["20261021-081950-fa5a"]
+    monkeypatch.setattr("exitrisk.scanner.running_scans", lambda: list(running))
+    server = cli._scan_safe_server(uvicorn.Config(lambda *a: None))
+    server.handle_exit(signal.SIGTERM, None)
+    assert not server.should_exit  # keeps serving while the scan runs
+    running.clear()
+    for _ in range(50):
+        if server.should_exit:
+            break
+        time.sleep(0.1)
+    assert server.should_exit
+
+
+def test_second_stop_signal_stops_at_once(monkeypatch):
+    import uvicorn
+
+    monkeypatch.setattr("exitrisk.scanner.running_scans", lambda: ["x"])
+    server = cli._scan_safe_server(uvicorn.Config(lambda *a: None))
+    server.handle_exit(signal.SIGTERM, None)
+    server.handle_exit(signal.SIGTERM, None)
+    assert server.should_exit

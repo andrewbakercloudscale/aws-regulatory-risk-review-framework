@@ -3,6 +3,9 @@
 ## Running a scan
 
 1. `exitrisk serve` and open http://127.0.0.1:8740.
+   To restart it (e.g. after an upgrade) run `exitrisk serve --replace`: it stops the running console
+   once its scans have finished, then starts. Stopping the console any other way also waits for running
+   scans; a second Ctrl+C stops at once and loses them.
 2. With AWS SSO: **AWS sign-in** → pick or add the access portal → **Sign in** (approve on the AWS
    page that opens) → choose the management account and a read-only role → **Use for a new scan**.
    Otherwise: **New scan** → choose the profile for the management account → **Load OUs** (first AWS call; with
@@ -53,6 +56,7 @@ jq -r 'select(.level=="ERROR" or .level=="WARNING")' ~/.exitrisk/logs/exitrisk.l
 | `OptInRequired` | Region not enabled for the account | Skipped automatically |
 | `'X' is not in the service catalog` | New or rare AWS service | Scored as tier 3; add it to the catalog (CONTRIBUTING.md) |
 | `address already in use` on serve | Port 8740 taken | `exitrisk serve --port 8750` |
+| "The console restarted while this scan was running" | The console was stopped mid-scan; scans run in memory | Start the scan again. Restart with `exitrisk serve --replace`, which waits for running scans |
 | PDF command: `needs Playwright` | Optional dependency missing | `pip install '.[pdf]' && playwright install chromium` |
 
 Report anything else as a GitHub issue with the scan's log lines (they contain account ids and service

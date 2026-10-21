@@ -105,6 +105,12 @@ def get_job(scan_id: str) -> ScanJob | None:
         return _jobs.get(scan_id)
 
 
+def running_scans() -> list[str]:
+    """Ids of scans still running in this process; they live in memory and die with it."""
+    with _jobs_lock:
+        return [j.id for j in _jobs.values() if j.status == "running"]
+
+
 def start_scan(params: ScanParams) -> ScanJob:
     params.validate()
     job = ScanJob(id=store.new_scan_id(), params=params)

@@ -11,6 +11,7 @@ browser could reach it:
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from importlib import resources
@@ -32,7 +33,7 @@ from .filtering import AccountFilter, FilterError
 from .issues import describe_exception
 from .logging_config import configure_logging, get_logger, tail_log
 from .multiregion import MultiRegionAnswers, build_multiregion
-from .scanner import ScanParams, get_job, start_scan
+from .scanner import ScanParams, get_job, running_scans, start_scan
 from .scoring import build_report
 
 log = get_logger("server")
@@ -153,7 +154,13 @@ def create_app(allow_remote: bool = False) -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": __version__, "catalog_version": load_catalog().version}
+        return {
+            "status": "ok",
+            "version": __version__,
+            "catalog_version": load_catalog().version,
+            "pid": os.getpid(),
+            "scans_running": running_scans(),
+        }
 
     @app.get("/api/profiles")
     def profiles():
@@ -249,7 +256,7 @@ def create_app(allow_remote: bool = False) -> FastAPI:
 
     @app.get("/api/scans")
     def scans():
-        return {"scans": store.list_scans()}
+        return {"scans": store.list_scans(), "running": running_scans()}
 
     @app.get("/api/scans/{scan_id}/status")
     def scan_status(scan_id: str):

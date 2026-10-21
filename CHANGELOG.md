@@ -6,8 +6,13 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Fixed
+- Restarting the console no longer loses a running scan. A stop signal now waits for running scans to
+  finish while the console keeps serving (a second signal stops at once). `exitrisk serve --replace`
+  restarts safely, and `/api/health` and `/api/scans` list the scans still running.
+
 ### Changed
-- AWS sign-in and Check access show a moving progress bar and say what they are waiting for while
+- AWS sign-in, Check access and loading OUs in New scan show a moving progress bar and say what they are waiting for while
   accounts, roles and the access checks load.
 
 ## [0.6.0] - 2026-10-21

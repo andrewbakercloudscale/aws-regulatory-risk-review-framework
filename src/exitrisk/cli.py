@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import signal
 import sys
 import threading
 import time
@@ -49,13 +50,75 @@ def _serve(args) -> int:
             "anyone who can reach it can run scans as you",
             args.host,
         )
+    if args.replace and not _stop_running_console(args.port):
+        return 1
     app = create_app(allow_remote=args.host not in ("127.0.0.1", "localhost", "::1"))
     url = f"http://127.0.0.1:{args.port}/"
     log.info("console at %s  (data: %s, log: %s)", url, settings.data_dir, settings.log_file)
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    _scan_safe_server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning")).run()
     return 0
+
+
+def _scan_safe_server(config):
+    import uvicorn
+
+    from .scanner import running_scans
+
+    class ScanSafeServer(uvicorn.Server):
+        """Scans run in memory, so stopping mid-scan loses them. A stop signal waits for running
+        scans to finish (the console keeps serving meanwhile); a second signal stops at once."""
+
+        _waiting = False
+
+        def handle_exit(self, sig, frame):
+            running = running_scans()
+            if not running or self._waiting:
+                if self._waiting:
+                    log.warning("stopping now; scan(s) %s are lost", ", ".join(running) or "none")
+                return super().handle_exit(sig, frame)
+            self._waiting = True
+            log.warning(
+                "stop requested while scan(s) %s run; stopping when they finish (signal again to stop now)",
+                ", ".join(running),
+            )
+
+            def wait():
+                while running_scans():
+                    time.sleep(2)
+                log.info("scans finished; stopping")
+                self.should_exit = True
+
+            threading.Thread(target=wait, name="stop-after-scans", daemon=True).start()
+
+    return ScanSafeServer(config)
+
+
+def _stop_running_console(port: int) -> bool:
+    """Stop the console already on this port, after its running scans finish. False if it would not stop."""
+    import os
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as resp:
+            health = json.load(resp)
+    except OSError:
+        return True  # nothing listening
+    pid = health.get("pid")
+    if not pid:
+        log.error("the console on port %d is too old to stop safely; stop it yourself when no scan runs", port)
+        return False
+    if health.get("scans_running"):
+        log.warning("waiting for scan(s) %s on the running console to finish", ", ".join(health["scans_running"]))
+    os.kill(pid, signal.SIGTERM)
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            log.info("stopped the previous console (pid %d)", pid)
+            return True
+        time.sleep(1)
 
 
 def _scan(args) -> int:
@@ -249,6 +312,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8740)
     p.add_argument("--no-browser", action="store_true")
+    p.add_argument(
+        "--replace",
+        action="store_true",
+        help="stop the console already on this port first, once its running scans have finished",
+    )
     p.set_defaults(fn=_serve)
 
     p = sub.add_parser("scan", help="run a scan from the command line")
