@@ -512,14 +512,16 @@ table.data.accounts td { vertical-align: middle; }
 /* Report views: two large tabs, the active one filled so it is obvious which report you are in. */
 .viewtabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; max-width: 640px; margin: 4px 0 18px; padding: 5px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; }
-.vtab { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border: 1px solid transparent; border-radius: 10px; background: none;
+.vtab { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
   font: inherit; color: var(--ink-2); text-align: left; cursor: pointer; transition: background-color .15s, color .15s, box-shadow .15s; }
 .vtab svg { width: 22px; height: 22px; }
 .vtab span { display: flex; flex-direction: column; min-width: 0; }
 .vtab b { font-size: 16px; font-weight: 650; color: inherit; }
 .vtab small { font-size: 12.5px; color: var(--muted); }
-.vtab:hover { background: var(--surface); color: var(--ink); }
-.vtab[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent); }
+.vtab:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--ink); }
+.vtab:not([aria-pressed="true"]) svg { color: var(--accent); }
+.vtab[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent); }
 .vtab[aria-pressed="true"] small { color: color-mix(in srgb, var(--accent-ink) 82%, transparent); }
 .mr-form fieldset.recovery { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 0 0 14px; }
 .mr-form legend { font-weight: 650; font-size: 13px; padding: 0 6px; color: var(--ink); }

@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- The inactive report tab (Exit risk / Multi-region) has a light blue fill, border and blue icon, so
+  it reads as a button rather than blending into the page.
+
 ## [0.7.3] - 2026-10-21
 
 ### Changed
