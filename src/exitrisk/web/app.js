@@ -292,17 +292,39 @@
     C.defaults.font.size = 12;
     C.defaults.color = css("--ink-2");
     C.defaults.borderColor = css("--grid");
-    C.defaults.animation = PRINT ? false : { duration: 400 };
+    // Set the duration in place: replacing the animation object drops Chart.js's colour interpolator,
+    // and hovering a bar then throws "this._fn is not a function", which stops every chart redrawing.
+    if (PRINT) C.defaults.animation = false; else C.defaults.animation.duration = 400;
     C.defaults.maintainAspectRatio = false;
     C.defaults.plugins.legend.labels.boxWidth = 10;
     C.defaults.plugins.legend.labels.boxHeight = 10;
     C.defaults.plugins.legend.labels.useBorderRadius = true;
     C.defaults.plugins.legend.labels.borderRadius = 3;
-    C.defaults.plugins.tooltip.backgroundColor = css("--ink");
-    C.defaults.plugins.tooltip.titleColor = css("--surface");
-    C.defaults.plugins.tooltip.bodyColor = css("--surface");
-    C.defaults.plugins.tooltip.padding = 10;
-    C.defaults.plugins.tooltip.cornerRadius = 6;
+    C.defaults.plugins.legend.labels.padding = 14;
+    C.defaults.plugins.legend.labels.color = css("--ink-2");
+    // Tooltips read as cards: surface, hairline border, bold title, colour swatch per line.
+    C.defaults.plugins.tooltip.backgroundColor = css("--surface");
+    C.defaults.plugins.tooltip.borderColor = css("--axis");
+    C.defaults.plugins.tooltip.borderWidth = 1;
+    C.defaults.plugins.tooltip.titleColor = css("--ink");
+    C.defaults.plugins.tooltip.bodyColor = css("--ink-2");
+    C.defaults.plugins.tooltip.footerColor = css("--ink");
+    C.defaults.plugins.tooltip.titleFont = { weight: "600", size: 13 };
+    C.defaults.plugins.tooltip.bodyFont = { size: 12.5 };
+    C.defaults.plugins.tooltip.padding = 12;
+    C.defaults.plugins.tooltip.cornerRadius = 8;
+    C.defaults.plugins.tooltip.boxPadding = 4;
+    C.defaults.plugins.tooltip.usePointStyle = true;
+    C.defaults.plugins.tooltip.caretSize = 5;
+    // Recessive axes: no axis line, soft grid, ticks a step away from the plot.
+    C.defaults.scale.border.display = false;
+    C.defaults.scale.grid.color = css("--grid");
+    C.defaults.scale.grid.tickLength = 0;
+    C.defaults.scale.ticks.padding = 8;
+    C.defaults.elements.bar.borderRadius = 4;
+    C.defaults.elements.arc.borderColor = css("--surface");
+    C.defaults.elements.arc.borderWidth = 2;
+    C.defaults.elements.point.hoverRadius = 6;
   }
 
   function chart(id, config) {
@@ -315,6 +337,11 @@
       return;
     }
     state.charts[id]?.destroy();
+    // Hover keeps the mark's own colour (Chart.js would saturate it); the tooltip does the highlighting.
+    for (const ds of config.data?.datasets || []) {
+      if (ds.hoverBackgroundColor === undefined && ds.backgroundColor !== undefined) ds.hoverBackgroundColor = ds.backgroundColor;
+      if (ds.hoverBorderColor === undefined && ds.borderColor !== undefined) ds.hoverBorderColor = ds.borderColor;
+    }
     try {
       state.charts[id] = new window.Chart(canvas, config);
     } catch (e) {
@@ -355,12 +382,12 @@
         labels: r.trend.map((m) => month(m.month, true)),
         datasets: [1, 2, 3, 4, 5].map((t) => ({
           label: `${t} · ${tiers[t - 1].label}`, data: r.trend.map((m) => m.tier_spend[t]),
-          backgroundColor: tierColor(t), borderColor: css("--surface"), borderWidth: { top: 2 }, borderRadius: 3, borderSkipped: "bottom", maxBarThickness: 46,
+          backgroundColor: tierColor(t), borderColor: css("--surface"), borderWidth: 1, borderRadius: 3, borderSkipped: false, maxBarThickness: 46,
         })),
       },
       options: {
         scales: { x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 8 } }, y: { stacked: true, ticks: { callback: (v) => money(v) }, border: { display: false } } },
-        plugins: { legend: { position: "bottom" }, tooltip: { mode: "index", callbacks: { title: (items) => month(r.trend[items[0].dataIndex].month), label: (c) => ` ${c.dataset.label}: ${money(c.raw)}` } } },
+        plugins: { legend: { position: "bottom" }, tooltip: { mode: "index", callbacks: { title: (items) => month(r.trend[items[0].dataIndex].month), label: (c) => ` ${c.dataset.label}: ${money(c.raw)}`, footer: (items) => `Total: ${money(items.reduce((a, i) => a + (i.raw || 0), 0))}` } } },
         interaction: { mode: "index", intersect: false },
       },
     });
@@ -832,7 +859,8 @@
     const draft = state.exclDraft || state.exclude;
     const find = $("#exclFilter").value.trim().toLowerCase();
     const choices = r.product_choices || [];
-    const rows = choices.filter((p) => !find || p.display.toLowerCase().includes(find) || p.service.toLowerCase().includes(find));
+    const rows = choices.filter((p) => !find || p.display.toLowerCase().includes(find) || p.service.toLowerCase().includes(find))
+      .sort((a, b) => a.display.localeCompare(b.display, undefined, { sensitivity: "base", numeric: true }));
     $("#exclList").innerHTML = rows.length
       ? rows.map((p) => `<label class="check"><input type="checkbox" data-svc="${esc(p.service)}"${draft.has(p.service) ? " checked" : ""}><span>${esc(p.display)}</span><span class="excl-spend">${money(p.monthly_spend)}/mo</span></label>`).join("")
       : `<p class="muted small">${find ? "No product matches." : "No spend in scope."}</p>`;
@@ -1656,17 +1684,52 @@
     });
     $("#btnOnePage").addEventListener("click", () => {
       if (!state.report) { toast("Load a scan first"); return; }
-      if (state.view === "multiregion") { toast("The one-page summary covers the exit-risk report: switch to the Exit risk tab"); return; }
+      if (state.view === "multiregion") setView("exit"); // the one-page summary is the exit-risk report
       document.body.classList.add("onepage");
       toast("Choose “Save as PDF” in the print dialog. For a scripted PDF: exitrisk pdf <scan-id> --onepage", 6000);
       setTimeout(() => window.print(), 300);
     });
     window.addEventListener("afterprint", () => { if (params.get("onepage") !== "1") document.body.classList.remove("onepage"); });
-    $("#btnTheme").addEventListener("click", () => {
-      const dark = document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
-      const next = dark ? "light" : "dark";
-      applyTheme(next);
-      try { localStorage.setItem(LS_THEME, next); } catch { /* ignore */ }
+    // Top-bar menus (Export PDF, Settings): one open at a time; Escape or a click outside closes.
+    const menus = [...document.querySelectorAll(".menu")];
+    const closeMenus = (except) => {
+      for (const m of menus) {
+        if (m === except) continue;
+        m.querySelector(".menu-pop").hidden = true;
+        m.querySelector("[aria-haspopup]").setAttribute("aria-expanded", "false");
+      }
+    };
+    for (const m of menus) {
+      const btn = m.querySelector("[aria-haspopup]");
+      const pop = m.querySelector(".menu-pop");
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeMenus(m);
+        pop.hidden = !pop.hidden;
+        btn.setAttribute("aria-expanded", String(!pop.hidden));
+        if (!pop.hidden) pop.querySelector("button")?.focus();
+      });
+      pop.addEventListener("click", (e) => { if (e.target.closest("[role=menuitem]")) closeMenus(); });
+    }
+    document.addEventListener("click", (e) => { if (!e.target.closest(".menu-pop")) closeMenus(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenus(); });
+    const markTheme = () => {
+      const t = document.documentElement.dataset.theme || "";
+      for (const b of document.querySelectorAll("[data-theme-pick]")) b.setAttribute("aria-pressed", String(b.dataset.themePick === t));
+    };
+    markTheme();
+    for (const b of document.querySelectorAll("[data-theme-pick]")) {
+      b.addEventListener("click", () => {
+        const t = b.dataset.themePick;
+        applyTheme(t);
+        try { if (t) localStorage.setItem(LS_THEME, t); else localStorage.removeItem(LS_THEME); } catch { /* ignore */ }
+        markTheme();
+        chartDefaults();
+        if (state.report) render();
+      });
+    }
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (document.documentElement.dataset.theme) return;
       chartDefaults();
       if (state.report) render();
     });

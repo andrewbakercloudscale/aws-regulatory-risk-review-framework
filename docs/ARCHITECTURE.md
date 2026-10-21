@@ -65,7 +65,7 @@ and shown in report section 7.
 
 Logs go to the console (human) and `~/.exitrisk/logs/exitrisk.log` (JSON lines, rotated at 5 MB × 5).
 Each record carries the scan's `run_id`, so `jq 'select(.run_id=="<id>")'` extracts one scan; the console's
-**Log** button shows the same view. A redaction filter strips anything shaped like an AWS secret or
+**Settings → Application log** shows the same view. A redaction filter strips anything shaped like an AWS secret or
 access key id before it is written; the code never logs credentials in the first place.
 
 ## Security model

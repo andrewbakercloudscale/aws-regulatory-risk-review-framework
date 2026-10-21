@@ -42,6 +42,12 @@ from .estimate import (
 from .filtering import AccountFilter
 from .logging_config import get_logger
 
+
+def _n(n: int, one: str, many: str | None = None) -> str:
+    """'1 account', '3 accounts'."""
+    return f"{n:,} {one if n == 1 else many or one + 's'}"
+
+
 log = get_logger("multiregion")
 
 RECOVERY = {
@@ -276,8 +282,8 @@ def _spend_lines(scan: dict, accounts: dict, catalog: Catalog, cfg: dict, notes:
         _note(
             notes,
             "warning",
-            f"{len(unmapped)} service(s) have no multi-region profile ({names}): costed by their catalog "
-            "category, and their availability in other regions is not verified.",
+            f"{_n(len(unmapped), 'service has', 'services have')} no multi-region profile ({names}): "
+            "costed by their catalog category, and their availability in other regions is not verified.",
         )
     return lines, n_months
 
@@ -741,7 +747,7 @@ def _executive(s: dict, candidates: list, mq: MultiRegionAnswers, q: Questionnai
                 "findings": [], "actions": []}  # fmt: skip
     recov = "recover within 3 hours" if mq.recovery == "rto_3h" else "fail over instantly (active-active)"
     headline = (
-        f"To {recov}, a second region ({s['secondary_name']}) for {s['accounts_selected']} account(s) would add "
+        f"To {recov}, a second region in {s['secondary_name']} for {_n(s['accounts_selected'], 'account')} would add "
         f"roughly {rg['run_annual']} a year to run"
         + (f" ({rg['uplift_pct']} of their spend)" if rg["uplift_pct"] else "")
         + f", cost {rg['build_cost']} and take {rg['build_duration']} to build, and need {rg['staff']} more people."
@@ -793,7 +799,7 @@ def _executive(s: dict, candidates: list, mq: MultiRegionAnswers, q: Questionnai
         findings.append(
             {
                 "lead": "Failover risk.",
-                "text": f"{s['accounts_blocked']} of {s['accounts_selected']} chosen account(s) run a material "
+                "text": f"{s['accounts_blocked']} of {_n(s['accounts_selected'], 'chosen account')} run a material "
                 "service that cannot meet the target as built "
                 + (
                     "(no automatic failover, or no live replica)."

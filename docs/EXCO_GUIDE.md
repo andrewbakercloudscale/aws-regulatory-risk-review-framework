@@ -55,5 +55,5 @@ Filter by name (`prod`), toggle the questionnaire (e.g. "Terraform current" vs "
 estimate updates in under a second. Export the PDF afterwards so the minutes reference a fixed version:
 the footer carries the scan id, catalog version and generation time.
 
-For the board pack cover or a pre-read, **One-page PDF** prints the summary on a single A4 page
+For the board pack cover or a pre-read, **Export PDF → One-page summary** prints the summary on a single A4 page
 (`exitrisk pdf <scan-id> --onepage` from the command line). The full report stays the reference.

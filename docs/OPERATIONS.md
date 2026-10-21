@@ -32,7 +32,7 @@ whether lock-in is growing; the trend chart covers the months in each scan.
 
 - Console: one human-readable line per event, prefixed with the scan id.
 - File: `~/.exitrisk/logs/exitrisk.log`, JSON lines, rotated at 5 MB, five generations kept.
-- In the UI: **Log** (top right) shows recent records, filtered to the current scan by default.
+- In the UI: **Settings** (gear, top right) → **Application log** shows recent records, filtered to the current scan by default.
 
 ```bash
 jq -r 'select(.run_id=="20261020-131932-c34f") | "\(.ts) \(.level) \(.msg)"' ~/.exitrisk/logs/exitrisk.log

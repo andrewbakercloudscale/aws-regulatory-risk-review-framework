@@ -6,6 +6,23 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- Controls redesigned: custom select boxes with their own chevron, one height for every input and
+  button, soft focus ring, calmer hover. The Exit risk / Multi-region switch is now two large tabs
+  with an icon and a one-line description; the active one is filled.
+- Top bar on one line: **Load demo data**, **Application log** and appearance (Light, Dark, System)
+  moved under **Settings** (gear). The two PDF buttons became one **Export PDF** menu: Full report or
+  One-page summary (each says what it is). One-page summary from the Multi-region tab switches to
+  Exit risk instead of refusing.
+- Charts: card-style tooltips (the spend trend shows the month total), no axis lines, hover keeps the
+  bar colour. Exclusions list is alphabetical. Multi-region headline reads "a second region in
+  Europe (Frankfurt) for 165 accounts" (no double brackets, real plurals).
+
+### Fixed
+- Charts going blank after hovering a bar and then regenerating (for example Apply in Exclusions).
+  Replacing Chart.js's animation defaults dropped its colour interpolator, so the hover animation
+  threw and stopped every chart redrawing.
+
 ## [0.7.1] - 2026-10-21
 
 ### Changed

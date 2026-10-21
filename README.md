@@ -104,7 +104,7 @@ exitrisk serve              # opens http://127.0.0.1:8740
 | **Check access** | Tests the five read-only calls a scan needs and shows ✓ / ✗ with the fix for each. If anything is missing it writes the **request to send your AWS administrator**: your identity, the account, the policy, ready to copy or download. |
 | **Scan and report** | Seconds for hundreds of accounts. Type `prod` in the filter bar, answer the questions under **Exit model** in the top bar, **Export PDF**. |
 
-No AWS access yet? **Load demo data** shows a synthetic bank estate (49 accounts, made-up numbers).
+No AWS access yet? **Settings** (gear, top right) → **Load demo data** shows a synthetic bank estate (49 accounts, made-up numbers).
 
 **What your AWS administrator grants** (read-only, in the management account): an IAM Identity Center
 permission set with [this inline policy](iam/management-account-policy.json), or the AWS-managed
@@ -208,7 +208,7 @@ exitrisk catalog                                                        # list s
 ![New scan](docs/images/new-scan-dialog.png)
 
 **One-page ExCo summary**: score, headline, six tiles, tier bar, top findings and decisions, and the
-accounts that drive the exit, on one A4 page. **One-page PDF** in the header, or `exitrisk pdf --onepage`.
+accounts that drive the exit, on one A4 page. **Export PDF → One-page summary** in the header, or `exitrisk pdf --onepage`.
 
 ![One-page summary](docs/images/one-page-summary.png)
 
