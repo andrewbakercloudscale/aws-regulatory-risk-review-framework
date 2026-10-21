@@ -6,6 +6,12 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Fixed
+- Multi-region: Amazon Lex counts as available in Europe (Ireland). AWS's public regional services
+  table omits it, though the Lex V2 endpoints answer there. Known errors in that table are now
+  corrected in `data/regions.yaml` (`availability_corrections`, with the date and evidence), listed
+  in the report's assumptions, and the refresh script reports any the table has since fixed.
+
 ## [0.8.0] - 2026-10-21
 
 ### Added

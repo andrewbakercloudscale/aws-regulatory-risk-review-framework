@@ -1,7 +1,7 @@
 {
  "source": "https://api.regional-table.region-services.aws.a2z.com/index.json",
  "source_version": "20251113063700",
- "fetched": "2026-10-20",
+ "fetched": "2026-10-21",
  "services": {
   "AWS Amplify": [
    "ap-east-1",

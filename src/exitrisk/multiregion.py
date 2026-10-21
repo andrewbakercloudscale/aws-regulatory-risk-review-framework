@@ -138,7 +138,31 @@ def load_region_data() -> dict:
     cfg["availability"] = {k: set(v) for k, v in avail["services"].items()}
     cfg["availability_version"] = avail.get("source_version", "")
     cfg["availability_fetched"] = avail.get("fetched", "")
+    _apply_corrections(cfg)
     return cfg
+
+
+def _apply_corrections(cfg: dict) -> None:
+    """Fix entries AWS's regional services table is known to get wrong (regions.yaml)."""
+    for c in cfg.get("availability_corrections") or []:
+        regions = cfg["availability"].setdefault(c["service"], set())
+        if c["available"]:
+            regions.add(c["region"])
+        else:
+            regions.discard(c["region"])
+
+
+def _corrections_text(cfg: dict) -> str:
+    fixes = cfg.get("availability_corrections") or []
+    if not fixes:
+        return ""
+    return (
+        ", corrected where it is known to be wrong ("
+        + "; ".join(
+            f"{c['service']} {'available' if c['available'] else 'not available'} in {c['region']}" for c in fixes
+        )
+        + ")"
+    )
 
 
 def _availability_age_days(cfg: dict, today: date | None = None) -> int | None:
@@ -955,8 +979,9 @@ def _assumptions(mq: MultiRegionAnswers, q: Questionnaire, cfg: dict, factor: fl
         f"Latency is estimated from distance (fibre ~{FIBRE_KM_PER_MS:.0f} km/ms, routes {ROUTE_FACTOR}x the great "
         "circle): measure before committing.",
         "Service availability: AWS's public regional services table, version "
-        f"{cfg['availability_version']} (fetched {cfg['availability_fetched']}). Services not listed there are "
-        "'not verified' and their effort is raised 25%.",
+        f"{cfg['availability_version']} (fetched {cfg['availability_fetched']})"
+        + _corrections_text(cfg)
+        + ". Services not listed there are 'not verified' and their effort is raised 25%.",
         f"Region score: parity {SCORE_WEIGHTS[mq.recovery][0]:.0%}, latency {SCORE_WEIGHTS[mq.recovery][1]:.0%}, "
         f"price {SCORE_WEIGHTS[mq.recovery][2]:.0%}, plus a bonus where the estate already runs.",
         f"People: {STAFF_TEAM_UPLIFT[ri]:.0%} of the core cloud team ({q.cloud_team_size}) + {STAFF_RESILIENCE[ri]:g} "

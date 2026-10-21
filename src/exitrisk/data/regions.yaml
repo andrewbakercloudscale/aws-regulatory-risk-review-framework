@@ -15,13 +15,14 @@
 #
 # Service availability per region is NOT here: it is data/region_services.json, refreshed from
 # AWS's public regional services table with `python scripts/refresh_region_services.py`.
+# Where that table is known to be wrong, `availability_corrections` (end of this file) overrides it.
 #
 # services: catalog service name -> how it behaves in a second region
 #   regional  the service's name in AWS's regional services table (null: not listed there, so
 #             availability is "not verified"; global: one instance serves every region)
 #   class     how its spend scales with the resilience pattern (see `classes`)
 
-version: "2026.10.4"
+version: "2026.10.5"
 
 regions:
   us-east-1:      {name: US East (N. Virginia),          country: US, jurisdiction: US, continent: North America, lat: 38.9,  lon: -77.4,  price: 1.00}
@@ -382,3 +383,22 @@ regulation:
       text: >-
         Regulators usually expect notice of material outsourcing or data-location changes: check
         what yours requires before data moves to {secondary}.
+
+# Corrections to AWS's public regional services table, applied on top of data/region_services.json.
+# Add one only with evidence: the service's endpoint answering in that region, its AWS endpoints page,
+# or a launch announcement. scripts/refresh_region_services.py reports corrections the table now agrees
+# with, so they can be removed.
+#   service    AWS's name in the regional services table (the `regional` value above)
+#   region     region code
+#   available  true: the table wrongly omits the region; false: the table wrongly lists it
+#   checked    date the evidence was checked
+#   evidence   what was checked
+availability_corrections:
+  - service: Amazon Lex
+    region: eu-west-1
+    available: true
+    checked: "2026-10-21"
+    evidence: >-
+      Lex V2 endpoints models-v2-lex.eu-west-1.amazonaws.com and runtime-v2-lex.eu-west-1.amazonaws.com
+      answer, as in London and Frankfurt; Lex launched in Europe (Ireland) in November 2017
+      (aws.amazon.com/about-aws/whats-new/2017/11/amazon-lex-now-available-in-europe-ireland-aws-region).

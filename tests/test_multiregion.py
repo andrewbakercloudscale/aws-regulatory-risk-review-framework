@@ -253,3 +253,28 @@ def test_regulation_follows_the_primary_and_the_border():
         _scan(costs, rc), q=Questionnaire(regulated=False), mq=MultiRegionAnswers(secondary="us-west-2")
     )
     assert us["summary"]["regulation"] == []
+
+
+def test_known_errors_in_the_aws_list_are_corrected():
+    cfg = load_region_data()
+    fixes = {(c["service"], c["region"]): c for c in cfg["availability_corrections"]}
+    assert fixes[("Amazon Lex", "eu-west-1")]["available"] and fixes[("Amazon Lex", "eu-west-1")]["evidence"]
+    assert "eu-west-1" in cfg["availability"]["Amazon Lex"]
+    # Connect really is not in Ireland: no correction, still missing.
+    assert "eu-west-1" not in cfg["availability"]["Amazon Connect"]
+    r = build_multiregion(_connect_scan())
+    assert any("Amazon Lex available in eu-west-1" in a for a in r["assumptions"])
+
+
+def test_correction_can_remove_a_region():
+    from exitrisk.multiregion import _apply_corrections
+
+    cfg = {
+        "availability": {"X": {"a", "b"}},
+        "availability_corrections": [
+            {"service": "X", "region": "b", "available": False},
+            {"service": "Y", "region": "c", "available": True},
+        ],
+    }
+    _apply_corrections(cfg)
+    assert cfg["availability"] == {"X": {"a"}, "Y": {"c"}}

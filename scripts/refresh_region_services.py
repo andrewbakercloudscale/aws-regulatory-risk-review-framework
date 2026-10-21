@@ -50,6 +50,10 @@ def main(argv: list[str]) -> int:
     path = DATA / "region_services.json"
     path.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {path.relative_to(ROOT)}: {len(services)} services, source version {out['source_version']}")
+    for c in cfg.get("availability_corrections") or []:
+        listed = c["region"] in services.get(c["service"], set())
+        if listed == c["available"]:
+            print(f"correction no longer needed (the AWS table now agrees): {c['service']} in {c['region']}")
     return 0
 
 

@@ -67,7 +67,10 @@ Every region that passes the residency rule is scored 0 to 100:
 - **Service parity**: the share of the chosen accounts' regional spend on services offered in the
   candidate, from the AWS regional services list (`data/region_services.json`, refreshed with
   `scripts/refresh_region_services.py`). A missing service needs re-architecture, so parity is
-  penalised steeply (raised to the 6th power).
+  penalised steeply (raised to the 6th power). AWS's list is sometimes wrong or behind (it still
+  omits Amazon Lex in Ireland), so `availability_corrections` in `data/regions.yaml` overrides it,
+  each with the date and evidence checked. The refresh script says when AWS's list catches up and a
+  correction can go. For a one-off view, correct a service on the page instead (below).
 - **Latency**: estimated round trip from the primary, by great-circle distance at fibre speed with
   a routing overhead. Regions without a direct path (Cape Town) are routed via their hub.
 - **Price**: a regional price index against the primary.
