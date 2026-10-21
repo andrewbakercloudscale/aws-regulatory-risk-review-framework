@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-21
+
 ### Added
 
 - One-page summary: a "Commitments written off" tile (Savings Plans and reservations still owed after
