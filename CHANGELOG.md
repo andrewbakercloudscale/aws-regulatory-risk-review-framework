@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-21
+
 ### Added
 
 - Resilience, Data held: "Links for the migration". The scan now counts the Direct Connect ports you
