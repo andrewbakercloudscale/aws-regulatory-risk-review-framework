@@ -1635,6 +1635,11 @@
       f.querySelector("input:not([type=hidden]), select")?.focus({ preventScroll: true });
     };
     $("#btnModel").addEventListener("click", () => openModel());
+    // The top bar wraps on narrow screens, so track its real height for scroll-padding-top.
+    const topbar = document.querySelector(".topbar");
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`);
+    }).observe(topbar);
     $("#btnIssues").addEventListener("click", () => {
       setView("exit");
       $("#sec-issues").scrollIntoView({ behavior: "smooth", block: "start" });

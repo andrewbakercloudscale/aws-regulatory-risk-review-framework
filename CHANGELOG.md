@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Fixed
+- Issues (and any other jump to a section) now lands with the section title visible below the
+  sticky top bar, at every screen width.
+
 ## [0.7.2] - 2026-10-21
 
 ### Changed

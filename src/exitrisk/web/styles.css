@@ -48,6 +48,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+/* Jumps to a section land below the sticky top bar, whose height app.js keeps in --topbar-h. */
+html { scroll-padding-top: calc(var(--topbar-h, 72px) + 16px); }
 body { background: var(--page); color: var(--ink); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
 h1, h2, h3 { line-height: 1.2; margin: 0 0 .5em; }
 h1 { font-size: 28px; letter-spacing: -0.01em; }
