@@ -11,6 +11,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   Team, Executive, Linked executive and similar, in any spelling) and shown per account, with a
   table of spend and spend at risk by executive. When one person owns every account it is said once
   instead of on every row. The demo organisation has owner tags.
+- Multi-region: each candidate region says why it ranks where it does (missing services and their
+  spend, extra latency, price, or what differs in a near tie), and the summary names the runners-up.
+  A service the AWS list shows as missing can be marked available in that region (the list lags
+  launches) or not needed in the second region; corrections are listed and can be undone.
 
 ## [0.7.4] - 2026-10-21
 

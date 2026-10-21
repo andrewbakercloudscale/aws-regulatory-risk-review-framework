@@ -19,9 +19,10 @@ from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
 from importlib import resources
+from typing import Annotated
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from .catalog import Catalog, ServiceInfo, load_catalog
 from .estimate import (
@@ -122,6 +123,10 @@ class MultiRegionAnswers(BaseModel):
     allocation_pct: int = Field(50, ge=5, le=100)
     fte_annual_cost: float = Field(0, ge=0, le=10_000_000)  # 0 = blended day rate x 220 days
     accounts: list[str] | None = Field(None, max_length=5000)  # None = every account in scope
+    # Corrections the user makes: "service@region" pairs the AWS list wrongly shows as missing, and
+    # services that will not run in the second region (left out of parity, cost and effort).
+    assume_available: list[Annotated[str, StringConstraints(max_length=160)]] = Field([], max_length=500)
+    not_needed: list[Annotated[str, StringConstraints(max_length=120)]] = Field([], max_length=500)
     confirmed: bool = False
 
 
@@ -323,6 +328,13 @@ def _primary_region(lines: list[_Line], mq: MultiRegionAnswers, regions: dict, n
     return primary, detected
 
 
+def _status(cfg: dict, mq: MultiRegionAnswers, service: str, regional: str | None, region: str) -> str:
+    """Availability of a service in a region, after the user's corrections."""
+    if f"{service}@{region}" in mq.assume_available:
+        return "available"
+    return _availability(cfg["availability"], regional, region)
+
+
 def _availability(avail: dict, regional: str | None, region: str) -> str:
     if regional == "global":
         return "global"
@@ -362,7 +374,7 @@ def _candidates(
     sel: list[_Line], svc_spend: dict, by_region: dict, primary: str, mq: MultiRegionAnswers, cfg: dict
 ) -> list[dict]:
     """Every other region, scored on service parity, latency and price; residency-allowed first."""
-    regions, avail, ri = cfg["regions"], cfg["availability"], RECOVERY_INDEX[mq.recovery]
+    regions, ri = cfg["regions"], RECOVERY_INDEX[mq.recovery]
     p = regions[primary]
     weights = SCORE_WEIGHTS[mq.recovery]
     regional_total = max(sum(v for k, v in by_region.items() if k != "global"), 1e-9)
@@ -370,7 +382,7 @@ def _candidates(
     for code, r in regions.items():
         if code == primary:
             continue
-        status = {k: _availability(avail, s["regional"], code) for k, s in svc_spend.items()}
+        status = {k: _status(cfg, mq, k, s["regional"], code) for k, s in svc_spend.items()}
         avail_spend = sum(s["monthly_spend"] for k, s in svc_spend.items() if status[k] in ("available", "global"))
         missing = [svc_spend[k] for k in status if status[k] == "missing"]
         missing_spend = sum(s["monthly_spend"] for s in missing)
@@ -400,7 +412,10 @@ def _candidates(
                 "residency_ok": _residency_ok(p, r, mq.residency),
                 "latency_ms": rtt,
                 "parity_pct": round(parity, 1),
-                "missing": [{"display": s["display"], "monthly_spend": round(s["monthly_spend"], 2)} for s in missing],
+                "missing": [
+                    {"service": s["service"], "display": s["display"], "monthly_spend": round(s["monthly_spend"], 2)}
+                    for s in missing
+                ],
                 "missing_spend": round(missing_spend, 2),
                 "unverified": [svc_spend[k]["display"] for k in status if status[k] == "unverified"],
                 "price_index": round(price_ratio, 2),
@@ -411,7 +426,38 @@ def _candidates(
             }
         )
     out.sort(key=lambda c: (not c["residency_ok"], -c["score"]))
+    best = out[0] if out else None
+    for c in out:
+        c["why"] = _why(c, best)
     return out
+
+
+def _why(c: dict, best: dict) -> str:
+    """Why a region ranks where it does, against the best one: the reasons a reader would ask for."""
+    if c is best:
+        gaps = ", ".join(m["display"] for m in c["missing"][:3])
+        return "Best balance of service parity, latency and price." + (
+            f" Not offered here: {gaps} ({_money(c['missing_spend'])}/month)." if gaps else ""
+        )
+    reasons = []
+    if not c["residency_ok"]:
+        reasons.append("outside the residency rule")
+    if c["missing"]:
+        names = ", ".join(m["display"] for m in c["missing"][:3]) + (" and others" if len(c["missing"]) > 3 else "")
+        reasons.append(f"no {names} here ({_money(c['missing_spend'])}/month to re-architect)")
+    if c["latency_ms"] - best["latency_ms"] >= 10:
+        reasons.append(f"~{c['latency_ms'] - best['latency_ms']} ms further than {best['name']}")
+    if c["price_index"] - best["price_index"] >= 0.02:
+        reasons.append(f"about {round(100 * (c['price_index'] / best['price_index'] - 1))}% dearer than {best['name']}")
+    if not reasons:
+        # A near tie: say what differs, both ways, so the reader can pick on their own grounds.
+        d_ms = c["latency_ms"] - best["latency_ms"]
+        d_price = round(100 * (c["price_index"] / best["price_index"] - 1))
+        diffs = [f"{abs(d_ms)} ms {'further' if d_ms > 0 else 'closer'}"] if d_ms else []
+        diffs += [f"{abs(d_price)}% {'dearer' if d_price > 0 else 'cheaper'}"] if d_price else []
+        return f"Effectively tied with {best['name']}" + (f": {', '.join(diffs)}." if diffs else ".")
+    text = "; ".join(reasons)
+    return text[0].upper() + text[1:] + "."
 
 
 def _account_risks(
@@ -441,7 +487,9 @@ def _account_risks(
             rc = risk_cfg.get(svc) or {}
             failover = rc.get("failover") or classes[ln.cls]["failover"]
             note = rc.get("note") or classes[ln.cls]["note"]
-            st = _availability(cfg["availability"], ln.regional, secondary) if secondary else "unverified"
+            if svc in mq.not_needed:
+                continue
+            st = _status(cfg, mq, svc, ln.regional, secondary) if secondary else "unverified"
             if secondary and (quota := rc.get("quota")):
                 text = quota["inside" if secondary in quota["regions"] else "outside"]
                 note = f"{note} {text.format(region=regions[secondary]['name'])}"
@@ -551,7 +599,15 @@ def build_multiregion(
     chosen = set(mq.accounts) & set(accounts) if mq.accounts is not None else set(accounts)
     if mq.accounts is not None and len(chosen) < len(set(mq.accounts)):
         log.info("multi-region: %d chosen account(s) are not in scope", len(set(mq.accounts)) - len(chosen))
-    sel = [ln for ln in lines if ln.account in chosen and ln.region != "global"]
+    not_needed = set(mq.not_needed)
+    skipped: dict[str, dict] = {}
+    for ln in lines:
+        if ln.account in chosen and ln.region != "global" and ln.info.service in not_needed:
+            sk = skipped.setdefault(
+                ln.info.service, {"service": ln.info.service, "display": ln.info.display, "monthly_spend": 0.0}
+            )
+            sk["monthly_spend"] += ln.monthly
+    sel = [ln for ln in lines if ln.account in chosen and ln.region != "global" and ln.info.service not in not_needed]
     sel_monthly = sum(ln.monthly for ln in lines if ln.account in chosen)
     regional_monthly = sum(ln.monthly for ln in sel)
     svc_spend = _service_totals(sel)
@@ -568,7 +624,7 @@ def build_multiregion(
     cur, fx = q.currency, q.fx_per_usd
     if target:
         infra, by_class, transfer = _run_cost(sel, secondary, regions, classes, ri)
-        status = {k: _availability(cfg["availability"], s["regional"], secondary) for k, s in svc_spend.items()}
+        status = {k: _status(cfg, mq, k, s["regional"], secondary) for k, s in svc_spend.items()}
     else:
         infra, by_class, transfer, status = 0.0, {}, 0.0, {}
     # AWS Support is billed on the payer's whole bill: price the uplift on top of the scan's total.
@@ -654,6 +710,11 @@ def build_multiregion(
         "secondary_name": regions[secondary]["name"] if secondary else None,
         "recommended": recommended,
         "recommended_name": regions[recommended]["name"] if recommended else None,
+        "not_needed": sorted(
+            ({**v, "monthly_spend": round(v["monthly_spend"], 2)} for v in skipped.values()),
+            key=lambda v: -v["monthly_spend"],
+        ),
+        "assume_available": sorted(mq.assume_available),
         "target": target,
         "accounts_in_scope": len(accounts),
         "accounts_selected": len(chosen),
@@ -782,6 +843,14 @@ def _executive(s: dict, candidates: list, mq: MultiRegionAnswers, q: Questionnai
             ),
         }
     )
+    runners = [c for c in candidates if c["residency_ok"] and c["region"] != s["recommended"]][:2]
+    if runners:
+        findings.append(
+            {
+                "lead": "Runners-up.",
+                "text": " ".join(f"{c['name']}: {c['why'][0].lower()}{c['why'][1:]}" for c in runners),
+            }
+        )
     if t["missing"]:
         names = ", ".join(f"{m['display']} ({_money(m['monthly_spend'])}/month)" for m in t["missing"][:4])
         findings.append(

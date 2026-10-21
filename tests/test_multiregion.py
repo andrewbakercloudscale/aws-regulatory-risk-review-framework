@@ -178,3 +178,56 @@ def test_no_accounts_selected_is_a_clean_empty_estimate():
     s = r["summary"]
     assert s["accounts_selected"] == 0 and s["run"]["annual_total"] == 0 and s["staff"]["fte"] == 0
     assert s["ranges"]["run_annual"] == "–" and "Pick at least one account" in s["executive"]["headline"]
+
+
+def _connect_scan():
+    costs = [
+        {"month": "2026-09", "account_id": "1", "service": "Amazon Connect", "amount": 9000},
+        {"month": "2026-09", "account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "amount": 5000},
+    ]
+    rc = [
+        {"account_id": "1", "service": "Amazon Connect", "region": "af-south-1", "monthly": 9000},
+        {
+            "account_id": "1",
+            "service": "Amazon Elastic Compute Cloud - Compute",
+            "region": "af-south-1",
+            "monthly": 5000,
+        },
+    ]
+    return _scan(costs, rc)
+
+
+def test_each_candidate_says_why_it_ranks_there():
+    r = build_multiregion(_connect_scan())
+    cands = {c["region"]: c for c in r["candidates"]}
+    assert cands[r["summary"]["recommended"]]["why"].startswith("Best balance")
+    assert "No Connect here" in cands["eu-west-1"]["why"]
+    assert all(c["why"] for c in r["candidates"])
+    assert any(f["lead"] == "Runners-up." for f in r["summary"]["executive"]["findings"])
+
+
+def test_user_corrections_change_parity_and_cost():
+    base = build_multiregion(_connect_scan(), mq=MultiRegionAnswers(secondary="eu-west-1"))
+    assert base["summary"]["target"]["missing"]
+    fixed = build_multiregion(
+        _connect_scan(), mq=MultiRegionAnswers(secondary="eu-west-1", assume_available=["Amazon Connect@eu-west-1"])
+    )
+    t = fixed["summary"]["target"]
+    assert not t["missing"] and t["parity_pct"] == 100
+    assert fixed["accounts"][0]["risks"][0]["availability"] == "available"
+    # The correction is for that region only: elsewhere the AWS list still decides.
+    sydney = next(c for c in fixed["candidates"] if c["region"] == "ap-southeast-2")
+    assert sydney["parity_pct"] == base_sydney(base)["parity_pct"]
+
+    skip = build_multiregion(
+        _connect_scan(), mq=MultiRegionAnswers(secondary="eu-west-1", not_needed=["Amazon Connect"])
+    )
+    s = skip["summary"]
+    assert s["not_needed"] == [{"service": "Amazon Connect", "display": "Connect", "monthly_spend": 9000}]
+    assert not s["target"]["missing"]
+    assert s["run"]["infra_monthly"] < base["summary"]["run"]["infra_monthly"]
+    assert all(r["service"] != "Connect" for a in skip["accounts"] for r in a["risks"])
+
+
+def base_sydney(r):
+    return next(c for c in r["candidates"] if c["region"] == "ap-southeast-2")

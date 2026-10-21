@@ -76,6 +76,22 @@ Weights: 3-hour recovery 55% parity / 20% latency / 25% price; instant 45% / 45%
 active-active needs low latency. A region where at least 5% of spend already runs is noted, and its
 landing-zone effort is halved.
 
+Each candidate says **why it ranks where it does** against the best one: the services it lacks and
+what they cost a month, how much further it is, how much dearer, or, for a near tie, what differs
+either way. The summary names the two runners-up with the same reasons.
+
+**Corrections.** Click a service under "Not available" to correct it:
+
+- *Available in this region*: the AWS list lags launches, or a service is offered under another
+  name. The correction applies to that region only.
+- *Not needed in the second region*: a service that will not be replicated (for example a contact
+  centre with its own resilience, or a tool you will drop). It leaves parity, run cost and effort
+  for every region, and is listed under "Your corrections" with its spend.
+
+Example: a Cape Town primary using Amazon Connect gets Frankfurt or London, because Connect is not
+offered in Ireland. Mark Connect as not needed and Ireland, a little cheaper at similar latency,
+comes first.
+
 ![Which second region](images/multiregion-region.png)
 
 ## Cost to run (section 5)

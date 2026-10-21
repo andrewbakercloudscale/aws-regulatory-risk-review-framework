@@ -1012,7 +1012,7 @@
   // ------------------------------------------------------------------ multi-region view
   const LS_MR = "exitrisk.multiregion.v1";
   const LS_MR_ACCTS = "exitrisk.multiregion.accounts."; // + scan id: the accounts ticked for a second region
-  const MR_DEFAULTS = { recovery: "rto_3h", residency: "any", primary: "", secondary: "", support_plan: "enterprise", allocation_pct: 50, fte_annual_cost: 0, confirmed: false };
+  const MR_DEFAULTS = { recovery: "rto_3h", residency: "any", primary: "", secondary: "", support_plan: "enterprise", allocation_pct: 50, fte_annual_cost: 0, confirmed: false, assume_available: [], not_needed: [] };
   const MR_NUM = ["allocation_pct", "fte_annual_cost"];
   const SEV_TIER = { Low: 1, Moderate: 3, High: 4, Critical: 5 };
   const AVAIL_LABEL = { available: "Available", missing: "Not available", unverified: "Not verified", global: "Global" };
@@ -1047,7 +1047,7 @@
   function readMr() {
     if (!state.mrFilled) return loadMrAnswers();
     const f = $("#mrForm");
-    const a = { confirmed: !!state.mrConfirmed };
+    const a = { confirmed: !!state.mrConfirmed, assume_available: state.mrFix.assume_available, not_needed: state.mrFix.not_needed };
     for (const el of f.elements) {
       if (!el.name || el.hasAttribute("data-shared")) continue;
       if (el.type === "radio") { if (el.checked) a[el.name] = el.value; }
@@ -1118,6 +1118,7 @@
     }
     state.mrFilled = true;
     state.mrConfirmed = a.confirmed;
+    state.mrFix = { assume_available: [...(a.assume_available || [])], not_needed: [...(a.not_needed || [])] };
   }
 
   function sevBadge(sev) {
@@ -1180,12 +1181,24 @@
       ["Already runs there", `${num(t.existing_pct, 1)}% of regional spend`],
     ].map(([k, v]) => `<tr><th scope="row">${esc(k)}</th><td>${esc(v)}</td></tr>`).join("") : "";
     const cands = m.candidates.filter((c) => c.residency_ok || c.region === s.secondary).slice(0, 10);
-    $("#mrCandTable").innerHTML = `<thead><tr><th>Region</th><th class="num-cell">Latency</th><th class="num-cell">Parity</th><th>Not available</th><th class="num-cell">Price</th><th class="num-cell">Score</th><th>Notes</th><th class="no-print"></th></tr></thead><tbody>` +
-      cands.map((c) => `<tr class="${c.region === s.secondary ? "chosen" : ""}"><td><strong>${esc(c.name)}</strong> <span class="muted small">${esc(c.region)}</span>${c.region === s.recommended ? ' <span class="ok-tag">Recommended</span>' : ""}</td>
+    // A missing service opens two corrections: the AWS list is out of date for this region, or the
+    // service will not run in the second region at all.
+    const fixChip = (c, x) => PRINT ? `<span class="chip">${esc(x.display)}</span>` : `<details class="fix"><summary class="chip" title="${esc(money(x.monthly_spend))}/month">${esc(x.display)}</summary><div class="fix-pop">
+      <button type="button" class="btn sm" data-fix="assume_available" data-key="${esc(`${x.service}@${c.region}`)}">Available in ${esc(c.name)} (AWS list out of date)</button>
+      <button type="button" class="btn sm" data-fix="not_needed" data-key="${esc(x.service)}">Not needed in the second region</button></div></details>`;
+    const fixes = [
+      ...m.answers.assume_available.map((k) => { const [svc, reg] = k.split("@"); return { kind: "assume_available", key: k, text: `${svc.replace(/^(Amazon|AWS) /, "")} available in ${m.regions[reg] || reg}` }; }),
+      ...m.answers.not_needed.map((k) => ({ kind: "not_needed", key: k, text: `${(s.not_needed.find((x) => x.service === k)?.display) || k.replace(/^(Amazon|AWS) /, "")} not needed` })),
+    ];
+    $("#mrFixes").hidden = !fixes.length;
+    $("#mrFixes").innerHTML = fixes.length ? `<span class="muted small">Your corrections:</span>` + fixes.map((x) =>
+      `<span class="chip">${esc(x.text)}${PRINT ? "" : ` <button type="button" class="chip-x" data-unfix="${esc(x.kind)}" data-key="${esc(x.key)}" aria-label="Undo: ${esc(x.text)}">×</button>`}</span>`).join("") : "";
+    $("#mrCandTable").innerHTML = `<thead><tr><th>Region</th><th class="num-cell">Latency</th><th class="num-cell">Parity</th><th>Not available</th><th class="num-cell">Price</th><th class="num-cell">Score</th><th>Why it ranks here</th><th class="no-print"></th></tr></thead><tbody>` +
+      cands.map((c) => `<tr class="${c.region === s.secondary ? "chosen" : ""}"><td><strong>${esc(c.name)}</strong> <span class="muted small nowrap">${esc(c.region)}</span>${c.region === s.recommended ? ' <span class="ok-tag">Recommended</span>' : ""}</td>
         <td class="num-cell">~${num(c.latency_ms)} ms</td><td class="num-cell">${num(c.parity_pct, 1)}%</td>
-        <td>${c.missing.length ? esc(c.missing.map((x) => x.display).join(", ")) : '<span class="muted">none</span>'}</td>
+        <td><div class="chips">${c.missing.length ? c.missing.map((x) => fixChip(c, x)).join("") : '<span class="muted">none</span>'}</div></td>
         <td class="num-cell">${c.price_index >= 1 ? "+" : ""}${num(100 * (c.price_index - 1))}%</td><td class="num-cell">${num(c.score)}</td>
-        <td class="small">${esc(c.notes.join("; "))}${c.residency_ok ? "" : " Outside the residency rule."}</td>
+        <td class="small">${esc([c.why, ...c.notes.map((n) => `${n[0].toUpperCase()}${n.slice(1)}.`)].join(" "))}</td>
         <td class="no-print">${c.region === s.secondary ? "" : `<button type="button" class="btn" data-use-region="${esc(c.region)}">Use</button>`}</td></tr>`).join("") + "</tbody>";
 
     $("#mrRunTiles").innerHTML = [
@@ -1273,7 +1286,19 @@
     $("#btnMrNone").addEventListener("click", () => setMrSelection([]));
     $("#btnMrTop").addEventListener("click", () => state.mr && setMrSelection(state.mr.accounts.slice(0, 10).map((a) => a.id)));
     $("#btnMrAcctMore").addEventListener("click", () => { state.mrShowAll = !state.mrShowAll; renderMrAccounts(state.mr); });
+    const toggleFix = (kind, key, on) => {
+      const list = new Set(state.mrFix[kind]);
+      if (on) list.add(key); else list.delete(key);
+      state.mrFix[kind] = [...list];
+      loadMultiRegion();
+    };
+    $("#mrFixes").addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-unfix]");
+      if (b) toggleFix(b.dataset.unfix, b.dataset.key, false);
+    });
     $("#mrCandTable").addEventListener("click", (ev) => {
+      const fix = ev.target.closest("[data-fix]");
+      if (fix) { toggleFix(fix.dataset.fix, fix.dataset.key, true); return; }
       const r = ev.target.dataset?.useRegion;
       if (!r) return;
       $("#mrForm").secondary.value = r;

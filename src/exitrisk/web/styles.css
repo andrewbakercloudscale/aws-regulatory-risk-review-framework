@@ -596,3 +596,15 @@ table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(-
   .tb-sep { display: none; }
   .topbar-actions { justify-content: flex-start; }
 }
+
+/* Multi-region: correcting a service the AWS list shows as missing. */
+details.fix > summary { list-style: none; cursor: pointer; }
+details.fix > summary::-webkit-details-marker { display: none; }
+details.fix > summary::after { content: " ▾"; color: var(--muted); }
+details.fix > summary:hover { border-color: var(--accent); }
+details.fix[open] > summary { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.fix-pop { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin: 6px 0 4px; }
+.fix-pop .btn { white-space: normal; text-align: left; height: auto; min-height: 0; padding: 4px 10px; font-weight: 500; line-height: 1.3; }
+.mr-fixes { margin: 4px 0 10px; align-items: center; }
+.chip-x { border: 0; background: none; padding: 0 0 0 2px; font: inherit; color: var(--muted); cursor: pointer; }
+.chip-x:hover { color: var(--ink); }
