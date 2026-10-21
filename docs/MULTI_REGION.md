@@ -92,6 +92,14 @@ Example: a Cape Town primary using Amazon Connect gets Frankfurt or London, beca
 offered in Ireland. Mark Connect as not needed and Ireland, a little cheaper at similar latency,
 comes first.
 
+**Regulation to check.** For the primary region's jurisdiction, the page lists the rules a move
+of data to the chosen second region touches: South Africa (POPIA section 72; Prudential Authority
+Directive 3 of 2018 and Guidance Note 5 of 2018; Joint Standards 1 of 2023 and 2 of 2024), the EU
+(GDPR Chapter V, DORA), the UK (UK GDPR transfers, PRA SS2/21), and a general note elsewhere.
+Cross-border items show only when the second region is in another country; regulator items only
+when the organisation is regulated (section 2 of Exit model). They are pointers for the
+compliance conversation, not legal advice; edit `regulation` in `data/regions.yaml` to add yours.
+
 ![Which second region](images/multiregion-region.png)
 
 ## Cost to run (section 5)

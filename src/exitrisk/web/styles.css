@@ -608,3 +608,6 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 .mr-fixes { margin: 4px 0 10px; align-items: center; }
 .chip-x { border: 0; background: none; padding: 0 0 0 2px; font: inherit; color: var(--muted); cursor: pointer; }
 .chip-x:hover { color: var(--ink); }
+.reg-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 12px; }
+.reg-list li { display: grid; gap: 3px; padding-left: 12px; border-left: 3px solid var(--tone-risk); }
+.reg-list span { color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }

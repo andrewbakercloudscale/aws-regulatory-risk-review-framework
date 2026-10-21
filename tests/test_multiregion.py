@@ -231,3 +231,25 @@ def test_user_corrections_change_parity_and_cost():
 
 def base_sydney(r):
     return next(c for c in r["candidates"] if c["region"] == "ap-southeast-2")
+
+
+def test_regulation_follows_the_primary_and_the_border():
+    za = build_multiregion(_connect_scan(), mq=MultiRegionAnswers(secondary="eu-central-1"))["summary"]
+    names = [x["name"] for x in za["regulation"]]
+    assert names[0].startswith("POPIA section 72") and any("Prudential Authority" in n for n in names)
+    assert "Germany" in za["regulation"][0]["text"]
+    unregulated = build_multiregion(
+        _connect_scan(), q=Questionnaire(regulated=False), mq=MultiRegionAnswers(secondary="eu-central-1")
+    )["summary"]
+    assert [x["name"] for x in unregulated["regulation"]] == names[:1]
+    # Inside one country there is no cross-border transfer to flag.
+    costs = [
+        {"month": "2026-09", "account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "amount": 5000}
+    ]
+    rc = [
+        {"account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "region": "us-east-1", "monthly": 5000}
+    ]
+    us = build_multiregion(
+        _scan(costs, rc), q=Questionnaire(regulated=False), mq=MultiRegionAnswers(secondary="us-west-2")
+    )
+    assert us["summary"]["regulation"] == []

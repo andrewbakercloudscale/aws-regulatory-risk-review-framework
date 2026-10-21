@@ -1201,6 +1201,11 @@
         <td class="small">${esc([c.why, ...c.notes.map((n) => `${n[0].toUpperCase()}${n.slice(1)}.`)].join(" "))}</td>
         <td class="no-print">${c.region === s.secondary ? "" : `<button type="button" class="btn" data-use-region="${esc(c.region)}">Use</button>`}</td></tr>`).join("") + "</tbody>";
 
+    const reg = s.regulation || [];
+    $("#mrRegCard").hidden = !reg.length;
+    $("#mrRegRegion").textContent = s.secondary_name || "";
+    $("#mrRegList").innerHTML = reg.map((x) => `<li><strong>${esc(x.name)}</strong><span>${esc(x.text)}</span></li>`).join("");
+
     $("#mrRunTiles").innerHTML = [
       tile("Second-region infrastructure", rg.infra_annual, "a year, incl. replication traffic", prov),
       tile("AWS Support uplift", rg.support_annual, `${m.labels.support_plan[m.answers.support_plan]} plan, a year`, prov),

@@ -21,7 +21,7 @@
 #             availability is "not verified"; global: one instance serves every region)
 #   class     how its spend scales with the resilience pattern (see `classes`)
 
-version: "2026.10.3"
+version: "2026.10.4"
 
 regions:
   us-east-1:      {name: US East (N. Virginia),          country: US, jurisdiction: US, continent: North America, lat: 38.9,  lon: -77.4,  price: 1.00}
@@ -321,3 +321,64 @@ risks:
   Amazon SageMaker: {failover: manual, note: "Models and endpoints must be redeployed in the second region; training data replicated."}
   Amazon Bedrock: {failover: native, note: "Cross-region inference spreads requests across regions, but model availability differs: check every model used exists in the second region."}
   Amazon Route 53: {failover: native, note: "Global, and the usual failover mechanism: health checks and failover records switch traffic."}
+
+# Regulation to check when a second region moves data, by the PRIMARY region's jurisdiction.
+# Pointers for the compliance conversation, not legal advice: each says what the instrument covers.
+#   applies   cross_border: only when the second region is in another country
+#             regulated:    only when the questionnaire says the organisation is regulated
+#             always
+#   {secondary} and {country} are filled in with the second region and its country.
+regulation:
+  ZA:
+    - name: POPIA section 72 (transfers out of South Africa)
+      applies: cross_border
+      text: >-
+        Personal information may go to {country} only if the recipient is bound by law, binding
+        corporate rules or an agreement giving protection substantially similar to POPIA, or the
+        data subject consents, or the transfer is needed for a contract with them. Record which
+        ground you rely on (with AWS, usually the contractual route) and confirm it with your
+        Information Officer.
+    - name: Prudential Authority Directive 3 of 2018 and Guidance Note 5 of 2018 (cloud and offshoring of data)
+      applies: regulated
+      text: >-
+        Banks using cloud or holding data offshore need a board-approved policy, a risk assessment
+        and assured access to the data for the Prudential Authority. Check what you must tell the
+        Prudential Authority before data moves to {secondary}.
+    - name: Joint Standard 1 of 2023 (IT governance and risk) and Joint Standard 2 of 2024 (cybersecurity and cyber resilience)
+      applies: regulated
+      text: >-
+        Cover IT risk, resilience and third-party risk for financial institutions: the second
+        region's recovery tests and the oversight of AWS as a third party belong in this evidence.
+  EU:
+    - name: GDPR Chapter V (transfers out of the EEA)
+      applies: cross_border
+      text: >-
+        Outside the EEA, a transfer to {country} needs an adequacy decision or appropriate
+        safeguards (Standard Contractual Clauses with a transfer impact assessment).
+    - name: DORA, Regulation (EU) 2022/2554
+      applies: regulated
+      text: >-
+        For financial entities: record the second region in the register of information, and
+        cover it in ICT third-party risk management and resilience testing.
+  UK:
+    - name: UK GDPR (international transfers)
+      applies: cross_border
+      text: >-
+        Outside the UK, a transfer to {country} needs UK adequacy regulations or safeguards (the
+        International Data Transfer Agreement or the UK Addendum to the EU clauses).
+    - name: PRA SS2/21 (outsourcing and third-party risk management)
+      applies: regulated
+      text: >-
+        Notify the PRA of material outsourcing changes, which include where data is held, and
+        include the second region in exit and stressed-exit plans.
+  default:
+    - name: Data protection law
+      applies: cross_border
+      text: >-
+        Moving personal data to {country} is a cross-border transfer under most data protection
+        laws: check the conditions where you operate.
+    - name: Financial regulator
+      applies: regulated
+      text: >-
+        Regulators usually expect notice of material outsourcing or data-location changes: check
+        what yours requires before data moves to {secondary}.

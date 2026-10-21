@@ -15,6 +15,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   spend, extra latency, price, or what differs in a near tie), and the summary names the runners-up.
   A service the AWS list shows as missing can be marked available in that region (the list lags
   launches) or not needed in the second region; corrections are listed and can be undone.
+- Multi-region: **Regulation to check** lists the rules a move of data to the second region touches,
+  by the primary's jurisdiction (South Africa: POPIA section 72, Prudential Authority Directive
+  3/2018 and Guidance Note 5/2018, Joint Standards; EU: GDPR Chapter V, DORA; UK: UK GDPR, PRA
+  SS2/21). The data-residency finding names them.
 
 ## [0.7.4] - 2026-10-21
 

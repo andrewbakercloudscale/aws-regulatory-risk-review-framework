@@ -432,6 +432,23 @@ def _candidates(
     return out
 
 
+def _regulation(cfg: dict, p: dict, secondary: str | None, regulated: bool) -> list[dict]:
+    """The rules to check for the primary's jurisdiction, against the chosen second region."""
+    if not secondary:
+        return []
+    rules = cfg.get("regulation") or {}
+    r = cfg["regions"][secondary]
+    cross = r["country"] != p["country"]
+    country = COUNTRY_NAMES.get(r["country"], r["country"])
+    out = []
+    for rule in rules.get(p["jurisdiction"], rules.get("default", [])):
+        if (rule["applies"] == "cross_border" and not cross) or (rule["applies"] == "regulated" and not regulated):
+            continue
+        text = rule["text"].format(secondary=r["name"], country=country)
+        out.append({"name": rule["name"], "text": text})
+    return out
+
+
 def _why(c: dict, best: dict) -> str:
     """Why a region ranks where it does, against the best one: the reasons a reader would ask for."""
     if c is best:
@@ -715,6 +732,7 @@ def build_multiregion(
             key=lambda v: -v["monthly_spend"],
         ),
         "assume_available": sorted(mq.assume_available),
+        "regulation": _regulation(cfg, p, secondary, q.regulated),
         "target": target,
         "accounts_in_scope": len(accounts),
         "accounts_selected": len(chosen),
@@ -877,7 +895,12 @@ def _executive(s: dict, candidates: list, mq: MultiRegionAnswers, q: Questionnai
             {
                 "lead": "Data residency.",
                 "text": f"AWS has no second region in {s['country_name']}: any second region moves data "
-                "across a border, which needs regulator and data-protection sign-off.",
+                "across a border, which needs regulator and data-protection sign-off"
+                + (
+                    f" ({'; '.join(x['name'].split(' (')[0] for x in s['regulation'][:2])})."
+                    if s["regulation"]
+                    else "."
+                ),
             }
         )
     if mq.recovery == "instant" and t["latency_ms"] > SYNC_MAX_MS:
