@@ -206,7 +206,7 @@
 
   function renderCover(r) {
     const m = r.meta;
-    $("#title").textContent = m.mode === "demo" ? "AWS exit risk review — demo organisation" : `AWS exit risk review — ${m.ou?.path || "organisation"}`;
+    $("#title").textContent = m.mode === "demo" ? "AWS exit risk review: demo organisation" : `AWS exit risk review: ${m.ou?.path || "organisation"}`;
     $("#subtitle").textContent = m.mode === "demo"
       ? "Synthetic data for demonstration. Not a real organisation."
       : "How hard it would be to leave AWS, weighted by where the money is spent.";
@@ -214,7 +214,7 @@
       ["Scope", m.filter.description],
       ["Organizational unit", m.ou?.path || "–"],
       ["Accounts in scope", `${r.summary.accounts_in_scope} of ${r.summary.accounts_total}`],
-      ["Spend period", m.months_in_data?.length ? `${month(m.months_in_data[0])} – ${month(m.months_in_data.at(-1))} (${plural(m.months_in_data.length, "month")}, amortised)` : "–"],
+      ["Spend period", m.months_in_data?.length ? `${month(m.months_in_data[0])} to ${month(m.months_in_data.at(-1))} (${plural(m.months_in_data.length, "month")}, amortised)` : "–"],
       ["Scanned", m.scanned_at ? new Date(m.scanned_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "–"],
       ["Management account", m.org?.management_account_id || m.identity?.account_id || "–"],
       ["Resource inventory", m.inventory ? "Included (deep scan)" : "Not run (spend only)"],
@@ -587,11 +587,11 @@
     const dur = (wk) => `~${wk < 9 ? plural(Math.round(wk), "week") : plural(Math.round(wk / WPM), "month")}`;
     const tickLabel = (mo) => (mo === 0 ? "Start" : stepM >= 12 ? `Year ${mo / 12}` : `Month ${mo}`);
     $("#gantt").innerHTML = e.waves.map((w) => `<div class="g-row"><div>${esc(w.name)}<div class="hint">${dur(w.weeks)}</div></div>
-      <div class="g-track" title="months ${num(w.start / WPM)}–${num((w.start + w.weeks) / WPM)}"><div class="g-bar" style="left:${(100 * w.start / total).toFixed(2)}%;width:${Math.max(0.8, 100 * w.weeks / total).toFixed(2)}%;background:${waveColor(w)}"></div></div></div>`).join("") +
+      <div class="g-track" title="months ${num(w.start / WPM)} to ${num((w.start + w.weeks) / WPM)}"><div class="g-bar" style="left:${(100 * w.start / total).toFixed(2)}%;width:${Math.max(0.8, 100 * w.weeks / total).toFixed(2)}%;background:${waveColor(w)}"></div></div></div>`).join("") +
       `<div class="g-axis"><div></div><div class="g-ticks">${ticks.map((t, i) => `<span class="${i === 0 ? "first" : ""}" style="left:${(100 * t * WPM / total).toFixed(2)}%">${tickLabel(t)}</span>`).join("")}</div></div>`;
 
-    const parts = [["Landing zone", e.effort.landing_zone_weeks], ["Tier 1–2 workloads", e.effort.by_tier[1] + e.effort.by_tier[2]], ["Tier 3 workloads", e.effort.by_tier[3]],
-      ["Tier 4–5 workloads", e.effort.by_tier[4] + e.effort.by_tier[5]], ["Account overhead", e.effort.account_weeks * e.factors.combined], ["Programme mgmt", e.effort.pmo_weeks], ["Contingency", e.effort.contingency_weeks]];
+    const parts = [["Landing zone", e.effort.landing_zone_weeks], ["Tier 1 and 2 workloads", e.effort.by_tier[1] + e.effort.by_tier[2]], ["Tier 3 workloads", e.effort.by_tier[3]],
+      ["Tier 4 and 5 workloads", e.effort.by_tier[4] + e.effort.by_tier[5]], ["Account overhead", e.effort.account_weeks * e.factors.combined], ["Programme mgmt", e.effort.pmo_weeks], ["Contingency", e.effort.contingency_weeks]];
     const pc = [css("--ink-2"), tierColor(1), tierColor(3), tierColor(5), css("--t2"), css("--muted"), css("--axis")];
     chart("chEffort", {
       type: "bar",
@@ -670,7 +670,7 @@
     const egress = d.egress_list_usd;
     const points = [
       `Moving ${tb(d.move_tb)} (live and archived) over ${num(d.transfer_gbps)} Gbps takes about ${days(d.transfer_days)} of continuous transfer. ${d.fits_credit_window ? `That fits the ${d.credit_days}-day window of AWS's free data transfer out for customers leaving AWS.` : `That is longer than the ${d.credit_days}-day window of AWS's free data transfer out for customers leaving AWS: plan waves, a faster link, or offline transfer.`}`,
-      `Without that credit, internet egress at list price would be roughly ${money(egress[0])}–${money(egress[1])}.`,
+      `Without that credit, internet egress at list price would be roughly ${money(egress[0])} to ${money(egress[1])}.`,
       ...(crit && d.critical_tb ? [`Critical accounts hold ${tb(d.critical_tb)}: the data a stressed exit would need first.`] : []),
       ...(d.dynamodb_tb ? [`DynamoDB holds ${tb(d.dynamodb_tb)}; the largest account (${d.dynamodb_largest_account}) holds ${tb(d.dynamodb_largest_tb)}. Exports to S3 are not region-limited, but rebuilding in a second region by import from S3 takes ${plural(d.dynamodb_imports_small_region, "import job")} of up to 1 TB each outside us-east-1, us-west-2 and eu-west-1.`] : []),
       ...(d.regions.length ? [`By region: ${d.regions.slice(0, 4).map((x) => `${x.name} ${tb(x.tb)}`).join(", ")}.`] : []),
@@ -684,7 +684,7 @@
 
   // ------------------------------------------------------------------ timing
   const monthYear = (iso) => (iso ? new Date(`${iso.slice(0, 7)}-15`).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : "–");
-  const mrange = (x) => (x[0] === x[1] ? money(x[0]) : `${money(x[0])}–${money(x[1])}`);
+  const mrange = (x) => (x[0] === x[1] ? money(x[0]) : `${money(x[0])} to ${money(x[1])}`);
 
   function renderTiming(r) {
     const t = r.timing, d = t.deadline, c = t.commitments, e = t.edp;
@@ -779,7 +779,7 @@
     }
     if (unclassified.length) {
       html += `<div class="cat-group"><h3>Unclassified services in this estate</h3><p class="muted small">Scored as Moderate (tier 3) until added to the catalog.</p><ul>` +
-        unclassified.map((s) => `<li>${esc(s.service)} — ${money(s.monthly_spend)}/month</li>`).join("") + "</ul></div>";
+        unclassified.map((s) => `<li>${esc(s.service)}: ${money(s.monthly_spend)}/month</li>`).join("") + "</ul></div>";
     }
     $("#catalog").innerHTML = html;
   }
@@ -1263,7 +1263,7 @@
       if (linked && accounts.some((a) => a.id === linked.account_id)) $("#ssoAccount").value = linked.account_id;
       $("#ssoStatus").textContent += ` · ${accounts.length} accounts${mgmt ? "" : " · management account not visible"}`;
       await loadSsoRoles(linked?.role);
-    } catch (e) { $("#ssoError").textContent = `${e.message}${e.hint ? " — " + e.hint : ""}`; }
+    } catch (e) { $("#ssoError").textContent = `${e.message}${e.hint ? ". " + e.hint : ""}`; }
   }
 
   async function loadSsoRoles(prefer) {
@@ -1308,7 +1308,7 @@
       }, 2000);
     } catch (e) {
       tab?.close();
-      $("#ssoError").textContent = `${e.message}${e.hint ? " — " + e.hint : ""}`;
+      $("#ssoError").textContent = `${e.message}${e.hint ? ". " + e.hint : ""}`;
     }
   }
 

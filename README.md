@@ -31,7 +31,7 @@ This framework proposes **Regulatory Risk as the seventh pillar**: the measured 
 architecture keeps you free to exit, change providers, or bring workloads back in house. Like the
 other pillars, it is a design property you can measure, track and improve:
 
-- **Measure** it: a spend-weighted 0–100 exit-risk score per OU and per account, from your own billing
+- **Measure** it: a spend-weighted 0 to 100 exit-risk score per OU and per account, from your own billing
   data, against an open [catalog](docs/SERVICE_CATALOG.md) of 120 AWS services ranked by portability.
 - **Explain** it: which services (Connect, Redshift, DynamoDB, Lambda…) and which accounts drive the
   score, why each service is hard to move, the migration path, and how long it typically takes.
@@ -41,7 +41,7 @@ other pillars, it is a design property you can measure, track and improve:
   needed. Choosing a proprietary service can still be the right call; this makes it a known,
   priced choice rather than an accident.
 
-The aim is not to discourage AWS. It is to replace "we are locked in" (fear) with "38/100, with three accounts holding 57% of the spend at risk and roughly 2.5–5 years to
+The aim is not to discourage AWS. It is to replace "we are locked in" (fear) with "38/100, with three accounts holding 57% of the spend at risk and roughly 2.5 to 5 years to
 exit" (a fact a board can govern).
 
 ![Dashboard overview](docs/images/dashboard-overview.png)
@@ -60,7 +60,7 @@ exit" (a fact a board can govern).
 - **Filters to production** (or anything else) by account name: contains / starts with / ends with /
   regex, plus exclusions, e.g. `prod, prd` excluding `sandbox`.
 - **Estimates the exit**: engineer effort, calendar duration and cost, adjusted by a questionnaire on
-  the page — standard CI/CD? Terraform up to date? How big is the core cloud team?
+  the page: standard CI/CD? Terraform up to date? How big is the core cloud team?
 - **Costs a second region** (Multi-region tab): extra cost to run, cost and time to achieve, extra
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs
@@ -101,8 +101,8 @@ exitrisk serve              # opens http://127.0.0.1:8740
 No AWS access yet? **Load demo data** shows a synthetic bank estate (49 accounts, made-up numbers).
 
 **What your AWS administrator grants** (read-only, in the management account): an IAM Identity Center
-permission set with [this inline policy](iam/management-account-policy.json) — or the AWS-managed
-`AWSOrganizationsReadOnlyAccess` + `AWSBillingReadOnlyAccess` — ready-made in
+permission set with [this inline policy](iam/management-account-policy.json), or the AWS-managed
+`AWSOrganizationsReadOnlyAccess` + `AWSBillingReadOnlyAccess`, ready-made in
 [Terraform](iam/identity-center/terraform/main.tf) and [CloudFormation](iam/identity-center/cloudformation/permission-set.yaml).
 Details: [docs/IAM_PERMISSIONS.md](docs/IAM_PERMISSIONS.md).
 
@@ -136,67 +136,67 @@ exitrisk catalog                                                        # list s
 
 ## Screenshots
 
-**Executive summary** — Bottom line, findings, exit cost and time as ranges, recommendations, confidence; then scores and key figures.
+**Executive summary**: Bottom line, findings, exit cost and time as ranges, recommendations, confidence; then scores and key figures.
 
 ![Executive summary](docs/images/executive-summary.png)
 
-**Risk profile** — Spend by tier and its trend, and which product types are growing.
+**Risk profile**: Spend by tier and its trend, and which product types are growing.
 
 ![Risk profile](docs/images/risk-profile.png)
 
-**Accounts** — How many accounts are portable vs higher risk; risk vs spend; ranking by spend at risk (spend × risk).
+**Accounts**: How many accounts are portable vs higher risk; risk vs spend; ranking by spend at risk (spend × risk).
 
 ![Accounts](docs/images/accounts.png)
 
-**Services** — The AWS-only services that drive lock-in.
+**Services**: The AWS-only services that drive lock-in.
 
 ![Services](docs/images/services.png)
 
-**Exit estimate** — Your answers (CI/CD, Terraform, team size), the exit timeline and where the effort goes.
+**Exit estimate**: Your answers (CI/CD, Terraform, team size), the exit timeline and where the effort goes.
 
 ![Exit estimate](docs/images/estimate.png)
 
-**Timing** — The exit window against your notice period, Savings Plans and reservations running off, and the EDP.
+**Timing**: The exit window against your notice period, Savings Plans and reservations running off, and the EDP.
 
 ![Timing](docs/images/timing.png)
 
-**Resilience** — Critical accounts, correlated failure by region and channel, a stressed exit and the data to move.
+**Resilience**: Critical accounts, correlated failure by region and channel, a stressed exit and the data to move.
 
 ![Resilience](docs/images/resilience.png)
 
-**Data quality** — What the report does not cover, and why.
+**Data quality**: What the report does not cover, and why.
 
 ![Data quality](docs/images/issues.png)
 
-**Appendix** — Each service's tier, rationale, migration path and typical duration.
+**Appendix**: Each service's tier, rationale, migration path and typical duration.
 
 ![Appendix](docs/images/appendix-catalog.png)
 
-**Multi-region** — The cost of a second region: run, build, people, and where to put it.
+**Multi-region**: The cost of a second region: run, build, people, and where to put it.
 
 ![Multi-region summary](docs/images/multiregion-summary.png)
 
-**Multi-region accounts** — Sorted by spend; choose which go multi-region; each service's failover risk.
+**Multi-region accounts**: Sorted by spend; choose which go multi-region; each service's failover risk.
 
 ![Multi-region accounts](docs/images/multiregion-accounts.png)
 
-**Second region** — Candidates ranked by service parity, latency and price.
+**Second region**: Candidates ranked by service parity, latency and price.
 
 ![Second region](docs/images/multiregion-region.png)
 
-**Getting started** — Connect, check access, scan.
+**Getting started**: Connect, check access, scan.
 
 ![Getting started](docs/images/getting-started.png)
 
-**Check access** — ✓/✗ per permission, and the request to send your AWS administrator.
+**Check access**: ✓/✗ per permission, and the request to send your AWS administrator.
 
 ![Check access](docs/images/access-check.png)
 
-**AWS sign-in** — SSO / IAM Identity Center from the header.
+**AWS sign-in**: SSO / IAM Identity Center from the header.
 
 ![AWS sign-in](docs/images/sso-sign-in.png)
 
-**New scan** — Profile, one or more OUs, deep scan.
+**New scan**: Profile, one or more OUs, deep scan.
 
 ![New scan](docs/images/new-scan-dialog.png)
 
@@ -217,7 +217,7 @@ Complete sample reports generated from the demo data: [exit risk](docs/sample-re
 | 4 | High | 75 | Lambda, Redshift, Glue, Kinesis, Step Functions, EventBridge, Cognito |
 | 5 | Critical | 95 | DynamoDB, Connect, Greengrass, SWF, QLDB |
 
-- **Inherent risk** of an account = spend-weighted mean of its services' scores (0–100).
+- **Inherent risk** of an account = spend-weighted mean of its services' scores (0 to 100).
 - **Weight** = the account's share of in-scope spend (or 1/N when counting by number of accounts).
 - **Contribution** = inherent risk × weight.
 - **OU exit-risk score** = sum of contributions, reported both **by spend** and **by number of accounts**.

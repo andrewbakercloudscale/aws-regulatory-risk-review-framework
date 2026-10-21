@@ -626,7 +626,7 @@ def build_multiregion(
         + " person-months"
         if total_weeks
         else "–",
-        "staff": f"{math.floor(fte * STAFF_RANGE[0]):,.0f}–{math.ceil(fte * STAFF_RANGE[1]):,.0f}" if fte else "–",
+        "staff": f"{math.floor(fte * STAFF_RANGE[0]):,.0f} to {math.ceil(fte * STAFF_RANGE[1]):,.0f}" if fte else "–",
     }
 
     selected_risks = [r for a in acct_out if a["selected"] for r in a["risks"] if r["monthly_spend"] >= q.materiality]

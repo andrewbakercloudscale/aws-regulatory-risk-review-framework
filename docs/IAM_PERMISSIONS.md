@@ -25,7 +25,7 @@ account only, and the report says so on its data-quality panel. A member account
 [delegated administrator](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_delegate_policies.html)
 for Organizations, with Cost Explorer access to linked accounts, also works.
 
-### With IAM Identity Center (SSO) — the usual setup
+### With IAM Identity Center (SSO): the usual setup
 
 Most organisations grant access through permission sets rather than IAM users. Ask the Identity
 Center administrator to create a permission set, assign it to you **in the management account**, and
@@ -57,7 +57,7 @@ stacks, RDS engines…) which sharpen the effort estimate. The scanner assumes a
   (included in the management policy above as `OptionalDeepScanAssumeMemberRole`; delete that statement
   if you will never deep-scan).
 - Member role: **list-only** actions, [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json).
-  The role cannot read data, objects, items, secrets or configuration — only enumerate and count.
+  The role cannot read data, objects, items, secrets or configuration, only enumerate and count.
 - Trust: the scanner account (optionally one principal), and only sessions named `exitrisk-*`.
 
 Deploy the role to every account in an OU with CloudFormation **StackSets** (service-managed

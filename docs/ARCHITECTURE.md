@@ -39,7 +39,7 @@ database and no cloud deployment: scans are JSON files in a private directory on
 
 1. `POST /api/scans` validates parameters and starts a `ScanJob` thread; the browser polls
    `GET /api/scans/{id}/status` once a second for phase, percent and message.
-2. The job authenticates (`sts:GetCallerIdentity` — where aws-cli-zsp asks for Touch ID), reads the OU
+2. The job authenticates (`sts:GetCallerIdentity`, where aws-cli-zsp asks for Touch ID), reads the OU
    tree and accounts, queries Cost Explorer, optionally inventories member accounts in parallel, and
    saves the scan atomically (`tempfile` + `os.replace`, mode 0600).
 3. `POST /api/report {scan_id, filter, questionnaire}` loads the scan and builds the report: scores,

@@ -32,7 +32,7 @@ def test_instant_costs_more_than_three_hour_recovery():
     assert fast["build"]["total_weeks"] > slow["build"]["total_weeks"]
     assert fast["staff"]["fte"] > slow["staff"]["fte"]
     for k in ("run_annual", "build_cost", "build_duration", "staff"):
-        assert "–" in slow["ranges"][k]  # always a range, never one figure
+        assert " to " in slow["ranges"][k]  # always a range, never one figure
 
 
 def test_primary_region_is_where_spend_runs_and_recommendation_respects_residency():

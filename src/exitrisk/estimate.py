@@ -148,28 +148,28 @@ def _short(v: float) -> str:
 
 
 def money_range(lo: float, hi: float, currency: str = "USD") -> str:
-    """'$7m–$15m'."""
+    """'$7m to $15m'."""
     sym = "$" if currency == "USD" else f"{currency} "
     a, b = _rough(lo, hi)
-    return f"{sym}{_short(a)}–{sym}{_short(b)}"
+    return f"{sym}{_short(a)} to {sym}{_short(b)}"
 
 
 def duration_range(lo_months: float, hi_months: float) -> str:
-    """'9–15 months' (quarters) or '2.5–5 years' (half-years)."""
+    """'9 to 15 months' (quarters) or '2.5 to 5 years' (half-years)."""
     if hi_months < 24:
         a = max(math.floor(lo_months / 3) * 3, 1)
         b = max(math.ceil(hi_months / 3) * 3, a + 1)
-        return f"{a}–{b} months"
+        return f"{a} to {b} months"
     a = max(math.floor(lo_months / 6) / 2, 0.5)
     b = math.ceil(hi_months / 6) / 2
-    return f"{a:g}–{b:g} years"
+    return f"{a:g} to {b:g} years"
 
 
 def count_range(lo: float, hi: float) -> str:
-    """'300–700'."""
+    """'300 to 700'."""
     a, b = _rough(lo, hi)
     fmt = lambda x: f"{x:,.0f}" if x >= 10 else f"{x:g}"  # noqa: E731
-    return f"{fmt(a)}–{fmt(b)}"
+    return f"{fmt(a)} to {fmt(b)}"
 
 
 def size_multiplier(monthly_spend: float, count: int | None = None, typical: int | None = None) -> float:
@@ -232,7 +232,7 @@ def _datacenter(q: Questionnaire, monthly_spend: float) -> dict:
                 + (" across two sites." if sites == 2 and q.dc_facility != "existing" else ".")
             ),
             "Excluded for the data centre: running it after exit (power, cooling, facility and hardware staff, "
-            "maintenance contracts) and hardware refresh every 4–6 years.",
+            "maintenance contracts) and hardware refresh every 4 to 6 years.",
         ],
     }
 
@@ -284,9 +284,9 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
     waves = [{"name": first, "start": 0.0, "weeks": round(mobilise, 1), "tiers": []}]
     cursor = mobilise
     for key, name, tiers in (
-        ("w1", "Wave 1: portable (tiers 1–2)", [1, 2]),
+        ("w1", "Wave 1: portable (tiers 1 and 2)", [1, 2]),
         ("w2", "Wave 2: moderate (tier 3)", [3]),
-        ("w3", "Wave 3: high & critical (tiers 4–5)", [4, 5]),
+        ("w3", "Wave 3: high & critical (tiers 4 and 5)", [4, 5]),
     ):
         if wave_effort[key] <= 0:
             continue
@@ -364,7 +364,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
         waves=waves,
         assumptions=[
             "Service effort: catalog engineer-weeks per workload × √(monthly spend / "
-            f"{REFERENCE_MONTHLY_SPEND:,.0f} USD), clamped {SIZE_MULT_MIN}–{SIZE_MULT_MAX}×; "
+            f"{REFERENCE_MONTHLY_SPEND:,.0f} USD), clamped to {SIZE_MULT_MIN} to {SIZE_MULT_MAX}×; "
             "resource counts from the deep scan raise it where higher.",
             f"Services under {q.materiality:,.0f} USD/month are scored but not estimated (immaterial).",
             f"{ACCOUNT_OVERHEAD_WEEKS:g} engineer-week per material account for network, IAM and decommissioning.",

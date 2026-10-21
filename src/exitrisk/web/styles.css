@@ -189,12 +189,19 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .toast.show { opacity: 1; }
 
 @media (max-width: 900px) {
-  .grid-2, .grid-est, .hero-row { grid-template-columns: 1fr; }
+  .grid-2, .grid-est, .hero-row { grid-template-columns: minmax(0, 1fr); }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .report { padding: 16px; }
   .topbar, .scopebar { padding: 10px 16px; }
   .g-row, .g-axis { grid-template-columns: 120px 1fr; }
   .field { min-width: 140px; flex: 1; }
+}
+/* Phones: nothing wider than the screen; a wide table scrolls inside its card. */
+@media (max-width: 560px) {
+  .topbar-actions, #scanSelect { max-width: 100%; min-width: 0; }
+  #scanSelect { flex: 1 1 100%; }
+  .topbar { position: static; }
+  .card { padding: 14px; overflow-x: auto; }
 }
 
 /* Print / PDF: always light, cover page, no controls */
@@ -332,7 +339,7 @@ table.data.accounts td { vertical-align: middle; }
 .table-more { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 0 0; }
 .g-ticks span.first { transform: none; }
 .g-ticks span:last-child:not(.first) { transform: translateX(-100%); }
-@media (max-width: 900px) { .tier-split { grid-template-columns: 1fr; } .chart-box.donut { height: 200px; } }
+@media (max-width: 900px) { .tier-split { grid-template-columns: minmax(0, 1fr); } .chart-box.donut { height: 200px; } }
 .growth-head { margin: 0 0 12px; font-size: 14.5px; }
 .growth-head .up { color: var(--t5); font-weight: 600; }
 .growth-head .down { color: var(--t1); font-weight: 600; }

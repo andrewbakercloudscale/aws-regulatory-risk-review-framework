@@ -7,9 +7,9 @@
    page that opens) → choose the management account and a read-only role → **Use for a new scan**.
    Otherwise: **New scan** → choose the profile for the management account → **Load OUs** (first AWS call; with
    aws-cli-zsp, approve Touch ID) → pick an OU or leave the root → months of history (3 is a good
-   default; 6–12 shows trend) → optionally tick **Deep scan** and give the member role name.
+   default; 6 to 12 shows trend) → optionally tick **Deep scan** and give the member role name.
 3. Watch the progress bar. A spend-only scan of a few hundred accounts takes seconds; a deep scan takes
-   roughly 2–5 seconds per account per enabled region, in parallel (`EXITRISK_MAX_WORKERS`, default 8).
+   roughly 2 to 5 seconds per account per enabled region, in parallel (`EXITRISK_MAX_WORKERS`, default 8).
 4. Filter to production in the bar at the top, answer the questionnaire in section 5, name critical accounts in section 6, check section 7,
    and **Export PDF** (browser print → Save as PDF) or `exitrisk pdf <scan-id> --include prod`.
 
@@ -56,4 +56,4 @@ jq -r 'select(.level=="ERROR" or .level=="WARNING")' ~/.exitrisk/logs/exitrisk.l
 | PDF command: `needs Playwright` | Optional dependency missing | `pip install '.[pdf]' && playwright install chromium` |
 
 Report anything else as a GitHub issue with the scan's log lines (they contain account ids and service
-names but never credentials — redact account names if they are sensitive).
+names but never credentials; redact account names if they are sensitive).

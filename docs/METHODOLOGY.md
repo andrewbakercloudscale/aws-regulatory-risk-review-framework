@@ -17,7 +17,7 @@ is printed on the report's assumptions list.
 
 Cost Explorer filters:
 
-- `RECORD_TYPE` excludes `Credit`, `Refund`, `Tax`, `Support` — the score reflects the cost of running
+- `RECORD_TYPE` excludes `Credit`, `Refund`, `Tax`, `Support`; the score reflects the cost of running
   workloads, not discounts or overheads.
 - `BILLING_ENTITY = AWS` for AWS services; a second query for `AWS Marketplace` groups all third-party
   software under one line, *AWS Marketplace (third-party)*, tier 2.
@@ -51,7 +51,7 @@ cost. A service not in the catalog scores as tier 3 and raises a warning on the 
 For account *a* with monthly spend *s<sub>a,i</sub>* on service *i* whose tier score is *t<sub>i</sub>*:
 
 ```
-inherent_risk(a)  = Σ_i s(a,i) · t(i) / Σ_i s(a,i)          0–100, how hard this account is to move
+inherent_risk(a)  = Σ_i s(a,i) · t(i) / Σ_i s(a,i)          0 to 100, how hard this account is to move
 weight(a)         = f(S(a)) / Σ_b f(S(b))                    S(a) = Σ_i s(a,i), monthly spend of the account
 contribution(a)   = inherent_risk(a) · weight(a)             points of the OU score this account carries
 OU score          = Σ_a contribution(a)
@@ -66,8 +66,8 @@ The report gives **two headline scores**, because they answer different question
 | **By number of accounts** | 1 | "How many of our workloads are hard to move?" One very large account cannot dominate. |
 | Blend (optional) | √S | A compromise between the two; selectable, not a headline. |
 
-**Why both.** Spend weighting keeps the original rule — a $2k/month account built entirely on
-DynamoDB (inherent risk 95) appears in red on the account chart but adds 0.3 points — yet it lets a
+**Why both.** Spend weighting keeps the original rule: a $2k/month account built entirely on
+DynamoDB (inherent risk 95) appears in red on the account chart but adds 0.3 points, yet it lets a
 single large account set the whole score: a contact centre on Amazon Connect at 20% of the bill moves
 it by ten points on its own. Any single compromise weighting (such as √S) fixes the second problem by
 weakening the first. Showing both, side by side, keeps each honest:
@@ -83,16 +83,16 @@ always reported.
 **Breadth view.** Alongside the scores, the report counts accounts per rating and sets the share of
 accounts against the share of spend (section 3). *Portable* accounts are those rated Low or Moderate;
 *higher-risk* accounts are High or Critical. "10 of 145 accounts are High/Critical but hold 25% of
-spend" is a concentration to manage, not an estate-wide problem — and the chart makes that visible.
+spend" is a concentration to manage, not an estate-wide problem, and the chart makes that visible.
 
 Ratings: Low < 25 ≤ Moderate < 40 ≤ Elevated < 55 ≤ High < 70 ≤ Critical. An estate entirely on tier-1
 services scores 10; entirely on tier-2, 30.
 
 **Spend is a proxy for size.** Where the deep scan ran, the resource counts are shown per account and
-feed the estimate (below), but they do not change the score — the score stays a pure, auditable
+feed the estimate (below), but they do not change the score; the score stays a pure, auditable
 function of the bill.
 
-**Bespoke services.** "Bespoke (AWS-only) services" counts distinct High or Critical (tier 4–5) services
+**Bespoke services.** "Bespoke (AWS-only) services" counts distinct High or Critical (tier 4 to 5) services
 with at least $1/month of in-scope spend: the services with no direct equivalent outside AWS.
 
 **Spend growth.** Change in amortised monthly spend from the first to the last complete month scanned,
@@ -153,7 +153,7 @@ calendar         = max(effort-bound, critical path) + 4 weeks decommissioning
 ```
 
 Adding people shortens the programme only until the critical path binds; the report says which one
-constrains it. Waves are sequenced easiest first (tiers 1–2, then 3, then 4–5) so the team builds the
+constrains it. Waves are sequenced easiest first (tiers 1 to 2, then 3, then 4 to 5) so the team builds the
 target platform and its patterns on low-risk workloads.
 
 ### Cost
@@ -181,10 +181,10 @@ facility         = existing 0 · colocation 2 · build new 12 months of the AWS 
 Hardware is sized from the bill because it is the only capacity signal the scan has; AWS prices include
 the managed-service premium, so treat it as an order of magnitude and replace it with a sizing exercise.
 Running the data centre after exit (power, cooling, facility and hardware staff, maintenance contracts,
-refresh every 4–6 years) is not in the one-off cost.
+refresh every 4 to 6 years) is not in the one-off cost.
 
 **The report quotes ranges, never single figures.** Cost, effort and duration are shown as the
-range above, widened outward to round numbers (e.g. "$7m–$16m", "2.5–5 years", "300–700
+range above, widened outward to round numbers (e.g. "$7m to $16m", "2.5 to 5 years", "300 to 700
 person-months"). The model's single figures are planning midpoints and appear only in the JSON
 output; an early-stage estimate quoted to the nearest $100k would claim precision it does not have.
 
@@ -200,7 +200,7 @@ The asymmetric ranges reflect that early estimates of migrations are far more of
   Database, Babelfish, Serverless v2 scaling) and commercial engines (Oracle, SQL Server licensing) are
   visible in the deep scan's engine breakdown.
 - **Not in the estimate:** target-cloud run cost after exit; licence changes; early termination of AWS
-  commitments (EDP, Savings Plans, RIs — let them run off); data-transfer-out fees (since March 2024 AWS
+  commitments (EDP, Savings Plans, RIs; let them run off); data-transfer-out fees (since March 2024 AWS
   credits egress for customers leaving AWS, on request to AWS Support and subject to approval; the move
   must complete within about 60 days, so a multi-year exit pays egress outside that window); organisational change.
 - **Catalog tiers are expert judgement.** They are published, versioned and open to challenge through

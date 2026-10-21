@@ -57,15 +57,15 @@ def test_questionnaire_validation():
 
 
 def test_ranges_are_rounded_outward_and_never_a_single_figure():
-    assert money_range(7.44e6, 14.88e6) == "$7m–$16m"
-    assert money_range(74e3, 151e3, "ZAR") == "ZAR 70k–ZAR 160k"
-    assert duration_range(31.4, 55.0) == "2.5–5 years"
-    assert duration_range(7.2, 13.1) == "6–15 months"
-    assert count_range(343, 687) == "300–700"
+    assert money_range(7.44e6, 14.88e6) == "$7m to $16m"
+    assert money_range(74e3, 151e3, "ZAR") == "ZAR 70k to ZAR 160k"
+    assert duration_range(31.4, 55.0) == "2.5 to 5 years"
+    assert duration_range(7.2, 13.1) == "6 to 15 months"
+    assert count_range(343, 687) == "300 to 700"
     est = build_report(build_demo_scan(), questionnaire=Questionnaire(confirmed=True))["estimate"]
     r = est["ranges"]
-    assert r["cost"].count("–") == 1 and r["duration"].count("–") == 1 and r["effort"].endswith("person-months")
-    lo, hi = (float(x.strip("$m")) * 1e6 for x in r["cost"].split("–"))
+    assert r["cost"].count(" to ") == 1 and r["duration"].count(" to ") == 1 and r["effort"].endswith("person-months")
+    lo, hi = (float(x.strip("$m")) * 1e6 for x in r["cost"].split(" to "))
     assert lo <= est["cost"]["low"] and hi >= est["cost"]["high"]
 
 

@@ -7,7 +7,7 @@ from exitrisk.timing import build_timing
 
 TODAY = date(2026, 10, 1)
 # An exit of 12 to 24 months from today.
-EST = {"duration": {"low_months": 12, "high_months": 24}, "ranges": {"duration": "1–2 years"}}
+EST = {"duration": {"low_months": 12, "high_months": 24}, "ranges": {"duration": "1 to 2 years"}}
 
 
 def _c(months_left, monthly, kind="savings_plan", term="3yr"):
