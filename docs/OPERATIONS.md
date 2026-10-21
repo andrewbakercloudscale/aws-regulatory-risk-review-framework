@@ -17,7 +17,10 @@
    and **Export PDF** (browser print → Save as PDF) or `exitrisk pdf <scan-id> --include prod`.
 
 Scans are kept until deleted (`DELETE /api/scans/<id>` or remove the file). Re-scan quarterly to show
-whether lock-in is growing; the trend chart covers the months in each scan.
+whether lock-in is growing; the trend chart covers the months in each scan. **Settings → Compare
+scans** shows what changed between two scans (score, spend, tiers, accounts and services), with both
+scored on the current filter and Exit model answers; `POST /api/compare` with `before_id` and
+`after_id` returns the same as JSON.
 
 ## Configuration
 

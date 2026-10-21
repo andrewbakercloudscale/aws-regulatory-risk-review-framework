@@ -611,3 +611,13 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 .reg-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 12px; }
 .reg-list li { display: grid; gap: 3px; padding-left: 12px; border-left: 3px solid var(--tone-risk); }
 .reg-list span { color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
+
+/* Compare scans */
+.dialog.cmp-dialog { width: min(900px, calc(100vw - 32px)); }
+.dialog.cmp-dialog[open] { display: flex; flex-direction: column; }
+.cmp-dialog .fd-body { flex: 1; min-height: 0; }
+.cmp-dialog h3 { margin: 22px 0 8px; font-size: 15px; }
+.cmp-summary { margin: 8px 0 4px; padding-left: 18px; display: grid; gap: 4px; }
+.cmp-dialog .up-bad { color: var(--sev-critical); font-weight: 600; }
+.cmp-dialog .down-good { color: #2f9e5b; font-weight: 600; }
+.warn-text { color: #b7791f; }

@@ -43,6 +43,7 @@
         </div>
         <hr>
         <button id="btnDemo" role="menuitem"><b>Load demo data</b><span>Synthetic organisation, no AWS access needed</span></button>
+        <button id="btnCompare" role="menuitem"><b>Compare scans</b><span>What changed since an earlier scan</span></button>
         <button id="btnLogs" role="menuitem"><b>Application log</b><span>Scan steps, warnings and errors</span></button>
       </div>
     </div>
@@ -747,6 +748,23 @@
 </dialog>
 
 <!-- Log dialog -->
+<dialog id="compareDialog" class="dialog form-dialog cmp-dialog" aria-labelledby="cmpTitle">
+  <header class="fd-head">
+    <h2 id="cmpTitle">Compare scans</h2>
+    <p>What changed between two scans. Both are scored with the current account filter and Exit model answers, so differences come from the estate.</p>
+  </header>
+  <div class="fd-body">
+    <div class="fd-grid">
+      <label>Earlier scan<select id="cmpBefore"></select></label>
+      <label>Later scan<select id="cmpAfter"></select></label>
+    </div>
+    <div id="cmpBusy" class="busy" role="status" aria-live="polite" hidden><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text"></span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar" aria-hidden="true"><i></i></div></div>
+    <p id="cmpError" class="error-text" role="alert"></p>
+    <div id="cmpOut"></div>
+  </div>
+  <footer class="fd-foot"><button type="button" class="btn ghost" id="btnCmpClose">Close</button></footer>
+</dialog>
+
 <dialog id="logDialog" class="dialog wide">
   <h2>Application log</h2>
   <label class="check"><input type="checkbox" id="logThisRun" checked> Only this scan</label>

@@ -19,6 +19,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   by the primary's jurisdiction (South Africa: POPIA section 72, Prudential Authority Directive
   3/2018 and Guidance Note 5/2018, Joint Standards; EU: GDPR Chapter V, DORA; UK: UK GDPR, PRA
   SS2/21). The data-residency finding names them.
+- **Compare scans** (Settings): what changed between two scans, scored on the same filter and Exit
+  model answers: score, spend, High/Critical spend, tiers, accounts added, removed or re-rated, the
+  biggest movers, and services that grew, appeared or stopped. Also `POST /api/compare`.
 
 ## [0.7.4] - 2026-10-21
 

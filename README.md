@@ -70,7 +70,13 @@ exit" (a fact a board can govern).
 - **Costs a second region** (Multi-region tab): extra cost to run, cost and time to achieve, extra
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs
-  manual failover). See [MULTI_REGION.md](docs/MULTI_REGION.md).
+  manual failover). Each candidate region says why it ranks where it does, missing services can be
+  corrected, and the regulation to check (e.g. POPIA, Prudential Authority) is listed. See
+  [MULTI_REGION.md](docs/MULTI_REGION.md).
+- **Names who owns the risk**: owner and executive from account tags, with spend at risk by
+  executive.
+- **Compares scans** (Settings → Compare scans): score, spend, tiers, accounts added, removed or
+  re-rated, and services that grew or appeared between two scans.
 - **Times the exit** (section 5): whether it fits a regulator or board notice period you enter under **Exit model**, which
   Savings Plans and reservations run off before it finishes and what would still be owed, the last
   date a 3-year term stays inside the window, and any EDP shortfall.

@@ -171,6 +171,76 @@
     return q;
   }
 
+  // ------------------------------------------------------------------ compare scans
+  function openCompare() {
+    const done = (state.scans || []).filter((x) => x.status === "complete");
+    const label = (x) => `${x.label || x.ou || "Scan"} · ${x.id.slice(0, 13)}${x.mode === "demo" ? " · demo" : ""}`;
+    const opts = done.map((x) => `<option value="${esc(x.id)}">${esc(label(x))}</option>`).join("");
+    $("#cmpBefore").innerHTML = opts;
+    $("#cmpAfter").innerHTML = opts;
+    $("#cmpOut").innerHTML = "";
+    $("#cmpError").textContent = done.length < 2 ? "Compare needs two completed scans. Run another scan later and compare it with this one." : "";
+    // Default: the open scan against the previous scan of the same OU (scans are listed newest first).
+    const now = done.find((x) => x.id === state.scanId) || done[0];
+    const older = now && (done.find((x) => x.id < now.id && x.ou === now.ou && x.mode === now.mode) || done.find((x) => x.id < now.id));
+    if (now) $("#cmpAfter").value = now.id;
+    if (older) $("#cmpBefore").value = older.id;
+    $("#compareDialog").showModal();
+    if (now && older) runCompare();
+  }
+
+  async function runCompare() {
+    const before_id = $("#cmpBefore").value, after_id = $("#cmpAfter").value;
+    $("#cmpError").textContent = "";
+    if (!before_id || !after_id) return;
+    if (before_id === after_id) { $("#cmpOut").innerHTML = ""; $("#cmpError").textContent = "Pick two different scans."; return; }
+    const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
+    const seq = (state.cmpSeq = (state.cmpSeq || 0) + 1);
+    busy("#cmpBusy", "Scoring both scans…");
+    try {
+      const c = await api("/api/compare", { method: "POST", body: { before_id, after_id, filter, questionnaire: readQuestionnaire() } });
+      if (seq === state.cmpSeq) renderCompare(c);
+    } catch (e) {
+      if (seq === state.cmpSeq) { $("#cmpOut").innerHTML = ""; $("#cmpError").textContent = e.message; }
+    } finally {
+      if (seq === state.cmpSeq) busy("#cmpBusy", "");
+    }
+  }
+
+  function renderCompare(c) {
+    const h = c.headline;
+    const chg = (d, fmt) => d.change == null ? "–" : `${d.change > 0 ? "+" : d.change < 0 ? "−" : ""}${fmt(Math.abs(d.change))}${d.change_pct != null && d.change ? ` (${d.change_pct > 0 ? "+" : ""}${num(d.change_pct)}%)` : ""}`;
+    // Colour only the figures where up is worse (risk); spend and counts are neutral.
+    const cls = (d, worse) => !worse || !d.change ? "" : d.change > 0 ? "up-bad" : "down-good";
+    const before = (ym) => { const [y, m] = ym.split("-").map(Number); return m > 1 ? `${y}-${m - 1}` : `${y - 1}-12`; };
+    const period = (x) => x.period?.start ? `${month(x.period.start.slice(0, 7))} to ${month(before(x.period.end.slice(0, 7)))}` : ""; // end is exclusive
+    const row = (k, d, fmt, worse) => `<tr><td><strong>${esc(k)}</strong></td><td class="num-cell">${d.before == null ? "–" : fmt(d.before)}</td><td class="num-cell">${d.after == null ? "–" : fmt(d.after)}</td><td class="num-cell ${cls(d, worse)}">${chg(d, fmt)}</td></tr>`;
+    const n1 = (v) => num(v, 1), n0 = (v) => num(v);
+    let html = `<ul class="cmp-summary">${c.summary.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`;
+    if (!c.same_scope) html += `<p class="warn-text small">The scans cover different OUs (${esc(c.before.ou)} and ${esc(c.after.ou)}): part of the change is scope.</p>`;
+    html += `<h3>Key figures</h3><div class="table-wrap"><table class="data"><thead><tr><th></th><th class="num-cell">${esc(c.before.scan_id.slice(0, 13))}<div class="hint">${esc(period(c.before))}</div></th><th class="num-cell">${esc(c.after.scan_id.slice(0, 13))}<div class="hint">${esc(period(c.after))}</div></th><th class="num-cell">Change</th></tr></thead><tbody>` +
+      row("Exit-risk score", h.score, n1, 1) + row("Monthly spend", h.monthly_spend, money, 0) + row("High/Critical spend a month", h.high_risk_monthly, money, 1) +
+      row("Share on High/Critical (%)", h.high_risk_pct, n1, 1) + row("Accounts with spend", h.accounts, n0, 0) + row("High/Critical accounts", h.high_risk_accounts, n0, 1) +
+      row("Services in use", h.services, n0, 0) +
+      `<tr><td><strong>Exit cost estimate</strong></td><td class="num-cell">${esc(h.cost_range.before)}</td><td class="num-cell">${esc(h.cost_range.after)}</td><td></td></tr></tbody></table></div>`;
+    html += `<h3>Spend by tier</h3><div class="table-wrap"><table class="data"><thead><tr><th>Tier</th><th class="num-cell">Earlier</th><th class="num-cell">Later</th><th class="num-cell">Change</th></tr></thead><tbody>` +
+      c.tiers.map((t) => row(`${t.tier} · ${t.label}`, t, money, t.tier >= 4 ? 1 : 0)).join("") + "</tbody></table></div>";
+    const a = c.accounts;
+    const names = (list, n) => list.map((x) => `${esc(x.name)} <span class="muted">(${money(x.monthly_spend)}/month, ${esc(x.rating || "–")})</span>`).join(", ") + (n > list.length ? `, and ${n - list.length} more` : "");
+    html += `<h3>Accounts</h3>`;
+    if (a.added_count) html += `<p><strong>Added (${num(a.added_count)}):</strong> ${names(a.added, a.added_count)}</p>`;
+    if (a.removed_count) html += `<p><strong>Removed (${num(a.removed_count)}):</strong> ${names(a.removed, a.removed_count)}</p>`;
+    html += a.movers.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Biggest movers</th><th>Rating</th><th class="num-cell">Per month</th><th class="num-cell">Spend at risk / month</th></tr></thead><tbody>` +
+      a.movers.map((m) => `<tr><td><strong>${esc(m.name)}</strong></td><td>${m.rating.before === m.rating.after ? esc(m.rating.after || "–") : `${esc(m.rating.before || "–")} → <strong>${esc(m.rating.after || "–")}</strong>`}</td>
+        <td class="num-cell">${money(m.monthly_spend.after)} <span class="hint">${chg(m.monthly_spend, money)}</span></td><td class="num-cell ${cls(m.spend_at_risk, 1)}">${chg(m.spend_at_risk, money)}</td></tr>`).join("") + "</tbody></table></div>"
+      : `<p class="muted">No account changed materially.</p>`;
+    html += `<h3>Services</h3>` + (c.services.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Service</th><th>Tier</th><th class="num-cell">Earlier</th><th class="num-cell">Later</th><th class="num-cell">Change</th></tr></thead><tbody>` +
+      c.services.map((x) => `<tr><td><strong>${esc(x.service)}</strong>${x.status !== "both" ? ` <span class="chip">${x.status === "new" ? "new" : "no longer used"}</span>` : ""}</td><td><span class="tier-pill" style="--dot:${tierColor(x.tier)}">${esc(x.tier_label)}</span></td>
+        <td class="num-cell">${money(x.before)}</td><td class="num-cell">${money(x.after)}</td><td class="num-cell ${cls(x, x.tier >= 4 ? 1 : 0)}">${chg(x, money)}</td></tr>`).join("") + "</tbody></table></div>"
+      : `<p class="muted">No service's spend changed.</p>`);
+    $("#cmpOut").innerHTML = html;
+  }
+
   // ------------------------------------------------------------------ scans
   async function refreshScans(selectId) {
     const { scans } = await api("/api/scans");
@@ -1943,6 +2013,10 @@
     $("#sInventory").addEventListener("change", (e) => { $("#invOpts").hidden = !e.target.checked; });
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));
     $("#btnLogs").addEventListener("click", openLog);
+    $("#btnCompare").addEventListener("click", openCompare);
+    $("#cmpBefore").addEventListener("change", runCompare);
+    $("#cmpAfter").addEventListener("change", runCompare);
+    $("#btnCmpClose").addEventListener("click", () => $("#compareDialog").close());
     $("#logThisRun").addEventListener("change", openLog);
     $("#btnCloseLog").addEventListener("click", () => $("#logDialog").close());
     window.addEventListener("beforeprint", () => Object.values(state.charts).forEach((c) => c.resize()));

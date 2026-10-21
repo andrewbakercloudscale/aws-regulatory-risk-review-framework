@@ -86,3 +86,14 @@ def test_multiregion_endpoint():
     assert r.json()["answers"]["recovery"] == "instant" and r.json()["summary"]["recommended"]
     bad = {"scan_id": scan_id, "multiregion": {"recovery": "sometime"}}
     assert c.post("/api/multiregion", headers=H, json=bad).status_code == 422
+
+
+def test_compare_two_scans():
+    c = client()
+    a = c.post("/api/scans/demo", headers=H).json()["id"]
+    b = c.post("/api/scans/demo", headers=H).json()["id"]
+    r = c.post("/api/compare", headers=H, json={"before_id": a, "after_id": b})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["before"]["scan_id"] == a and body["after"]["scan_id"] == b and body["summary"]
+    assert c.post("/api/compare", headers=H, json={"before_id": a, "after_id": "nope"}).status_code == 404

@@ -31,6 +31,7 @@ from . import __version__, preflight, sso, store
 from .aws_session import available_profiles, make_session, profile_accounts
 from .catalog import load_catalog
 from .collectors import organizations
+from .compare import compare_scans
 from .demo import create_demo_scan
 from .estimate import CICD_LABELS, DC_FACILITY_LABELS, IAC_LABELS, TARGET_LABELS, TARGET_PATTERN, Questionnaire
 from .filtering import AccountFilter, FilterError
@@ -102,6 +103,13 @@ class ReportRequest(BaseModel):
     filter: FilterModel = FilterModel()
     questionnaire: Questionnaire = Questionnaire()
     weighting: str = Field("spend", pattern=r"^(balanced|spend|equal)$")
+
+
+class CompareRequest(BaseModel):
+    before_id: str
+    after_id: str
+    filter: FilterModel = FilterModel()
+    questionnaire: Questionnaire = Questionnaire()
 
 
 class MultiRegionRequest(BaseModel):
@@ -325,6 +333,18 @@ def create_app(allow_remote: bool = False) -> FastAPI:
         except FilterError as exc:
             raise HTTPException(400, str(exc)) from exc
         return build_report(scan, flt, req.questionnaire, weighting=req.weighting)
+
+    @app.post("/api/compare")
+    def compare(req: CompareRequest):
+        try:
+            before, after = store.load_scan(req.before_id), store.load_scan(req.after_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        try:
+            flt = AccountFilter(**req.filter.model_dump())
+        except FilterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return compare_scans(before, after, flt, req.questionnaire)
 
     @app.post("/api/multiregion")
     def multiregion(req: MultiRegionRequest):
