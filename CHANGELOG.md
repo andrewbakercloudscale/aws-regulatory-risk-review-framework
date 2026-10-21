@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-21
+
 ### Added
 - **Monthly scan** (Settings): repeats a live scan's settings on a chosen day each month while the
   console runs, so Compare scans shows a trend. A failed attempt (usually an expired sign-in) is
