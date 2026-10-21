@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-21
+
 ### Added
 - **Who owns the risk**: owner and executive are read from account tags (Owner, Account holder,
   Team, Executive, Linked executive and similar, in any spelling) and shown per account, with a
