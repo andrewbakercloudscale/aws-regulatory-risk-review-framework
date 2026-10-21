@@ -614,43 +614,58 @@
 </dialog>
 
 <!-- New scan dialog -->
-<dialog id="scanDialog" class="dialog">
+<dialog id="scanDialog" class="dialog form-dialog" aria-labelledby="scanTitle">
   <form method="dialog" id="scanForm">
-    <h2>New scan</h2>
-    <p class="muted small">Read-only. Credentials come from your local AWS profile (or <a href="#" id="lnkSso">sign in with AWS SSO</a>); with aws-cli-zsp you will be asked for Touch ID once. Use a profile in the <strong>management (payer) account</strong> for an organisation-wide view.</p>
-    <label>AWS profile<select name="profile" id="sProfile"></select></label>
-    <div class="row"><button type="button" class="btn" id="btnScanCheck">Check access</button></div>
-    <fieldset class="scope">
-      <legend>What to include</legend>
-      <div class="ou-field">
-        <div class="ou-head"><span>Organizational units <span class="muted">(tick one or more; none = whole organisation)</span></span>
-          <button type="button" class="btn ghost" id="btnLoadOus" title="Reload the OU list">↻</button></div>
+    <header class="fd-head">
+      <h2 id="scanTitle">New scan</h2>
+      <p>Read-only: reads the account list and Cost Explorer spend, changes nothing.</p>
+    </header>
+    <div class="fd-body">
+      <section class="fd-sec">
+        <h3><span class="step">1</span>Sign-in</h3>
+        <label for="sProfile">AWS profile</label>
+        <div class="inline-field">
+          <select name="profile" id="sProfile" autofocus></select>
+          <button type="button" class="btn" id="btnScanCheck">Check access</button>
+        </div>
+        <p class="fd-hint">Use a profile in the <strong>management (payer) account</strong> for the whole organisation. No profile? <button type="button" class="link-btn" id="lnkSso">Sign in with AWS SSO</button></p>
+      </section>
+      <section class="fd-sec">
+        <h3><span class="step">2</span>Scope</h3>
+        <div class="ou-head">
+          <span class="fd-label">Organizational units</span>
+          <button type="button" class="btn ghost sm" id="btnLoadOus" title="Read the OU list from AWS again"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>Reload</button>
+        </div>
         <div id="sOu" class="ou-pick" role="group" aria-label="Organizational units"><p class="muted small">Whole organisation</p></div>
-        <p id="ouChosen" class="small"></p>
+        <p id="ouChosen" class="ou-chosen"></p>
+        <p id="ouStatus" class="fd-hint"></p>
+        <label for="sNameFilter" class="fd-gap">Account names containing <span class="opt">optional</span></label>
+        <input id="sNameFilter" placeholder="e.g. prod, prd (comma = or)" maxlength="200">
+        <p class="fd-hint">OUs limit what is scanned. The name filter only limits the report, and can be changed later in the top bar.</p>
+      </section>
+      <section class="fd-sec">
+        <h3><span class="step">3</span>Options</h3>
+        <div class="fd-grid">
+          <label>Exit target<select name="target" id="sTarget"></select><span class="fd-hint">For the cost and time estimate. Change later under Exit model.</span></label>
+          <label>Months of spend history<input name="months" type="number" min="1" max="12" value="12"><span class="fd-hint">12 shows a year of growth by product type.</span></label>
+        </div>
+        <label class="check fd-check"><input type="checkbox" name="inventory" id="sInventory"><span><strong>Deep scan</strong><br><span class="fd-hint">Count resources in each member account. Needs a role in every member account.</span></span></label>
+        <div id="invOpts" class="fd-grid" hidden>
+          <label>Role to assume in member accounts<input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
+          <label><span>Regions <span class="opt">blank = all enabled</span></span><input name="regions" placeholder="eu-west-1,us-east-1"></label>
+        </div>
+        <label><span>Label <span class="opt">optional</span></span><input name="label" maxlength="120" placeholder="e.g. Q4 board pack"></label>
+      </section>
+      <div id="scanProgress" class="progress" hidden>
+        <div class="bar"><div id="scanBar"></div></div>
+        <div id="scanMsg" class="small"></div>
       </div>
-      <p id="ouStatus" class="muted small"></p>
-      <label>And/or account names containing<input id="sNameFilter" placeholder="e.g. prod, prd (comma = or)" maxlength="200"></label>
-      <p class="muted small">The OU limits what is scanned. The name filter limits the report and can be changed any time in the bar at the top.</p>
-    </fieldset>
-    <label>Where would you exit to?<select name="target" id="sTarget"></select></label>
-    <p class="muted small">Sets the target platform for the cost and time estimate (section 5). You can change it later under Exit model.</p>
-    <label>Months of spend history<input name="months" type="number" min="1" max="12" value="12"></label>
-    <p class="muted small">12 months shows spend growth by product type; fewer months make growth figures noisy.</p>
-    <label class="check"><input type="checkbox" name="inventory" id="sInventory"> Deep scan: count resources in each member account</label>
-    <div id="invOpts" hidden>
-      <label>Role to assume in member accounts<input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
-      <label>Regions (comma-separated; blank = all enabled)<input name="regions" placeholder="eu-west-1,us-east-1"></label>
+      <p id="scanError" class="error-text" role="alert"></p>
     </div>
-    <label>Label (optional)<input name="label" maxlength="120" placeholder="e.g. Q4 board pack"></label>
-    <div id="scanProgress" class="progress" hidden>
-      <div class="bar"><div id="scanBar"></div></div>
-      <div id="scanMsg" class="small"></div>
-    </div>
-    <p id="scanError" class="error-text" role="alert"></p>
-    <div class="dialog-actions">
+    <footer class="fd-foot">
       <button value="cancel" class="btn ghost" formnovalidate>Close</button>
       <button type="button" id="btnStartScan" class="btn primary">Start scan</button>
-    </div>
+    </footer>
   </form>
 </dialog>
 
@@ -698,8 +713,14 @@
     <details class="small"><summary>Deep scan role (optional)</summary>
       <label>Role to assume in member accounts<input id="aRole" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
     </details>
-    <div class="row"><button type="button" class="btn primary" id="btnAccessRun">Check access</button></div>
+    <!-- Actions sit above the results, so starting the scan never needs a scroll past the checks. -->
+    <div class="row access-actions">
+      <button type="button" class="btn primary" id="btnAccessRun">Check access</button>
+      <button type="button" id="btnAccessScan" class="btn primary" hidden>Start a scan with this profile</button>
+      <button value="cancel" class="btn ghost push-right" formnovalidate>Close</button>
+    </div>
     <div id="aBusy" class="busy" role="status" aria-live="polite" hidden><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text"></span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar" aria-hidden="true"><i></i></div></div>
+    <p id="aError" class="error-text" role="alert"></p>
     <p id="aVerdict" class="verdict" hidden></p>
     <div id="aSwitch" class="switch-hint" role="status" hidden></div>
     <ul id="aChecks" class="checks"></ul>
@@ -708,11 +729,6 @@
       <p class="small muted">Ready to send: names your identity, the account and exactly what to grant.</p>
       <textarea id="aAdminText" rows="9" readonly></textarea>
       <div class="row"><button type="button" class="btn" id="btnAdminCopy">Copy</button><button type="button" class="btn ghost" id="btnAdminSave">Download .txt</button></div>
-    </div>
-    <p id="aError" class="error-text" role="alert"></p>
-    <div class="dialog-actions">
-      <button value="cancel" class="btn ghost" formnovalidate>Close</button>
-      <button type="button" id="btnAccessScan" class="btn primary" hidden>Start a scan with this profile</button>
     </div>
   </form>
 </dialog>

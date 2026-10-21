@@ -82,7 +82,7 @@ def test_management_account_with_full_access_is_ready(monkeypatch):
     assert r["ready"] and r["permission_set"] == "CTO-Read"
     assert [c["status"] for c in r["checks"]] == ["ok", "ok", "ok", "ok", "ok", "skip"]
     cost = next(c for c in r["checks"] if c["id"] == "cost")
-    assert "40 account(s) in 1 region(s)" in cost["detail"]  # one call proves the multi-region data too
+    assert "40 accounts in 1 region " in cost["detail"]  # one call proves the multi-region data too
 
 
 def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):
@@ -122,3 +122,21 @@ def test_access_check_endpoint(monkeypatch):
     assert c.post("/api/access-check", json={"profile": "x"}).status_code == 403
     r = c.post("/api/access-check", json={"profile": "x", "role_name": ""}, headers={"X-ExitRisk": "1"})
     assert r.json() == {"ready": True, "profile": "x", "role": None}
+
+
+def test_access_check_streams_each_check(monkeypatch):
+    """?stream=1 sends the step list, then each check as it finishes, then the full result."""
+
+    def fake(profile, role, on_check=None):
+        for cid, label in preflight.STEPS:
+            on_check({"id": cid, "label": label, "status": "ok"})
+        return {"ready": True, "profile": profile}
+
+    monkeypatch.setattr(preflight, "run_checks", fake)
+    c = TestClient(create_app(), base_url="http://127.0.0.1")
+    r = c.post("/api/access-check?stream=1", json={"profile": "x"}, headers={"X-ExitRisk": "1"})
+    assert r.status_code == 200
+    lines = [json.loads(x) for x in r.text.splitlines() if x]
+    assert [s["id"] for s in lines[0]["steps"]] == [cid for cid, _ in preflight.STEPS]
+    assert [x["check"]["id"] for x in lines[1:-1]] == [cid for cid, _ in preflight.STEPS]
+    assert lines[-1] == {"result": {"ready": True, "profile": "x"}}

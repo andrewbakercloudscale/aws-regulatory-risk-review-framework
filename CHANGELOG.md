@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- New scan dialog redesigned: three numbered steps (Sign-in, Scope, Options), Check access beside the
+  profile, an OU list with account counts aligned right and the chosen OUs shown as chips, and a fixed
+  footer so Start scan is always in view.
+- Check access shows real progress: each AWS call appears in the list as it finishes, with "Step N of 6"
+  and a measured bar (it works with Reduce motion on, where the animated bar stood still). Close and
+  Start a scan now sit next to Check access, above the results.
+- Wording: "250 accounts in 20 regions" instead of "account(s) in region(s)".
+
 ### Fixed
 - Issues (and any other jump to a section) now lands with the section title visible below the
   sticky top bar, at every screen width.

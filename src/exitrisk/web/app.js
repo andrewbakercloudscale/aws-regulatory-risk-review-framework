@@ -51,6 +51,37 @@
     t._h = setTimeout(() => t.classList.remove("show"), ms);
   }
 
+  // POST that answers with NDJSON: onLine gets each parsed line as it arrives.
+  async function apiStream(path, body, onLine) {
+    let res;
+    try {
+      res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-ExitRisk": "1" }, body: JSON.stringify(body) });
+    } catch (e) {
+      console.error("network error", path, e);
+      throw new Error("Cannot reach the console server. Is `exitrisk serve` still running?");
+    }
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const b = await res.json(); msg = typeof b.detail === "string" ? b.detail : b.error || msg; } catch { /* keep HTTP status */ }
+      console.error("api error", path, res.status, msg);
+      throw new Error(msg);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      buf += dec.decode(value || new Uint8Array(), { stream: !done });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line) onLine(JSON.parse(line));
+      }
+      if (done) return;
+    }
+  }
+
   async function api(path, opts = {}) {
     const init = { ...opts, headers: { "Content-Type": "application/json", "X-ExitRisk": "1", ...(opts.headers || {}) } };
     if (init.body && typeof init.body !== "string") init.body = JSON.stringify(init.body);
@@ -1222,7 +1253,9 @@
       if (covered) { b.checked = true; b.disabled = true; } else if (b.disabled) { b.disabled = false; b.checked = false; }
     }
     const picked = boxes.filter((b) => b.checked && !b.disabled);
-    $("#ouChosen").textContent = picked.length ? `Scanning: ${picked.map((b) => b.dataset.name).join(", ")}` : "Scanning the whole organisation.";
+    $("#ouChosen").innerHTML = picked.length
+      ? `<span class="ou-chosen-k">Scanning</span>${picked.map((b) => `<span class="chip">${esc(b.dataset.name)}</span>`).join("")}`
+      : `<span class="ou-chosen-k">Scanning</span><span class="chip">Whole organisation</span>`;
   }
   const pickedOus = () => [...$("#sOu").querySelectorAll("input[type=checkbox]:checked:not(:disabled)")].map((b) => b.value);
 
@@ -1237,11 +1270,11 @@
       const { tree, org } = await api("/api/org", { method: "POST", body: { profile: $("#sProfile").value || null, refresh } });
       if (seq !== state.ouSeq) return;
       $("#sOu").innerHTML = flattenOus(tree).filter((o) => o.depth > 0).map((o) =>
-        `<label class="ou-item" style="padding-left:${(o.depth - 1) * 20 + 6}px"><input type="checkbox" value="${esc(o.id)}" data-name="${esc(o.name)}" data-parent="${o.parent === tree.id ? "" : esc(o.parent)}"${was.has(o.id) ? " checked" : ""}> ${esc(o.name)}${o.accounts == null ? "" : ` <span class="muted">· ${o.accounts} account${o.accounts === 1 ? "" : "s"}</span>`}</label>`).join("") ||
+        `<label class="ou-item${o.depth > 1 ? " nested" : ""}" style="padding-left:${(o.depth - 1) * 22 + 12}px"><input type="checkbox" value="${esc(o.id)}" data-name="${esc(o.name)}" data-parent="${o.parent === tree.id ? "" : esc(o.parent)}"${was.has(o.id) ? " checked" : ""}><span class="ou-name">${esc(o.name)}</span>${o.accounts == null ? "" : `<span class="ou-n">${plural(o.accounts, "account")}</span>`}</label>`).join("") ||
         `<p class="muted small">No OUs: the scan covers the whole organisation.</p>`;
       syncOus();
       const n = flattenOus(tree).length - 1;
-      $("#ouStatus").textContent = `${n} OU(s) in organization ${org.id} · management account ${org.management_account_id}`;
+      $("#ouStatus").textContent = `${plural(n, "OU")} in organization ${org.id}, management account ${org.management_account_id}.`;
       state.mgmtAccount = org.management_account_id;
       try { if ($("#sProfile").value) localStorage.setItem(LS_ORG_PROFILE, $("#sProfile").value); } catch { /* ignore */ }
     } catch (e) {
@@ -1349,7 +1382,19 @@
     const el = $(sel);
     el.hidden = !text;
     if (text) { el.querySelector(".busy-text").textContent = text; el.dataset.started = Date.now(); tickBusy(); }
-    else delete el.dataset.started;
+    else {
+      delete el.dataset.started;
+      el.querySelector(".busy-bar")?.classList.remove("det");
+      const fill = el.querySelector(".busy-bar i");
+      if (fill) fill.style.width = "";
+    }
+  }
+
+  // Turn a busy() bar into a measured one (0 to 1); busy(sel, null) resets it to the animated kind.
+  function busyProgress(sel, frac) {
+    const bar = $(sel).querySelector(".busy-bar");
+    bar.classList.add("det");
+    bar.querySelector("i").style.width = `${Math.round(Math.min(1, Math.max(0, frac)) * 100)}%`;
   }
 
   // A loading panel for content areas (the OU list): same look as busy(), built in place.
@@ -1526,17 +1571,50 @@
     if (autoRun) runAccessCheck();
   }
 
+  function checkRow(c) {
+    const icon = { ok: "✓", fail: "✗", warn: "!", skip: "–" };
+    return `<li class="${esc(c.status)}"><span class="ic" aria-label="${esc(c.status)}">${icon[c.status] || "?"}</span><strong>${esc(c.label)}</strong>
+        ${c.detail ? `<span class="d">${esc(c.detail)}</span>` : ""}${c.fix ? `<span class="f">→ ${esc(c.fix)}</span>` : ""}</li>`;
+  }
+
   async function runAccessCheck() {
     $("#btnAccessRun").disabled = true;
     $("#aChecks").innerHTML = "";
     $("#aVerdict").hidden = true;
-    busy("#aBusy", "Checking sign-in, Organizations, accounts and Cost Explorer (a few seconds)… approve Touch ID if prompted.");
+    $("#btnAccessRun").classList.add("primary");
+    $("#btnAccessScan").hidden = true;
+    $("#aSwitch").hidden = true;
+    $("#aAdmin").hidden = true;
+    busy("#aBusy", "Starting the checks…");
     $("#aError").textContent = "";
+    // Each check is one AWS call; the server streams them as they return, so the list fills in live
+    // and the bar shows how many of the steps are done.
+    let steps = [];
+    const done = {};
+    const drawSteps = () => {
+      const current = steps.find((st) => !done[st.id]);
+      const n = steps.filter((st) => done[st.id]).length;
+      $("#aChecks").innerHTML = steps.map((st) => done[st.id] ? checkRow(done[st.id])
+        : st === current ? `<li class="pending"><span class="ic"><span class="spin" aria-hidden="true"></span></span><strong>${esc(st.label)}</strong><span class="d">Checking…</span></li>`
+        : `<li class="wait"><span class="ic" aria-hidden="true">·</span><strong>${esc(st.label)}</strong></li>`).join("");
+      if (current) {
+        $("#aBusy .busy-text").textContent = `Step ${n + 1} of ${steps.length}: ${current.label}` +
+          (current.id === "identity" ? " (approve Touch ID if prompted)" : "");
+      }
+      busyProgress("#aBusy", steps.length ? (n + 0.5) / steps.length : 0);
+    };
     try {
-      const r = await api("/api/access-check", { method: "POST", body: { profile: $("#aProfile").value || null, role_name: $("#aRole").value || null } });
-      const icon = { ok: "✓", fail: "✗", warn: "!", skip: "–" };
-      $("#aChecks").innerHTML = r.checks.map((c) => `<li class="${esc(c.status)}"><span class="ic" aria-label="${esc(c.status)}">${icon[c.status] || "?"}</span><strong>${esc(c.label)}</strong>
-        ${c.detail ? `<span class="d">${esc(c.detail)}</span>` : ""}${c.fix ? `<span class="f">→ ${esc(c.fix)}</span>` : ""}</li>`).join("");
+      let r = null;
+      await apiStream("/api/access-check?stream=1", { profile: $("#aProfile").value || null, role_name: $("#aRole").value || null }, (msg) => {
+        if (msg.steps) steps = msg.steps;
+        if (msg.check) done[msg.check.id] = msg.check;
+        if (msg.result) r = msg.result;
+        if (msg.error) throw new Error(msg.error);
+        if (!msg.result) drawSteps();
+      });
+      if (!r) throw new Error("The access check stopped before it finished. See Settings → Application log.");
+      busyProgress("#aBusy", 1);
+      $("#aChecks").innerHTML = r.checks.map(checkRow).join("");
       $("#aVerdict").textContent = r.verdict;
       $("#aVerdict").hidden = false;
       $("#aVerdict").style.color = r.ready ? "#2f9e5b" : r.partial ? "#b7791f" : css("--sev-critical");
@@ -1544,6 +1622,8 @@
       $("#aAdmin").hidden = !needsAdmin || r.checks[0].status !== "ok";
       $("#aAdminText").value = r.admin_request;
       $("#btnAccessScan").hidden = !(r.ready || r.partial);
+      // Once a scan can start, that is the next step: Check access steps back to a plain button.
+      $("#btnAccessRun").classList.toggle("primary", $("#btnAccessScan").hidden);
       if (r.management_account_id) state.mgmtAccount = r.management_account_id;
       if (r.ready) {
         try { localStorage.setItem(LS_ORG_PROFILE, $("#aProfile").value); } catch { /* ignore */ }

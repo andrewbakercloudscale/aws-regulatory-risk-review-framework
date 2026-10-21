@@ -254,7 +254,9 @@ def run_scan(job: ScanJob) -> dict:
         doc = _document(job, data)
         store.save_scan(doc)
         return doc
-    job.update("organizations", 22, f"{len(accounts)} account(s) in {data['ou']['path']}")
+    job.update(
+        "organizations", 22, f"{len(accounts)} account{'' if len(accounts) == 1 else 's'} in {data['ou']['path']}"
+    )
 
     # 2b. Account tags: business criticality and channel. Organizations, not Cost Explorer, so they
     # are read alongside the cost queries below and collected at the end.
@@ -262,7 +264,9 @@ def run_scan(job: ScanJob) -> dict:
     if data["ou"]["id"] != "-":
         ids = [a["id"] for a in data["accounts"]]
         tags_read = background(lambda: organizations.fetch_account_tags(session, ids))
-    job.update("organizations", 25, f"{len(accounts)} account(s) in {data['ou']['path']}")
+    job.update(
+        "organizations", 25, f"{len(accounts)} account{'' if len(accounts) == 1 else 's'} in {data['ou']['path']}"
+    )
 
     # 3. Spend per account per service. Without this there is no score, so a failure is fatal.
     job.update("cost", 30, f"Querying Cost Explorer for the last {p.months} complete month(s)")

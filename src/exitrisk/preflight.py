@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -77,8 +78,24 @@ def _fail(check_id: str, label: str, exc: Exception, needs: str, fix: str = "") 
     return Check(check_id, label, "fail", f"{code}: {msg}", fix or hint, needs)
 
 
-def run_checks(profile: str | None, role_name: str | None = None) -> dict:
-    checks: list[Check] = []
+class _Checks(list):
+    """A list of checks that reports each one as it is added, so the console can show live progress."""
+
+    def __init__(self, on_check: Callable[[dict], None] | None):
+        super().__init__()
+        self.on_check = on_check
+
+    def append(self, check: Check) -> None:
+        super().append(check)
+        if self.on_check:
+            self.on_check(asdict(check))
+
+
+def run_checks(
+    profile: str | None, role_name: str | None = None, on_check: Callable[[dict], None] | None = None
+) -> dict:
+    """Run every check in STEPS order; on_check gets each result (as a dict) the moment it is known."""
+    checks = _Checks(on_check)
     ctx: dict = {"profile": profile, "role_name": role_name}
 
     def skip(check_id: str, label: str, why: str) -> None:
@@ -178,7 +195,8 @@ def run_checks(profile: str | None, role_name: str | None = None) -> dict:
                 "cost",
                 "Read Cost Explorer",
                 "warn" if few else "ok",
-                f"Spend visible for {n} account(s) in {n_regions} region(s) in {start[:7]} (this check cost US$0.01).",
+                f"Spend visible for {n} account{'' if n == 1 else 's'} in "
+                f"{n_regions} region{'' if n_regions == 1 else 's'} in {start[:7]} (this check cost US$0.01).",
                 "A member account sees only its own spend; use the management account." if few else "",
             )
         )
@@ -221,6 +239,8 @@ _LATER = [
     ("cost", "Read Cost Explorer"),
     ("deep_scan", "Deep scan role (optional)"),
 ]
+# Every run reports exactly these checks, in this order (skipped ones included).
+STEPS = [("identity", "Sign in to AWS"), *_LATER]
 
 
 def _result(checks: list[Check], ctx: dict) -> dict:

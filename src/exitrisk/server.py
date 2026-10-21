@@ -11,7 +11,11 @@ browser could reach it:
 
 from __future__ import annotations
 
+import contextvars
+import json
 import os
+import queue
+import threading
 import time
 import uuid
 from importlib import resources
@@ -19,7 +23,7 @@ from typing import Annotated
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -231,9 +235,40 @@ def create_app(allow_remote: bool = False) -> FastAPI:
             return JSONResponse({"error": msg, "code": code, "hint": hint}, status_code=502)
 
     @app.post("/api/access-check")
-    def access_check(req: AccessCheckRequest):
-        """Make each read-only call a scan needs and say what to fix. Never raises: failures are results."""
-        return preflight.run_checks(req.profile, req.role_name or None)
+    def access_check(req: AccessCheckRequest, stream: bool = False):
+        """Make each read-only call a scan needs and say what to fix. Never raises: failures are results.
+
+        With ?stream=1 the answer is NDJSON: {"steps": [...]}, then {"check": {...}} as each call returns,
+        then {"result": {...}}, so the console can show which call it is waiting on.
+        """
+        if not stream:
+            return preflight.run_checks(req.profile, req.role_name or None)
+        q: queue.Queue = queue.Queue()
+
+        def work() -> None:
+            try:
+                q.put(
+                    {
+                        "result": preflight.run_checks(
+                            req.profile, req.role_name or None, on_check=lambda c: q.put({"check": c})
+                        )
+                    }
+                )
+            except Exception as exc:
+                log.exception("access check failed")
+                q.put({"error": describe_exception(exc)[1]})
+
+        threading.Thread(target=contextvars.copy_context().run, args=(work,), daemon=True).start()
+
+        def lines():
+            yield json.dumps({"steps": [{"id": i, "label": label} for i, label in preflight.STEPS]}) + "\n"
+            while True:
+                item = q.get()
+                yield json.dumps(item) + "\n"
+                if "check" not in item:
+                    return
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
 
     @app.post("/api/scans")
     def create_scan(req: ScanRequest):
