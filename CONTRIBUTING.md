@@ -37,6 +37,8 @@ pytest                                  # unit tests (no AWS access needed; boto
 ruff check src tests scripts && ruff format --check src tests scripts
 exitrisk serve                          # Load demo data to work on the UI
 python scripts/screenshots.py           # regenerate docs/images and docs/sample-report.pdf
+python scripts/refresh_direct_connect.py   # refresh Direct Connect list prices (data/direct_connect.json)
+python scripts/refresh_region_services.py  # refresh services by region (data/region_services.json)
 ```
 
 Guidelines:

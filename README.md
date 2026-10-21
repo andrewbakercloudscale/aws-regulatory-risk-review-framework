@@ -79,12 +79,18 @@ exit" (a fact a board can govern).
   re-rated, and services that grew or appeared between two scans. A **monthly scan** (Settings) repeats a scan each
   month so the comparison shows a trend.
 - **Times the exit** (section 5): whether it fits a regulator or board notice period you enter under **Exit model**, which
-  Savings Plans and reservations run off before it finishes and what would still be owed, the last
-  date a 3-year term stays inside the window, and any EDP shortfall.
+  Savings Plans and reservations run off before it finishes, and what would be **written off**: still
+  owed after the exit for capacity no longer used. That total (with any EDP shortfall) is a key figure
+  in the executive summary, and a chart shows each month's commitments with the exit window shaded and
+  what would be written off if the exit finished in that month. It also gives the last date a 3-year
+  term stays inside the window.
 - **Tests resilience** (section 6): which accounts are critical (from account tags such as
   `Criticality = Tier1`, or names you give), how much of the critical estate one regional event would
   take down, whether tier 1 channels are isolated from each other (anti-affinity), what could move in
-  weeks under a stressed exit, and how many terabytes an exit has to move and how long that takes.
+  weeks under a stressed exit, and how many terabytes an exit has to move. It counts the Direct
+  Connect links you have today (from Cost Explorer port-hours) and prices three options for new 10 Gbps
+  links dedicated to the migration, kept apart from production: Cheap (1 link), Medium (2) and Urgent
+  (4), each with time to copy, AWS port cost, data out and total at AWS list price.
 - **Exports a board-ready PDF** with charts, an executive narrative, a data-quality section, and an
   appendix explaining every service's tier, recommended migration path and typical duration.
 - **Never fails silently**: every AWS API error becomes an issue on the report with a fix, and is
@@ -170,11 +176,11 @@ exitrisk catalog                                                        # list s
 
 ![Exit estimate](docs/images/estimate.png)
 
-**Timing**: The exit window against your notice period, Savings Plans and reservations running off, and the EDP.
+**Timing**: The exit window against your notice period, Savings Plans and reservations written off over time, and the EDP.
 
 ![Timing](docs/images/timing.png)
 
-**Resilience**: Critical accounts, correlated failure by region and channel, a stressed exit and the data to move.
+**Resilience**: Critical accounts, correlated failure by region and channel, a stressed exit, the data to move and the links to move it.
 
 ![Resilience](docs/images/resilience.png)
 

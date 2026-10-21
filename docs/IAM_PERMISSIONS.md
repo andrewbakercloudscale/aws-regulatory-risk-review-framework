@@ -15,7 +15,7 @@ profile uses in the **management (payer) account**:
 | `organizations:ListAccountsForParent` | Accounts under the chosen OU, recursively, with names (for the name filter) |
 | `organizations:ListTagsForResource` | Account tags, for business criticality and channel in the resilience view. Optional: without it, name the critical accounts in the console |
 | `ce:GetSavingsPlansUtilizationDetails`, `ce:GetReservationUtilization` | Savings Plans and reservations with their end dates, to time an exit against commitments (section 5). Optional: a refusal is a warning |
-| `ce:GetCostAndUsage` | Amortised spend by account × service × month, by region (multi-region view), and storage usage in GB-months (data held, resilience view) |
+| `ce:GetCostAndUsage` | Amortised spend by account × service × month, by region (multi-region view), storage usage in GB-months (data held, resilience view), and Direct Connect port-hours and data out (links for the migration) |
 
 Cost Explorer must be enabled in the management account (Billing console → Cost Explorer). Each
 `GetCostAndUsage` request costs US$0.01; a scan makes two per 100 accounts plus pagination.

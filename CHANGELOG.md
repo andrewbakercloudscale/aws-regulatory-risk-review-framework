@@ -6,6 +6,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Documentation
+
+- README, exco guide, IAM permissions, operations and contributing guide cover the Direct Connect
+  link options, commitments written off and the price-data refresh scripts.
+
 ## [0.11.0] - 2026-10-21
 
 ### Added

@@ -52,6 +52,17 @@ lets Cost Explorer close the previous month.
 Load it with `launchctl load ~/Library/LaunchAgents/com.exitrisk.monthly.plist`. The console and
 the command never both run the same month's scan: the first to start it claims it.
 
+## Price and region data
+
+Two data files ship with the tool and can be refreshed from AWS's public files (no AWS credentials):
+
+| File | Used for | Refresh |
+|---|---|---|
+| `data/region_services.json` | Which services each region offers (Multi-region) | `python scripts/refresh_region_services.py` |
+| `data/direct_connect.json` | Direct Connect port and data-out list prices by region, and location names (links for the migration) | `python scripts/refresh_direct_connect.py` (downloads AWS's ~100 MB price list; or pass a saved copy) |
+
+Each file records the date AWS published it, which the report shows next to the figures.
+
 ## Configuration
 
 | Variable | Default | Meaning |
