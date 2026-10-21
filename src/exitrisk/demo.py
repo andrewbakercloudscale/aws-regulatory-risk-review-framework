@@ -427,6 +427,24 @@ def _storage(accounts: list[dict], costs: list[dict], months: int) -> list[dict]
     return rows
 
 
+def _direct_connect(accounts: list[dict]) -> dict:
+    """Two dedicated 10 Gbps ports in London in the network account, plus data out over them."""
+    from datetime import date
+
+    start, end = month_window(1)
+    hours = (date.fromisoformat(end) - date.fromisoformat(start)).days * 24
+    by_name = {a["name"]: a["id"] for a in accounts}
+    net, core = by_name["shared-network-prod"], by_name["core-banking-prod"]
+    rows = [
+        {"account_id": net, "usage_type": "EUW2-EqLD5-PortUsage:10G", "unit": "Hrs", "quantity": 2 * hours},
+        {"account_id": net, "usage_type": "EUW2-EqLD5-DataXfer-Out:dc.3", "unit": "GB", "quantity": 182000.0},
+        {"account_id": core, "usage_type": "EUW2-EqLD5-DataXfer-Out:dc.3", "unit": "GB", "quantity": 96000.0},
+    ]
+    for r in rows:
+        r["cost"] = round(r["quantity"] * (2.25 if r["unit"] == "Hrs" else 0.02), 2)
+    return {"month": start[:7], "hours": hours, "rows": rows}
+
+
 # Savings Plans and reservations: (kind, type, service, term, payment, months left, monthly USD).
 _COMMITMENTS = [
     ("savings_plan", "ComputeSavingsPlans", "", "3yr", "No Upfront", 22, 118000.0),
@@ -583,6 +601,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
         "costs": costs,
         "region_costs": region_costs,
         "storage": storage,
+        "direct_connect": _direct_connect(accounts),
         "commitments": _commitments(),
         "period": {"start": start, "end": end, "months": months},
         "inventory": inventory,

@@ -283,12 +283,25 @@ quarter or more of their spend on tiers 4 to 5 are listed.
 average data held over the month; nothing is read from the data itself. Lines are classed as copies
 (snapshots, backups, point-in-time recovery, Multi-AZ mirrors, AWS Backup), archives (Glacier tiers)
 or live data; early-deletion fees are dropped. Live data and archives must move; copies are rebuilt at
-the target. Transfer time assumes half the link speed in section 6 is usable. Egress at list price is
-$0.05 to $0.15 per GB; AWS credits it for customers leaving AWS, on approval, for a move completed
-within 60 days, so the view says whether the data fits that window. The region of each line comes
+the target. Egress to the internet at list price is $0.05 to $0.15 per GB; AWS credits it for
+customers leaving AWS, on approval, for a move completed within 60 days, so the view says what internet
+capacity that window would need. The region of each line comes
 from its usage-type prefix (`EUW2-` London, `AFS1-` Cape Town, no prefix us-east-1). DynamoDB's
 largest account is sized against the 1 TB per import job limit outside us-east-1, us-west-2 and
 eu-west-1.
+
+**Links for the migration.** Direct Connect ports in use today are counted from Cost Explorer
+port-hours for the last complete month (`<region>-<location>-PortUsage:10G`, hosted `HCPortUsage`,
+flat-rate `FlatRatePortUsage`; a `-Pair` line is two ports): hours divided by the hours in the month.
+Those links carry production and are left alone. The copy gets new dedicated 10 Gbps links, in three
+options: Cheap (1 link), Medium (2) and Urgent (4). Time assumes half the line rate is usable. Cost is
+AWS list price from `data/direct_connect.json` (refreshed by `scripts/refresh_direct_connect.py` from
+AWS's public Direct Connect price list): port-hours for the copy plus one month to commission, test
+and run the final sync, and data out per GB from each region holding data to a Direct Connect location
+in the country of the primary region (where today's links are, or else the region with most spend).
+Data out is the same for every option. Your carrier's circuit and cross-connect are added only when
+entered under Exit model. The view also notes the cheapest flat-rate port (no per-GB charge) in the
+region, as something to ask AWS about; it is not used in the figures.
 
 ## Multi-region
 

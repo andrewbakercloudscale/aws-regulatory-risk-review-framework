@@ -339,6 +339,12 @@
           <div class="table-wrap"><table class="data compact" id="resDataAccounts"></table></div>
         </div>
       </div>
+      <div class="card" id="resLinksCard">
+        <h3>Links for the migration: how fast the data can move</h3>
+        <p class="muted small" id="resLinksNote"></p>
+        <div class="table-wrap"><table class="data compact" id="resLinks"></table></div>
+        <ul id="resLinksPoints" class="assumptions"></ul>
+      </div>
     </section>
 
     <!-- 7. Data quality -->
@@ -617,8 +623,9 @@
         <h3>Which accounts are critical?</h3>
         <p class="muted small" id="resTagNote"></p>
         <label>Also treat as critical (name contains, comma-separated)<input name="critical_accounts" maxlength="200" placeholder="payments, cards, core-banking"></label>
-        <label>Link speed for moving data out (Gbps)<input name="transfer_gbps" type="number" min="0.1" max="1000" step="1"></label>
-        <p class="muted small">Half the link speed is assumed usable. Saved in this browser only.</p>
+        <h3>Links for the migration</h3>
+        <label>Carrier circuit and cross-connect, per new 10 Gbps link (USD a month)<input name="migration_circuit_monthly" type="number" min="0" max="1000000" step="100" placeholder="0 = not known"></label>
+        <p class="muted small">What your carrier and the Direct Connect location charge for each new link, on top of AWS's port price. Leave 0 if not known: the link costs then cover AWS only, and say so. Saved in this browser only.</p>
       </form>
     </div>
   </div>

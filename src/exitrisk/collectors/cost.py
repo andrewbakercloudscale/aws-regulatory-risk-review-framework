@@ -249,6 +249,84 @@ def fetch_storage(session: boto3.Session, account_ids: list[str], services: set[
     return rows
 
 
+DIRECT_CONNECT_SERVICE = "AWS Direct Connect"
+# Port usage types: <region>-<location>-PortUsage:10G (dedicated), HCPortUsage:1G (hosted) and
+# FlatRatePortUsage:10G-Tier1 (flat rate). Usage is in port-hours, so hours / hours in the month = ports.
+_PORT_RE = re.compile(
+    r"^(?P<region>[A-Z0-9]+)-(?P<loc>[A-Za-z0-9]+)-(?P<kind>HC|FlatRate)?PortUsage:(?P<speed>\d+(?:\.\d+)?)(?P<unit>[GM])(?P<pair>-Pair)?"
+)
+
+
+def parse_port(usage_type: str) -> dict | None:
+    """Location code, kind, speed (Gbps) and ports per line of a Direct Connect port usage type, or None."""
+    m = _PORT_RE.match(usage_type)
+    if not m:
+        return None
+    speed = float(m["speed"]) / (1000 if m["unit"] == "M" else 1)
+    kind = {"HC": "hosted", "FlatRate": "flat rate"}.get(m["kind"] or "", "dedicated")
+    # A "Pair" is two ports (for redundancy) billed as one line.
+    return {"location": m["loc"], "kind": kind, "gbps": speed, "ports": 2 if m["pair"] else 1}
+
+
+def fetch_direct_connect(session: boto3.Session, account_ids: list[str]) -> dict:
+    """Direct Connect ports and data out per account, for the last complete month.
+
+    Ports are counted from port-hours (a port connected all month bills every hour). Data out is the
+    GB sent over Direct Connect, with what it cost. One query per 100 accounts.
+    """
+    client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
+    start, end = month_window(1)
+    hours = (date.fromisoformat(end) - date.fromisoformat(start)).days * 24
+    chunks = [
+        account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER] for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER)
+    ]
+
+    def one(chunk: list[str]) -> list[dict]:
+        rows: list[dict] = []
+        filt = {
+            "And": [
+                {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": chunk}},
+                {"Dimensions": {"Key": "SERVICE", "Values": [DIRECT_CONNECT_SERVICE]}},
+            ]
+        }
+        token = None
+        while True:
+            kwargs = {
+                "TimePeriod": {"Start": start, "End": end},
+                "Granularity": "MONTHLY",
+                "Metrics": ["UsageQuantity", "UnblendedCost"],
+                "GroupBy": [
+                    {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
+                    {"Type": "DIMENSION", "Key": "USAGE_TYPE"},
+                ],
+                "Filter": filt,
+            }
+            if token:
+                kwargs["NextPageToken"] = token
+            resp = client.get_cost_and_usage(**kwargs)
+            for period in resp["ResultsByTime"]:
+                for g in period.get("Groups", []):
+                    account_id, usage_type = g["Keys"]
+                    usage = g["Metrics"]["UsageQuantity"]
+                    rows.append(
+                        {
+                            "account_id": account_id,
+                            "usage_type": usage_type,
+                            "unit": usage.get("Unit", ""),
+                            "quantity": round(float(usage["Amount"]), 2),
+                            "cost": round(float(g["Metrics"]["UnblendedCost"]["Amount"]), 2),
+                        }
+                    )
+            token = resp.get("NextPageToken")
+            if not token:
+                break
+        return rows
+
+    rows = [r for found in pmap(one, chunks) for r in found]
+    log.info("cost explorer direct connect: %d rows, month %s", len(rows), start[:7])
+    return {"month": start[:7], "hours": hours, "rows": rows}
+
+
 def fetch_costs(session: boto3.Session, account_ids: list[str], months: int) -> tuple[list[dict], dict]:
     """Return (rows, period). Each Cost Explorer request costs US$0.01; a typical scan makes a handful."""
     client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)

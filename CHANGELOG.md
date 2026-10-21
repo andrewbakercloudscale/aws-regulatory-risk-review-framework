@@ -6,6 +6,19 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- Resilience, Data held: "Links for the migration". The scan now counts the Direct Connect ports you
+  pay for today (from Cost Explorer port-hours; no new permissions) and prices three options for new
+  10 Gbps links dedicated to the copy, kept apart from production: Cheap (1 link), Medium (2) and
+  Urgent (4), each with time to copy, AWS port cost, data out over Direct Connect and total, at AWS
+  list price for the region. `scripts/refresh_direct_connect.py` refreshes the prices.
+- Exit model: carrier circuit and cross-connect cost per new link, added to the options when entered.
+
+### Removed
+
+- Exit model: the single "Link speed for moving data out" answer, replaced by the three link options.
+
 ## [0.9.1] - 2026-10-21
 
 ### Changed

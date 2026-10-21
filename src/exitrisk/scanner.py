@@ -154,6 +154,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False) -> dict:
         "costs": data.get("costs", []),
         "region_costs": data.get("region_costs"),
         "storage": data.get("storage"),
+        "direct_connect": data.get("direct_connect"),
         "commitments": data.get("commitments"),
         "period": data.get("period"),
         "inventory": data.get("inventory", {}),
@@ -330,6 +331,27 @@ def run_scan(job: ScanJob) -> dict:
             )
         )
     job.update("cost", 58, f"{len(data.get('storage') or [])} storage line(s) collected")
+
+    # 3c2. Direct Connect ports and data out, to size the links an exit would need. Optional.
+    if any(r["service"] == cost.DIRECT_CONNECT_SERVICE for r in data["costs"]):
+        job.update("cost", 58, "Querying Cost Explorer for Direct Connect links")
+        try:
+            data["direct_connect"] = cost.fetch_direct_connect(session, [a.id for a in accounts])
+        except Exception as exc:  # optional data: never fail a scan for it
+            if not isinstance(exc, (ClientError, BotoCoreError)):
+                log.exception("direct connect failed with an unexpected error")
+            code, msg, hint = describe_exception(exc)
+            job.add_issue(
+                Issue(
+                    "warning",
+                    "cost",
+                    f"Direct Connect links unavailable: {msg}",
+                    " ".join(x for x in (hint, "The resilience view will not show the links you have today.") if x),
+                    error_code=code,
+                )
+            )
+    else:
+        data["direct_connect"] = {"month": "", "hours": 0, "rows": []}
 
     # 3d. Savings Plans and reservations with their end dates, to time an exit. Optional.
     job.update("cost", 59, "Querying Cost Explorer for Savings Plans and reservations")

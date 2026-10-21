@@ -127,9 +127,11 @@ class Questionnaire(BaseModel):
     edp_end: str = Field("", pattern=r"^(\d{4}-(0[1-9]|1[0-2]))?$")
     edp_annual_commit: float = Field(0, ge=0, le=1e11)
     # Resilience view only (not the estimate): accounts to treat as critical when they carry no
-    # criticality tag (comma-separated, name contains), and the link speed for moving data out.
+    # criticality tag (comma-separated, name contains).
     critical_accounts: str = Field("", max_length=200)
-    transfer_gbps: float = Field(10, gt=0, le=1000)
+    # What your carrier charges a month for each new 10 Gbps migration link (circuit and cross-connect),
+    # in USD. 0 = not known: the link costs then cover AWS only, and say so.
+    migration_circuit_monthly: float = Field(0, ge=0, le=1_000_000)
     # True once someone has answered (or confirmed) these questions. Until then the cost and time
     # figures rest on defaults, and the report labels them provisional instead of headlining them.
     confirmed: bool = False

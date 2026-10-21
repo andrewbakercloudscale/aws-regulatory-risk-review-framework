@@ -118,7 +118,7 @@
 
   // ------------------------------------------------------------------ questionnaire
   const Q_NUM = ["cloud_team_size", "cloud_team_allocation_pct", "app_engineers_fte", "day_rate", "fx_per_usd",
-    "contingency_pct", "parallel_run_months", "materiality", "transfer_gbps", "exit_deadline_months", "edp_annual_commit"];
+    "contingency_pct", "parallel_run_months", "materiality", "migration_circuit_monthly", "exit_deadline_months", "edp_annual_commit"];
 
   function loadQuestionnaire() {
     let q = { ...(state.options?.defaults || {}) };
@@ -936,7 +936,8 @@
     const rf = $("#resForm");
     answerStrip("#resAnswers", [
       ["Critical accounts", c.by_tag ? `${plural(c.by_tag, "account")} tagged${rf.critical_accounts.value.trim() ? `, plus names containing ${rf.critical_accounts.value.trim()}` : ""}` : rf.critical_accounts.value.trim() ? `Names containing ${rf.critical_accounts.value.trim()}` : "None marked"],
-      ["Link speed for moving data", `${num(Number(rf.transfer_gbps.value) || d.transfer_gbps || 0)} Gbps`],
+      ["Direct Connect today", linksToday(d.links_today)],
+      ["Carrier cost per new link", d.migration_links?.circuit_monthly ? `${money(d.migration_links.circuit_monthly)} a month` : "Not entered"],
     ]);
     const basis = crit ? "critical spend" : "in-scope spend";
     const none = st.buckets.find((b) => b.key === "none");
@@ -945,7 +946,10 @@
       k.available ? tile("Correlated failure", `${k.level} · ${k.score}`, `${pct(k.pct)} of ${basis} in ${k.region_name}`) : tile("Correlated failure", "–", k.reason),
       tile("No rapid exit", pct(none.pct), `of ${basis} is on AWS-only services`),
     ];
-    if (d.available && !d.empty) tiles.push(tile("Data to move", tb(d.move_tb), `${days(d.transfer_days)} at ${num(d.transfer_gbps)} Gbps`));
+    if (d.available && !d.empty) {
+      const o = d.migration_links.options;
+      tiles.push(tile("Data to move", tb(d.move_tb), `${days(o.at(-1).days)} to ${days(o[0].days)} over ${o.at(-1).links} to ${o[0].links} new ${d.migration_links.link_gbps} Gbps link${o[0].links === 1 ? "" : "s"}`));
+    }
     $("#resTiles").innerHTML = tiles.join("");
 
     // Correlated failure.
@@ -971,16 +975,18 @@
       : `<tbody><tr><td class="hint">No ${crit ? "critical " : ""}account has a quarter or more of its spend on AWS-only services.</td></tr></tbody>`;
 
     // Data held.
+    $("#resLinksCard").hidden = !d.available || d.empty;
     if (!d.available || d.empty) {
       $("#resDataNote").textContent = d.reason || "No storage usage recorded for these accounts.";
       for (const id of ["#resDataPoints", "#resDataServices", "#resDataAccounts"]) $(id).innerHTML = "";
       return;
     }
+    renderMigrationLinks(d);
     $("#resDataNote").textContent = `Average data stored last month, from Cost Explorer storage usage (GB-months); no data is read. ${tb(d.total_tb)} in all: ${tb(d.live_tb)} live, ${tb(d.archive_tb)} archived and ${tb(d.copy_tb)} of snapshots and backups, which are rebuilt at the target rather than moved.`;
     const egress = d.egress_list_usd;
     const points = [
-      `Moving ${tb(d.move_tb)} (live and archived) over ${num(d.transfer_gbps)} Gbps takes about ${days(d.transfer_days)} of continuous transfer. ${d.fits_credit_window ? `That fits the ${d.credit_days}-day window of AWS's free data transfer out for customers leaving AWS.` : `That is longer than the ${d.credit_days}-day window of AWS's free data transfer out for customers leaving AWS: plan waves, a faster link, or offline transfer.`}`,
-      `Without that credit, internet egress at list price would be roughly ${money(egress[0])} to ${money(egress[1])}.`,
+      `${tb(d.move_tb)} (live and archived) has to move; the options for the links that carry it are below.`,
+      `Over the internet instead, AWS waives data transfer out for customers leaving AWS if the move finishes within ${d.credit_days} days: that needs about ${num(d.migration_links.credit_gbps, 0)} Gbps of internet capacity for two months. Without that credit, internet egress at list price would be roughly ${money(egress[0])} to ${money(egress[1])}.`,
       ...(crit && d.critical_tb ? [`Critical accounts hold ${tb(d.critical_tb)}: the data a stressed exit would need first.`] : []),
       ...(d.dynamodb_tb ? [`DynamoDB holds ${tb(d.dynamodb_tb)}; the largest account (${d.dynamodb_largest_account}) holds ${tb(d.dynamodb_largest_tb)}. Exports to S3 are not region-limited, but rebuilding in a second region by import from S3 takes ${plural(d.dynamodb_imports_small_region, "import job")} of up to 1 TB each outside us-east-1, us-west-2 and eu-west-1.`] : []),
       ...(d.regions.length ? [`By region: ${d.regions.slice(0, 4).map((x) => `${x.name} ${tb(x.tb)}`).join(", ")}.`] : []),
@@ -990,6 +996,32 @@
     const cells = (x) => `<td class="num-cell">${tb(x.live_tb)}</td><td class="num-cell">${tb(x.archive_tb)}</td><td class="num-cell">${tb(x.copy_tb)}</td>`;
     $("#resDataServices").innerHTML = head("Service") + `<tbody>${d.services.slice(0, 8).map((x) => `<tr><td>${esc(x.service.replace(/^Amazon |^AWS /, ""))}</td>${cells(x)}</tr>`).join("")}</tbody>`;
     $("#resDataAccounts").innerHTML = head("Account") + `<tbody>${d.accounts.slice(0, 8).map((x) => `<tr><td>${esc(x.name)}${x.critical ? ' <span class="chip crit">Critical</span>' : ""}</td>${cells(x)}</tr>`).join("")}</tbody>`;
+  }
+
+  function linksToday(t) {
+    if (!t || !t.available) return "Not read in this scan";
+    if (!t.count) return "None found";
+    return t.ports.map((p) => `${p.count} × ${num(p.gbps, p.gbps < 1 ? 1 : 0)} Gbps${p.kind === "dedicated" ? "" : ` ${p.kind}`}`).join(", ");
+  }
+
+  // New Direct Connect links for the copy: cheap, medium and urgent, with time and list cost.
+  function renderMigrationLinks(d) {
+    const m = d.migration_links, t = d.links_today, o = m.options;
+    const today = !t.available
+      ? `This scan predates the Direct Connect check; run a new scan to see the links you have today.`
+      : t.count
+        ? `Today you have ${linksToday(t)} of Direct Connect (${t.ports.map((p) => p.location).join(", ")}), costing ${money(t.monthly_cost)} a month in ports and carrying ${tb(t.out_tb_month)} out last month. Those carry production traffic and stay as they are.`
+        : `Cost Explorer shows no Direct Connect ports billed last month.`;
+    $("#resLinksNote").textContent = `${today} The migration gets its own new ${m.link_gbps} Gbps links, dedicated to the copy and kept apart from production, so moving ${tb(d.move_tb)} cannot slow customer-facing systems. Time assumes half the line rate is usable.`;
+    const carrier = m.circuit_monthly > 0;
+    $("#resLinks").innerHTML = `<thead><tr><th>Option</th><th class="num-cell">New links</th><th class="num-cell">Time to copy</th><th class="num-cell">AWS ports</th>${carrier ? '<th class="num-cell">Carrier</th>' : ""}<th class="num-cell">Data out</th><th class="num-cell">Total</th></tr></thead><tbody>${o.map((x) => `<tr><td><strong>${esc(x.label)}</strong><div class="hint">${esc(x.note)}</div></td><td class="num-cell">${x.links} × ${m.link_gbps} Gbps</td><td class="num-cell">${days(x.days)}</td><td class="num-cell">${money(x.port_cost)}</td>${carrier ? `<td class="num-cell">${money(x.circuit_cost)}</td>` : ""}<td class="num-cell">${money(x.transfer_cost)}</td><td class="num-cell"><strong>${money(x.total_cost)}</strong></td></tr>`).join("")}</tbody>`;
+    const points = [
+      `AWS list prices for ${m.region_name} (price list of ${m.price_date}): $${m.port_hour_usd.toFixed(2)} per ${m.link_gbps} Gbps port-hour, paid for the copy plus ${plural(m.extra_months, "month")} to commission, test and run the final sync; data out over Direct Connect at $${m.dto_per_gb_usd.toFixed(3)} per GB on average, from the regions that hold the data. Data out costs the same whichever option you pick; the links only change how long it takes.`,
+      carrier ? `Carrier circuit and cross-connect at ${money(m.circuit_monthly)} per link a month (your answer under Exit model).` : `Not included: your carrier's circuit and the cross-connect at the Direct Connect location. Enter them under Exit model to add them.`,
+      `Order early: a new dedicated connection needs a cross-connect at the Direct Connect location and a carrier circuit to your site, which often take weeks to months to deliver.`,
+      ...(m.flat_rate_hour_usd && m.dto_per_gb_usd > 0 ? [`AWS's price list also has flat-rate ${m.link_gbps} Gbps ports with no per-GB charge, from $${m.flat_rate_hour_usd.toFixed(2)} an hour in this region. For a one-off copy of this size, ask AWS whether one costs less than paying per GB.`] : []),
+    ];
+    $("#resLinksPoints").innerHTML = points.map((x) => `<li>${esc(x)}</li>`).join("");
   }
 
   // ------------------------------------------------------------------ timing

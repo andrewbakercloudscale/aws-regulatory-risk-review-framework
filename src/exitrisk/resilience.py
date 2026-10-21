@@ -16,10 +16,14 @@ docs/METHODOLOGY.md, "Resilience".
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections import defaultdict
+from functools import cache
+from importlib import resources
 
+from .collectors.cost import parse_port
 from .estimate import Questionnaire
 from .multiregion import GLOBAL_REGIONS, load_region_data
 
@@ -58,8 +62,21 @@ CRITICAL_VALUES = {
     "yes",
 }
 
-# Data transfer for the sizing: the link speed is the user's, half of it is assumed usable.
+# Data transfer: half the line rate is assumed usable (protocol overhead, retries, verification,
+# and the pauses of a migration run in waves).
 LINK_EFFICIENCY = 0.5
+# New Direct Connect links for the migration, kept apart from production traffic so the copy cannot
+# starve customer-facing systems: (key, label, 10 Gbps links, note).
+MIGRATION_LINKS = (
+    ("cheap", "Cheap", 1, "Lowest cost; the copy takes longest."),
+    ("medium", "Medium", 2, "Half the time of Cheap."),
+    ("urgent", "Urgent", 4, "Fastest: for a deadline or a stressed exit."),
+)
+MIGRATION_LINK_GBPS = 10
+# Months the links are paid for beyond the copy itself: ordering lead time is not billed, but
+# commissioning, test transfers and the final cutover sync are.
+LINK_EXTRA_MONTHS = 1
+HOURS_PER_MONTH = 730
 # AWS waives data transfer out for customers leaving AWS, once approved, for transfers completed
 # within 60 days: https://aws.amazon.com/blogs/aws/free-data-transfer-out-to-internet-when-moving-out-of-aws/
 EXIT_CREDIT_DAYS = 60
@@ -197,18 +214,134 @@ def usage_region(usage_type: str) -> str:
     return head if re.fullmatch(r"[A-Z]{2,4}\d", head) else "us-east-1"
 
 
+@cache
+def direct_connect_prices() -> dict:
+    """AWS Direct Connect list prices per region (scripts/refresh_direct_connect.py)."""
+    return json.loads(resources.files("exitrisk").joinpath("data", "direct_connect.json").read_text(encoding="utf-8"))
+
+
+def _links_today(dx: dict | None, rows: dict[str, dict]) -> dict:
+    """Direct Connect ports billed last month, from Cost Explorer port-hours."""
+    if dx is None:
+        return {"available": False, "reason": "This scan predates the Direct Connect check; run a new scan."}
+    names = direct_connect_prices()["locations"]
+    hours = dx.get("hours") or HOURS_PER_MONTH
+    ports: dict[tuple, dict] = {}
+    out_gb = out_cost = 0.0
+    for r in dx.get("rows", []):
+        if "DataXfer-Out" in r["usage_type"] and r["unit"] in ("GB", "GigaBytes"):
+            out_gb += r["quantity"]
+            out_cost += r["cost"]
+        port = parse_port(r["usage_type"])
+        if not port or r["quantity"] <= 0:
+            continue
+        key = (usage_region(r["usage_type"]), port["location"], port["kind"], port["gbps"])
+        p = ports.setdefault(
+            key,
+            {
+                "region": key[0],
+                "location": names.get(port["location"], port["location"]),
+                "kind": port["kind"],
+                "gbps": port["gbps"],
+                "hours": 0.0,
+                "monthly_cost": 0.0,
+                "accounts": set(),
+            },
+        )
+        p["hours"] += r["quantity"] * port["ports"]
+        p["monthly_cost"] += r["cost"]
+        if r["account_id"] in rows:
+            p["accounts"].add(rows[r["account_id"]]["name"])
+        else:
+            p["accounts"].add(r["account_id"])
+    out = []
+    for p in ports.values():
+        p["count"] = max(1, round(p["hours"] / hours))
+        p["monthly_cost"] = round(p["monthly_cost"], 2)
+        p["accounts"] = sorted(p["accounts"])
+        del p["hours"]
+        out.append(p)
+    out.sort(key=lambda p: (-p["gbps"] * p["count"], p["location"]))
+    return {
+        "available": True,
+        "month": dx.get("month", ""),
+        "ports": out,
+        "count": sum(p["count"] for p in out),
+        "total_gbps": round(sum(p["gbps"] * p["count"] for p in out), 1),
+        "monthly_cost": round(sum(p["monthly_cost"] for p in out), 2),
+        "out_tb_month": _tb(out_gb),
+        "out_cost_month": round(out_cost, 2),
+    }
+
+
+def _migration_links(move_gb: dict[str, float], home: str, regions: dict, circuit_monthly: float) -> dict:
+    """Cheap, medium and urgent sets of new 10 Gbps links for the copy, with time and list cost.
+
+    The links land at a Direct Connect location in the country of ``home`` (where the estate runs).
+    Data out is priced from the region that holds it to that country, at AWS list price.
+    """
+    prices = direct_connect_prices()["regions"]
+    home = home if home in prices else "us-east-1"
+    country = regions.get(home, {}).get("country", "")
+    port_hour = prices[home]["port_hour_usd"]["10G"]
+    move_tb = _tb(sum(move_gb.values()))
+    transfer = 0.0
+    for region, gb in move_gb.items():
+        rates = (prices.get(region) or prices[home])["dto_per_gb_usd"]
+        transfer += gb * rates.get(country, max(rates.values(), default=0.0))
+    transfer_cost = round(transfer)
+    options = []
+    for key, label, links, note in MIGRATION_LINKS:
+        days = _days(move_tb, links * MIGRATION_LINK_GBPS)
+        months = math.ceil(days / (HOURS_PER_MONTH / 24)) + LINK_EXTRA_MONTHS
+        port_cost = round(links * port_hour * HOURS_PER_MONTH * months)
+        circuit_cost = round(links * circuit_monthly * months)
+        options.append(
+            {
+                "key": key,
+                "label": label,
+                "links": links,
+                "gbps": links * MIGRATION_LINK_GBPS,
+                "days": round(days, 1),
+                "months_billed": months,
+                "port_cost": port_cost,
+                "circuit_cost": circuit_cost,
+                "transfer_cost": transfer_cost,
+                "total_cost": port_cost + circuit_cost + transfer_cost,
+                "note": note,
+            }
+        )
+    return {
+        "region": home,
+        "region_name": _region_name(home, regions),
+        "link_gbps": MIGRATION_LINK_GBPS,
+        "port_hour_usd": port_hour,
+        "flat_rate_hour_usd": prices[home].get("flat_rate_10g_hour_usd"),
+        "dto_per_gb_usd": round(transfer / (move_tb * 1024), 4) if move_tb else 0.0,
+        "circuit_monthly": circuit_monthly,
+        "extra_months": LINK_EXTRA_MONTHS,
+        "price_date": direct_connect_prices().get("publication_date", "")[:10],
+        "options": options,
+        # Sustained internet capacity to finish inside AWS's free data-transfer-out window.
+        "credit_gbps": round(move_tb * 1024 * 8 / (EXIT_CREDIT_DAYS * 86400) / LINK_EFFICIENCY, 1),
+    }
+
+
 def _region_name(code: str, regions: dict) -> str:
     r = regions.get(code)
     return r["name"] if r else code
 
 
-def _data(storage: list[dict] | None, rows: dict[str, dict], q: Questionnaire, regions: dict) -> dict:
+def _data(
+    storage: list[dict] | None, dx: dict | None, rows: dict[str, dict], q: Questionnaire, regions: dict, home: str
+) -> dict:
     if storage is None:
         return {"available": False, "reason": "This scan predates data sizing; run a new scan."}
     by_kind: dict[str, float] = defaultdict(float)
     by_service: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     by_account: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     by_region: dict[str, float] = defaultdict(float)
+    move_by_region: dict[str, float] = defaultdict(float)
     dynamo_live: dict[str, float] = defaultdict(float)
     for r in storage:
         if r["account_id"] not in rows:
@@ -217,6 +350,8 @@ def _data(storage: list[dict] | None, rows: dict[str, dict], q: Questionnaire, r
         by_service[r["service"]][r["kind"]] += r["gb"]
         by_account[r["account_id"]][r["kind"]] += r["gb"]
         by_region[usage_region(r["usage_type"])] += r["gb"]
+        if r["kind"] != "copy":
+            move_by_region[usage_region(r["usage_type"])] += r["gb"]
         if r["service"] == "Amazon DynamoDB" and r["kind"] == "live":
             dynamo_live[r["account_id"]] += r["gb"]
     total = sum(by_kind.values())
@@ -224,7 +359,6 @@ def _data(storage: list[dict] | None, rows: dict[str, dict], q: Questionnaire, r
         return {"available": True, "empty": True, "total_tb": 0.0}
     # Copies (snapshots, backups) are rebuilt at the target; live data and archives must move.
     move_tb = _tb(by_kind["live"] + by_kind["archive"])
-    days = _days(move_tb, q.transfer_gbps)
     accounts = sorted(
         (
             {
@@ -261,6 +395,9 @@ def _data(storage: list[dict] | None, rows: dict[str, dict], q: Questionnaire, r
         ),
         key=lambda x: -x["tb"],
     )
+    today = _links_today(dx, rows)
+    if today.get("ports"):
+        home = today["ports"][0]["region"]  # the new links go where the current ones are
     dynamo_tb = _tb(sum(dynamo_live.values()))
     largest = max(dynamo_live.items(), key=lambda kv: kv[1], default=(None, 0.0))
     egress = tuple(round(move_tb * 1024 * p) for p in EGRESS_PER_GB)
@@ -274,9 +411,8 @@ def _data(storage: list[dict] | None, rows: dict[str, dict], q: Questionnaire, r
         "archive_tb": _tb(by_kind["archive"]),
         "move_tb": move_tb,
         "critical_tb": critical_tb,
-        "transfer_gbps": q.transfer_gbps,
-        "transfer_days": round(days, 1),
-        "fits_credit_window": days <= EXIT_CREDIT_DAYS,
+        "links_today": today,
+        "migration_links": _migration_links(move_by_region, home, regions, q.migration_circuit_monthly),
         "credit_days": EXIT_CREDIT_DAYS,
         "egress_list_usd": list(egress),
         "dynamodb_tb": dynamo_tb,
@@ -421,6 +557,8 @@ def build_resilience(scan: dict, accounts: list[dict], q: Questionnaire) -> dict
     basis = "critical" if critical else "all"
     regions = load_region_data()["regions"]
     crit_spend = sum(a["monthly_spend"] for a in critical.values())
+    concentration = _concentration(scan.get("region_costs"), population, basis, regions)
+    home = concentration.get("region") or "us-east-1"
     total_spend = sum(a["monthly_spend"] for a in rows.values())
     return {
         "criticality": {
@@ -435,7 +573,7 @@ def build_resilience(scan: dict, accounts: list[dict], q: Questionnaire) -> dict
             "channels": sorted({a["channel"] for a in rows.values() if a["channel"]}),
         },
         "owners": _owners(rows),
-        "data": _data(scan.get("storage"), rows, q, regions),
-        "concentration": _concentration(scan.get("region_costs"), population, basis, regions),
+        "data": _data(scan.get("storage"), scan.get("direct_connect"), rows, q, regions, home),
+        "concentration": concentration,
         "stressed_exit": _stressed(population, basis),
     }
