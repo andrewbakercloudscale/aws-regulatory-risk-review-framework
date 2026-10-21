@@ -618,6 +618,13 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 .reg-list span { color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
 
 /* Compare scans */
+.sched-banner { display: flex; align-items: center; gap: 12px; max-width: 1192px; margin: 12px auto 0; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--tone-fact); background: color-mix(in srgb, var(--tone-fact) 10%, var(--surface)); font-size: 13px; }
+.sched-banner.bad { border-color: var(--sev-critical); background: color-mix(in srgb, var(--sev-critical) 9%, var(--surface)); }
+.sched-banner > span { flex: 1; }
+@media (max-width: 1240px) { .sched-banner { margin: 12px 24px 0; } }
+.sched-state { display: grid; gap: 4px; padding: 12px 14px; margin-bottom: 16px; border: 1px solid var(--grid); border-radius: 8px; background: var(--surface-2); font-size: 13px; }
+.sched-more { margin-top: 14px; font-size: 13px; }
+.sched-more p { margin: 8px 0 0; }
 .dialog.cmp-dialog { width: min(900px, calc(100vw - 32px)); }
 .dialog.cmp-dialog[open] { display: flex; flex-direction: column; }
 .cmp-dialog .fd-body { flex: 1; min-height: 0; }

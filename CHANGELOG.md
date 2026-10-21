@@ -7,6 +7,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 ## [Unreleased]
 
 ### Added
+- **Monthly scan** (Settings): repeats a live scan's settings on a chosen day each month while the
+  console runs, so Compare scans shows a trend. A failed attempt (usually an expired sign-in) is
+  shown in a banner and retried a day later; Run now starts it at once. `exitrisk schedule
+  show|run` for launchd or cron (see OPERATIONS.md).
 - One-page summary: **Who owns the risk** names the top executives or owners by spend at risk and
   how much spend has no owner tag, and the accounts table gains an Owner column. Still one A4 page.
 

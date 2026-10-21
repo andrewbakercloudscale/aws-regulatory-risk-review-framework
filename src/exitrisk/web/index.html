@@ -44,6 +44,7 @@
         <hr>
         <button id="btnDemo" role="menuitem"><b>Load demo data</b><span>Synthetic organisation, no AWS access needed</span></button>
         <button id="btnCompare" role="menuitem"><b>Compare scans</b><span>What changed since an earlier scan</span></button>
+        <button id="btnSchedule" role="menuitem"><b>Monthly scan</b><span>Repeat a scan each month so Compare shows the trend</span></button>
         <button id="btnLogs" role="menuitem"><b>Application log</b><span>Scan steps, warnings and errors</span></button>
       </div>
     </div>
@@ -87,6 +88,11 @@
   <button id="btnApply" class="btn primary">Apply</button>
   <span id="filterError" class="error-text" role="alert"></span>
 </section>
+
+<div id="schedBanner" class="sched-banner no-print" role="status" hidden>
+  <span id="schedBannerText"></span>
+  <button type="button" class="btn sm" id="btnSchedBannerOpen">Monthly scan</button>
+</div>
 
 <main id="report" class="report">
   <div id="empty" class="empty">
@@ -768,6 +774,34 @@
     <div id="cmpOut"></div>
   </div>
   <footer class="fd-foot"><button type="button" class="btn ghost" id="btnCmpClose">Close</button></footer>
+</dialog>
+
+<dialog id="schedDialog" class="dialog form-dialog sched-dialog" aria-labelledby="schedTitle">
+  <header class="fd-head">
+    <h2 id="schedTitle">Monthly scan</h2>
+    <p>Repeats a scan's settings once a month, so <strong>Compare scans</strong> shows how the exit risk moves. It runs while this console is open, with your AWS sign-in.</p>
+  </header>
+  <div class="fd-body">
+    <div id="schedState" class="sched-state" hidden></div>
+    <div class="fd-grid">
+      <label>Repeat this scan<select id="schedFrom"></select></label>
+      <label>Day of the month<select id="schedDay"></select></label>
+    </div>
+    <p class="hint">The scan uses the same AWS profile, OUs, months, deep-scan options and exit target. Day 3 or later lets Cost Explorer finish the previous month.</p>
+    <div id="schedBusy" class="busy" role="status" aria-live="polite" hidden><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text"></span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar" aria-hidden="true"><i></i></div></div>
+    <p id="schedError" class="error-text" role="alert"></p>
+    <details class="sched-more">
+      <summary>Console not always open, or sign-in expires?</summary>
+      <p>The scan needs a live AWS sign-in. An SSO sign-in lasts hours, not a month, so when it has expired the attempt fails, is retried a day later, and this console says so until a scan succeeds: sign in, then <strong>Run now</strong>.</p>
+      <p>To check without the console, run <code>exitrisk schedule run</code> daily from launchd or cron. It runs the scan only when due. See <code>docs/OPERATIONS.md</code>.</p>
+    </details>
+  </div>
+  <footer class="fd-foot">
+    <button type="button" class="btn ghost" id="btnSchedClose">Close</button>
+    <button type="button" class="btn ghost push-right" id="btnSchedOff" hidden>Turn off</button>
+    <button type="button" class="btn" id="btnSchedRun" hidden>Run now</button>
+    <button type="button" class="btn primary" id="btnSchedSave">Save</button>
+  </footer>
 </dialog>
 
 <dialog id="logDialog" class="dialog wide">

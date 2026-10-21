@@ -18,6 +18,7 @@ import queue
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from importlib import resources
 from typing import Annotated
 
@@ -27,7 +28,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, preflight, sso, store
+from . import __version__, preflight, schedule, sso, store
 from .aws_session import available_profiles, make_session, profile_accounts
 from .catalog import load_catalog
 from .collectors import organizations
@@ -126,9 +127,21 @@ def _host_name(header: str) -> str:
     return header.rsplit(":", 1)[0]
 
 
-def create_app(allow_remote: bool = False) -> FastAPI:
+def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
+    """`scheduler` runs the monthly scan while the console is up; the PDF export's private server does not."""
     configure_logging()
-    app = FastAPI(title="AWS Exit Risk Review", version=__version__, docs_url="/api/docs", redoc_url=None)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        stop = threading.Event()
+        if scheduler:
+            schedule.start_runner(stop)
+        yield
+        stop.set()
+
+    app = FastAPI(
+        title="AWS Exit Risk Review", version=__version__, docs_url="/api/docs", redoc_url=None, lifespan=lifespan
+    )
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -321,6 +334,37 @@ def create_app(allow_remote: bool = False) -> FastAPI:
         except store.ScanNotFound as exc:
             raise HTTPException(404, "scan not found") from exc
         return {"deleted": scan_id}
+
+    @app.get("/api/schedule")
+    def get_schedule():
+        return schedule.status(schedule.load())
+
+    @app.put("/api/schedule")
+    def put_schedule(req: schedule.ScheduleRequest):
+        try:
+            scan = store.load_scan(req.from_scan)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        try:
+            schedule.create(req, scan)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return schedule.status(schedule.load())
+
+    @app.delete("/api/schedule")
+    def delete_schedule():
+        schedule.clear()
+        log.info("monthly scan turned off")
+        return schedule.status(None)
+
+    @app.post("/api/schedule/run")
+    def run_schedule():
+        if not schedule.load():
+            raise HTTPException(404, "no monthly scan is set")
+        scan_id = schedule.run_in_console(force=True)
+        if not scan_id:
+            raise HTTPException(409, "the monthly scan is already running")
+        return {"scan_id": scan_id, **schedule.status(schedule.load())}
 
     @app.post("/api/report")
     def report(req: ReportRequest):

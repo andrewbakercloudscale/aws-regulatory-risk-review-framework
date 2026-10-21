@@ -52,7 +52,7 @@ def _serve(args) -> int:
         )
     if args.replace and not _stop_running_console(args.port):
         return 1
-    app = create_app(allow_remote=args.host not in ("127.0.0.1", "localhost", "::1"))
+    app = create_app(allow_remote=args.host not in ("127.0.0.1", "localhost", "::1"), scheduler=True)
     url = f"http://127.0.0.1:{args.port}/"
     log.info("console at %s  (data: %s, log: %s)", url, settings.data_dir, settings.log_file)
     if not args.no_browser:
@@ -155,6 +155,50 @@ def _scan(args) -> int:
             indent=2,
         )
     )
+    return 0 if doc["status"] == "complete" else 1
+
+
+def _schedule(args) -> int:
+    """`show` prints the monthly scan; `run` runs it if due (for launchd or cron), or at once with --now."""
+    from . import schedule
+    from .scanner import ScanJob, ScanParams, run_scan
+
+    if args.action == "show":
+        print(json.dumps(schedule.status(schedule.load()), indent=2))
+        return 0
+    if not schedule.load():
+        log.error("no monthly scan is set: set one in the console (Settings, Monthly scan)")
+        return 2
+    s = schedule.claim(force=args.now)
+    if not s:
+        st = schedule.status(schedule.load())
+        if st["running"]:
+            log.info("the monthly scan is already running (started %s)", st["running"]["started_at"])
+        elif st["retry_at"]:
+            log.info(
+                "the last attempt failed (%s); it retries after %s, or use --now",
+                st["schedule"]["last_error"],
+                st["retry_at"],
+            )
+        else:
+            log.info("the monthly scan is not due: next run %s", st["next_run"])
+        return 0
+    job = ScanJob(id=store.new_scan_id(), params=ScanParams(**schedule.scan_params(s)))
+    schedule.started(job.id)
+    token = run_id_var.set(job.id)
+    try:
+        doc = run_scan(job)
+    except Exception as exc:
+        from .issues import describe_exception
+
+        msg = describe_exception(exc)[1]
+        schedule.finished(job.id, "failed", msg)
+        log.error("monthly scan failed: %s", msg)
+        return 2
+    finally:
+        run_id_var.reset(token)
+    schedule.finished(doc["id"], doc["status"])
+    print(json.dumps({"scan_id": doc["id"], "status": doc["status"], "accounts": len(doc["accounts"])}, indent=2))
     return 0 if doc["status"] == "complete" else 1
 
 
@@ -334,6 +378,11 @@ def main(argv: list[str] | None = None) -> int:
         help="where you would exit to; seeds the cost and time estimate (default: azure)",
     )
     p.set_defaults(fn=_scan)
+
+    p = sub.add_parser("schedule", help="the monthly scan: show it, or run it when due (for launchd or cron)")
+    p.add_argument("action", choices=["show", "run"])
+    p.add_argument("--now", action="store_true", help="run even if it is not due yet")
+    p.set_defaults(fn=_schedule)
 
     p = sub.add_parser("demo", help="create a synthetic demo scan")
     p.add_argument("--months", type=int, default=6)

@@ -241,6 +241,91 @@
     $("#cmpOut").innerHTML = html;
   }
 
+  // ------------------------------------------------------------------ monthly scan
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  const fmtWhen = (iso) => iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+
+  async function refreshSchedule() {
+    try { state.sched = await api("/api/schedule"); } catch { return; }
+    const st = state.sched, s = st.schedule, banner = $("#schedBanner");
+    clearTimeout(state.schedTimer);
+    if (s?.running) state.schedTimer = setTimeout(refreshSchedule, 15000);
+    if (state.schedWasRunning && !s?.running) refreshScans(state.scanId);
+    state.schedWasRunning = !!s?.running;
+    banner.hidden = !(s?.running || st.failing);
+    banner.classList.toggle("bad", !!st.failing && !s?.running);
+    $("#schedBannerText").textContent = s?.running
+      ? `Monthly scan running since ${fmtWhen(s.running.started_at)}. It appears in the scan list when it finishes.`
+      : st.failing ? `Monthly scan failed ${fmtWhen(s.last_attempt_at)}: ${s.last_error || "see the log"}. Sign in to AWS, then Run now${st.retry_at ? `, or it retries ${fmtWhen(st.retry_at)}` : ""}.` : "";
+    if ($("#schedDialog").open) renderScheduleState();
+  }
+
+  function renderScheduleState() {
+    const st = state.sched || {}, s = st.schedule, box = $("#schedState");
+    box.hidden = !s;
+    $("#btnSchedOff").hidden = $("#btnSchedRun").hidden = !s;
+    $("#btnSchedRun").disabled = !!s?.running;
+    if (!s) return;
+    const last = s.last_status === "failed" ? `<span class="error-text">failed ${esc(fmtWhen(s.last_attempt_at))}: ${esc(s.last_error || "see the log")}</span>`
+      : `${esc(s.last_status)}, scan ${esc((s.last_scan_id || "").slice(0, 13))} (${esc(fmtDate(s.last_success_at))})`;
+    box.innerHTML = `<div><strong>${s.enabled ? "On" : "Off"}</strong> · repeats ${esc(s.label || s.ou || s.from_scan)}${s.ou ? ` <span class="muted">(${esc(s.ou)})</span>` : ""}</div>
+      <div>${s.running ? `<strong>Running</strong> since ${esc(fmtWhen(s.running.started_at))}` : `Next run: <strong>${esc(fmtDate(st.next_run))}</strong>${st.due ? (st.failing ? " (overdue)" : " (due now)") : ""}`}</div>
+      <div class="muted">Last run: ${last}</div>`;
+  }
+
+  function openSchedule() {
+    const s = state.sched?.schedule;
+    const live = (state.scans || []).filter((x) => x.mode === "live" && x.status !== "failed");
+    $("#schedFrom").innerHTML = live.length ? live.map((x) => `<option value="${esc(x.id)}">${esc(`${x.label || x.ou || "Scan"} · ${x.id.slice(0, 13)}`)}</option>`).join("")
+      : `<option value="">No live scans yet</option>`;
+    const open = live.find((x) => x.id === state.scanId);
+    $("#schedFrom").value = s && live.some((x) => x.id === s.from_scan) ? s.from_scan : (open || live[0])?.id || "";
+    $("#schedDay").innerHTML = Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
+    $("#schedDay").value = String(s?.day || 3);
+    $("#btnSchedSave").disabled = !live.length;
+    $("#schedError").textContent = live.length ? "" : "Run a scan against AWS first: the monthly scan repeats its settings (the demo has none).";
+    renderScheduleState();
+    $("#schedDialog").showModal();
+    refreshSchedule();
+  }
+
+  async function saveSchedule() {
+    $("#schedError").textContent = "";
+    try {
+      state.sched = await api("/api/schedule", { method: "PUT", body: { from_scan: $("#schedFrom").value, day: Number($("#schedDay").value) } });
+      renderScheduleState();
+      toast(`Monthly scan set: next run ${fmtDate(state.sched.next_run)}`);
+    } catch (e) { $("#schedError").textContent = e.message; }
+  }
+
+  async function scheduleOff() {
+    try { state.sched = await api("/api/schedule", { method: "DELETE" }); } catch (e) { $("#schedError").textContent = e.message; return; }
+    renderScheduleState();
+    refreshSchedule();
+    toast("Monthly scan turned off");
+  }
+
+  async function scheduleRunNow() {
+    $("#schedError").textContent = "";
+    busy("#schedBusy", "Starting the monthly scan…");
+    try {
+      const r = await api("/api/schedule/run", { method: "POST" });
+      const tick = async () => {
+        const j = await api(`/api/scans/${encodeURIComponent(r.scan_id)}/status`).catch(() => null);
+        if (!j) { busy("#schedBusy", ""); return; }
+        busyProgress("#schedBusy", j.pct / 100);
+        $("#schedBusy .busy-text").textContent = j.message || j.phase;
+        if (j.status === "running") { setTimeout(tick, 1000); return; }
+        busy("#schedBusy", "");
+        await refreshSchedule();
+        if (j.status === "failed") $("#schedError").textContent = `Scan failed: ${j.message}.`;
+        else { await refreshScans(state.scanId); toast(`Monthly scan ${j.status}: open it from the scan list, or Compare scans`); }
+      };
+      refreshSchedule();
+      tick();
+    } catch (e) { busy("#schedBusy", ""); $("#schedError").textContent = e.message; }
+  }
+
   // ------------------------------------------------------------------ scans
   async function refreshScans(selectId) {
     const { scans } = await api("/api/scans");
@@ -2038,6 +2123,13 @@
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));
     $("#btnLogs").addEventListener("click", openLog);
     $("#btnCompare").addEventListener("click", openCompare);
+    $("#btnSchedule").addEventListener("click", openSchedule);
+    $("#btnSchedBannerOpen").addEventListener("click", openSchedule);
+    $("#btnSchedClose").addEventListener("click", () => $("#schedDialog").close());
+    $("#btnSchedSave").addEventListener("click", saveSchedule);
+    $("#btnSchedOff").addEventListener("click", scheduleOff);
+    $("#btnSchedRun").addEventListener("click", scheduleRunNow);
+    if (!PRINT) refreshSchedule();
     $("#cmpBefore").addEventListener("change", runCompare);
     $("#cmpAfter").addEventListener("change", runCompare);
     $("#btnCmpClose").addEventListener("click", () => $("#compareDialog").close());

@@ -76,7 +76,8 @@ exit" (a fact a board can govern).
 - **Names who owns the risk**: owner and executive from account tags, with spend at risk by
   executive.
 - **Compares scans** (Settings → Compare scans): score, spend, tiers, accounts added, removed or
-  re-rated, and services that grew or appeared between two scans.
+  re-rated, and services that grew or appeared between two scans. A **monthly scan** (Settings) repeats a scan each
+  month so the comparison shows a trend.
 - **Times the exit** (section 5): whether it fits a regulator or board notice period you enter under **Exit model**, which
   Savings Plans and reservations run off before it finishes and what would still be owed, the last
   date a 3-year term stays inside the window, and any EDP shortfall.

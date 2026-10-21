@@ -22,6 +22,36 @@ scans** shows what changed between two scans (score, spend, tiers, accounts and 
 scored on the current filter and Exit model answers; `POST /api/compare` with `before_id` and
 `after_id` returns the same as JSON.
 
+## Monthly scan
+
+**Settings → Monthly scan** repeats a live scan's settings (profile, OUs, months, deep scan,
+exit target) on a day of the month you pick, so **Compare scans** shows the trend. Day 3 or later
+lets Cost Explorer close the previous month.
+
+- It runs while the console is open (checked at start and every 10 minutes).
+- It uses your own AWS sign-in. An SSO session lasts hours, so the attempt usually fails when you
+  have not signed in that day: the failure is recorded, a red banner says so, and it retries a day
+  later. Sign in, then **Run now**. A failed attempt that read nothing is not kept in the scan list.
+- `exitrisk schedule show` prints the schedule; `exitrisk schedule run` runs it only when due
+  (`--now` to force), for launchd or cron when the console is not always open. With aws-cli-zsp it
+  still needs Touch ID, so it suits a time you are at the machine. Example
+  `~/Library/LaunchAgents/com.exitrisk.monthly.plist`, daily at 09:00:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.exitrisk.monthly</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/YOU/.local/bin/exitrisk</string><string>schedule</string><string>run</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+</dict></plist>
+```
+
+Load it with `launchctl load ~/Library/LaunchAgents/com.exitrisk.monthly.plist`. The console and
+the command never both run the same month's scan: the first to start it claims it.
+
 ## Configuration
 
 | Variable | Default | Meaning |
