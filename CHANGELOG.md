@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-10-21
+
 ### Changed
 - New scan dialog redesigned: three numbered steps (Sign-in, Scope, Options), Check access beside the
   profile, an OU list with account counts aligned right and the chosen OUs shown as chips, and a fixed

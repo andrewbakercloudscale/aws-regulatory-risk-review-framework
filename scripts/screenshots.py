@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import quote
 
@@ -42,7 +43,7 @@ def main() -> int:
     from exitrisk.demo import create_demo_scan
     from exitrisk.server import create_app
 
-    def example_access_check(profile, role_name=None):
+    def example_access_check(profile, role_name=None, on_check=None):
         # A canned result (a member account, refused OU access) so the screenshot needs no AWS.
         arn = "arn:aws:sts::222222222222:assumed-role/AWSReservedSSO_ReadOnly_0123456789abcdef/analyst@example.com"
         C = preflight.Check
@@ -69,11 +70,13 @@ def main() -> int:
                 "cost",
                 "Read Cost Explorer",
                 "warn",
-                "Spend visible for 1 account(s) (this check cost US$0.01).",
+                "Spend visible for 1 account (this check cost US$0.01).",
                 "A member account sees only its own spend; use the management account.",
             ),
             C("deep_scan", "Deep scan role (optional)", "skip", "No member role given."),
         ]
+        for check in checks if on_check else ():
+            on_check(asdict(check))
         ctx = {"profile": profile, "role_name": None, "account_id": "222222222222", "arn": arn}
         ctx.update(permission_set="ReadOnly", org_id="o-example", management_account_id="111111111111")
         return preflight._result(checks, ctx)
@@ -181,8 +184,12 @@ def main() -> int:
         page.check("#sOu input[value='ou-demo-prod']")
         page.check("#sInventory")
         page.fill("input[name=role_name]", "ExitRiskReadOnly")
+        # Tall enough to show the whole dialog, from the top.
+        page.set_viewport_size({"width": 1360, "height": 1900})
+        page.eval_on_selector("#scanDialog .fd-body", "el => el.scrollTo(0, 0)")
         page.wait_for_timeout(200)
         shoot(page, "#scanDialog", "new-scan-dialog.png")
+        page.set_viewport_size({"width": 1360, "height": 900})
         page.keyboard.press("Escape")
 
         page.click("#btnSso")
