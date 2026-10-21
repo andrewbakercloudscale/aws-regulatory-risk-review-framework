@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- AWS sign-in and Check access show a moving progress bar and say what they are waiting for while
+  accounts, roles and the access checks load.
+
 ## [0.6.0] - 2026-10-21
 
 ### Added

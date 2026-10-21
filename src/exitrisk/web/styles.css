@@ -347,7 +347,12 @@ table.data.accounts td { vertical-align: middle; }
 .switch-hint .btn { margin-top: 8px; display: block; }
 .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 4px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+.busy { margin: 10px 0; }
+.busy p { margin: 0 0 6px; color: var(--muted); }
+.busy-bar { position: relative; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.busy-bar i { position: absolute; top: 0; bottom: 0; width: 35%; border-radius: 2px; background: var(--accent); animation: busy 1.2s ease-in-out infinite; }
+@keyframes busy { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } .busy-bar i { animation: none; left: 0; width: 100%; opacity: .5; } }
 .tile-value .prov-tag { font-size: 10px; vertical-align: 5px; margin-left: 4px; letter-spacing: .03em; }
 .questionnaire label.check input { width: auto; flex: none; }
 .tier-split table.data td, .tier-split table.data th { padding: 6px 6px; }

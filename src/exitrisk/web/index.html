@@ -611,6 +611,7 @@
     <p class="muted small">Signs in through your organisation's AWS access portal (IAM Identity Center), the same as <code>aws sso login</code>. You approve it on AWS's own page; the token stays in the AWS CLI cache on this machine and is never sent to this page.</p>
     <label>Access portal<select id="ssoSession"></select></label>
     <p id="ssoStatus" class="small"></p>
+    <div id="ssoBusy" class="busy" role="status" aria-live="polite" hidden><p class="small"><span class="spin" aria-hidden="true"></span><span class="busy-text"></span></p><div class="busy-bar" aria-hidden="true"><i></i></div></div>
     <div class="row">
       <button type="button" class="btn primary" id="btnSsoLogin">Sign in</button>
       <button type="button" class="btn ghost" id="btnSsoAddToggle">Add a portal…</button>
@@ -647,7 +648,8 @@
     <details class="small"><summary>Deep scan role (optional)</summary>
       <label>Role to assume in member accounts<input id="aRole" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
     </details>
-    <div class="row"><button type="button" class="btn primary" id="btnAccessRun">Check access</button><span id="aBusy" class="muted small"></span></div>
+    <div class="row"><button type="button" class="btn primary" id="btnAccessRun">Check access</button></div>
+    <div id="aBusy" class="busy" role="status" aria-live="polite" hidden><p class="small"><span class="spin" aria-hidden="true"></span><span class="busy-text"></span></p><div class="busy-bar" aria-hidden="true"><i></i></div></div>
     <p id="aVerdict" class="verdict" hidden></p>
     <div id="aSwitch" class="switch-hint" role="status" hidden></div>
     <ul id="aChecks" class="checks"></ul>

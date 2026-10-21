@@ -1252,6 +1252,13 @@
     $("#btnSso").title = on.length ? `Signed in until ${new Date(on[0].expires_at).toLocaleString()}` : "Sign in through your AWS access portal (IAM Identity Center)";
   }
 
+  // An animated bar and a line saying what is being waited for; null text hides it.
+  function busy(sel, text) {
+    const el = $(sel);
+    el.hidden = !text;
+    if (text) el.querySelector(".busy-text").textContent = text;
+  }
+
   function currentSso() { return sso.sessions.find((s) => s.name === $("#ssoSession").value); }
 
   async function openSsoDialog(ev) {
@@ -1259,6 +1266,7 @@
     if ($("#scanDialog").open) $("#scanDialog").close();
     $("#ssoError").textContent = "";
     $("#ssoPending").hidden = true;
+    busy("#ssoBusy", null);
     await refreshSsoBadge();
     let want = null;
     try { want = localStorage.getItem(LS_SSO); } catch { /* ignore */ }
@@ -1289,6 +1297,8 @@
     $("#ssoUse").hidden = false;
     $("#ssoAccount").innerHTML = `<option>Loading accounts…</option>`;
     $("#ssoRole").innerHTML = "";
+    $("#ssoAccount").disabled = $("#ssoRole").disabled = true;
+    busy("#ssoBusy", "Loading the accounts and roles you can use (a few seconds)…");
     try {
       const { accounts, management_account_id: mgmt } = await api(`/api/sso/${encodeURIComponent(s.name)}/accounts`);
       sso.mgmt = mgmt;
@@ -1297,14 +1307,17 @@
       const linked = s.profiles.find((p) => p.account_id === mgmt) || s.profiles[0];
       if (linked && accounts.some((a) => a.id === linked.account_id)) $("#ssoAccount").value = linked.account_id;
       $("#ssoStatus").textContent += ` · ${accounts.length} accounts${mgmt ? "" : " · management account not visible"}`;
+      $("#ssoAccount").disabled = false;
       await loadSsoRoles(linked?.role);
-    } catch (e) { $("#ssoError").textContent = `${e.message}${e.hint ? ". " + e.hint : ""}`; }
+    } catch (e) { $("#ssoError").textContent = `${e.message}${e.hint ? ". " + e.hint : ""}`; busy("#ssoBusy", null); }
   }
 
   async function loadSsoRoles(prefer) {
     const s = currentSso(), acct = $("#ssoAccount").value;
     $("#btnSsoUse").hidden = true;
     $("#ssoRole").innerHTML = `<option>Loading roles…</option>`;
+    $("#ssoRole").disabled = true;
+    busy("#ssoBusy", "Loading the roles for this account…");
     try {
       const { roles } = await api(`/api/sso/${encodeURIComponent(s.name)}/accounts/${encodeURIComponent(acct)}/roles`);
       $("#ssoRole").innerHTML = roles.map((r) => `<option>${esc(r)}</option>`).join("") || `<option value="">(no roles)</option>`;
@@ -1312,6 +1325,7 @@
       if (ro) $("#ssoRole").value = ro;
       $("#btnSsoUse").hidden = !roles.length;
     } catch (e) { $("#ssoRole").innerHTML = ""; $("#ssoError").textContent = e.message; }
+    finally { $("#ssoRole").disabled = false; busy("#ssoBusy", null); }
   }
 
   async function ssoLogin() {
@@ -1407,7 +1421,9 @@
 
   async function runAccessCheck() {
     $("#btnAccessRun").disabled = true;
-    $("#aBusy").textContent = "Checking… approve Touch ID if prompted.";
+    $("#aChecks").innerHTML = "";
+    $("#aVerdict").hidden = true;
+    busy("#aBusy", "Checking sign-in, Organizations, accounts and Cost Explorer (a few seconds)… approve Touch ID if prompted.");
     $("#aError").textContent = "";
     try {
       const r = await api("/api/access-check", { method: "POST", body: { profile: $("#aProfile").value || null, role_name: $("#aRole").value || null } });
@@ -1435,7 +1451,7 @@
         $("#btnASwitch").addEventListener("click", () => { $("#aProfile").value = mgmtProfile; runAccessCheck(); });
       }
     } catch (e) { $("#aError").textContent = e.message; }
-    finally { $("#btnAccessRun").disabled = false; $("#aBusy").textContent = ""; }
+    finally { $("#btnAccessRun").disabled = false; busy("#aBusy", null); }
   }
 
   async function copyAdmin() {
