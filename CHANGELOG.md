@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-21
+
 ### Changed
 
 - Timing and the executive summary say that Savings Plans and reservations cover the whole
