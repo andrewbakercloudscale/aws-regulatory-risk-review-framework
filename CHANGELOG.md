@@ -6,6 +6,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- Timing and the executive summary say that Savings Plans and reservations cover the whole
+  organisation, even when the report is filtered (for example to production accounts).
+
 ### Fixed
 
 - Clearer wording: "Up to $100k of commitments would be written off" (was "About up to"), and the

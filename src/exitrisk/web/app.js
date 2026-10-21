@@ -484,7 +484,7 @@
   // Savings Plans, reservations and EDP still running when the exit finishes: paid for, no longer used.
   function writtenOffTile(x, provisional) {
     const f = (x.exit_facts || []).find((v) => v.label === "Commitments written off");
-    return f ? [tile(f.label, f.value, f.value === "None" ? "all end before the fastest exit finishes" : "still owed after the exit; more if it finishes sooner", provisional)] : [];
+    return f ? [tile(f.label, f.value, f.value === "None" ? "all end before the fastest exit finishes" : "still owed after the exit; whole organisation, even when filtered", provisional)] : [];
   }
 
   // Chart.js defaults - recessive chrome, thin marks, tooltips on.
@@ -1040,6 +1040,14 @@
     $(sel).innerHTML = pairs.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
   }
 
+  // Commitments are bought in one account and shared, so no account filter applies to them.
+  function orgWide(r) {
+    const f = r.meta.filter;
+    return f.include?.length || f.exclude?.length
+      ? ` Savings Plans and reservations cover the whole organisation, even though the report is filtered (${f.description}).`
+      : " Savings Plans and reservations cover the whole organisation.";
+  }
+
   function renderTiming(r) {
     const t = r.timing, d = t.deadline, c = t.commitments, e = t.edp;
     const tf = $("#timeForm");
@@ -1078,7 +1086,7 @@
         : `The EDP ends ${monthYear(`${e.end_month}-15`)}${e.ends_before_exit ? ", before the exit finishes: renew on a shorter term or without a commit" : ""}.`);
     }
     $("#timePoints").innerHTML = pts.length ? pts.map((x) => `<li>${esc(x)}</li>`).join("") : '<li class="hint">Enter a notice period and your EDP to test the timing.</li>';
-    renderWriteOff(t);
+    renderWriteOff(t, r);
 
     const undated = c.undated ? ` ${plural(c.undated, "commitment")} (${money(c.undated_monthly)}/mo) came without an end date, so ${c.undated === 1 ? "it is" : "they are"} not in the figures below; check ${c.undated === 1 ? "it" : "them"} in the AWS Billing console.` : "";
     if (!c.available || c.empty) {
@@ -1086,13 +1094,13 @@
       $("#timeTable").innerHTML = "";
       return;
     }
-    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Written off is what would still be owed between the exit finishing and the commitment ending: paid for, no longer used.${undated}`;
+    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Written off is what would still be owed between the exit finishing and the commitment ending: paid for, no longer used.${orgWide(r)}${undated}`;
     $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Written off</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
   }
 
   // Commitments by month, and what is written off if the exit finishes in that month. Months after the
   // fastest finish are drawn solid (written off); before it, faded (still in use during the exit).
-  function renderWriteOff(t) {
+  function renderWriteOff(t, r) {
     const c = t.commitments, rows = c.by_month || [];
     $("#writeOffCard").hidden = !c.available || c.empty || !rows.length;
     if ($("#writeOffCard").hidden) return;
@@ -1105,7 +1113,7 @@
     const owed = c.stranded;
     $("#writeOffCap").textContent = (t.exit_end
       ? `The exit finishes between ${monthYear(t.exit_end[0])} and ${monthYear(t.exit_end[1])} (shaded). Bars after the fastest finish are commitments paid for but no longer used: ${owed && owed[1] >= 1000 ? c.stranded_range : "none"} written off. `
-      : "") + "The red line is what would be written off if the exit finished at the end of that month.";
+      : "") + "The red line is what would be written off if the exit finished at the end of that month." + orgWide(r);
     // The exit window, shaded behind the bars.
     const windowBand = {
       id: "exitWindow",

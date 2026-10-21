@@ -820,7 +820,8 @@ def _written_off(tm: dict) -> dict | None:
     return {
         "label": "Commitments written off",
         "value": owed_range(lo, hi),
-        "note": f"still owed once the exit finishes: {_join([x for x in parts if x])}; more if it finishes sooner",
+        "note": f"still owed once the exit finishes: {_join([x for x in parts if x])}; more if it finishes sooner. "
+        "They cover the whole organisation, even when the report is filtered to some accounts",
     }
 
 
