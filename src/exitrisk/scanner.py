@@ -137,14 +137,14 @@ def _run_safely(job: ScanJob) -> None:
         run_id_var.reset(token)
 
 
-def _document(job: ScanJob, data: dict, failed: bool = False) -> dict:
+def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None = None) -> dict:
     return {
         "id": job.id,
         "label": job.params.label,
         "mode": "live",
         "created_at": data.get("created_at", datetime.now(timezone.utc).isoformat(timespec="seconds")),
         "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "status": "failed" if failed else job.status,
+        "status": "failed" if failed else status or job.status,
         "params": job.params.__dict__,
         "identity": data.get("identity"),
         "org": data.get("org"),
@@ -250,10 +250,10 @@ def run_scan(job: ScanJob) -> dict:
     data["accounts"] = [a.to_dict() for a in accounts]
     if not accounts:
         job.add_issue(Issue("error", "organizations", "the selected OU contains no accounts"))
+        doc = _document(job, data, status="complete")
+        store.save_scan(doc)  # saved before the status says complete, so the report is there to load
         job.status = "complete"
         job.update("complete", 100, "No accounts to scan")
-        doc = _document(job, data)
-        store.save_scan(doc)
         return doc
     job.update(
         "organizations", 22, f"{len(accounts)} account{'' if len(accounts) == 1 else 's'} in {data['ou']['path']}"
@@ -332,26 +332,24 @@ def run_scan(job: ScanJob) -> dict:
         )
     job.update("cost", 58, f"{len(data.get('storage') or [])} storage line(s) collected")
 
-    # 3c2. Direct Connect ports and data out, to size the links an exit would need. Optional.
-    if any(r["service"] == cost.DIRECT_CONNECT_SERVICE for r in data["costs"]):
-        job.update("cost", 58, "Querying Cost Explorer for Direct Connect links")
-        try:
-            data["direct_connect"] = cost.fetch_direct_connect(session, [a.id for a in accounts])
-        except Exception as exc:  # optional data: never fail a scan for it
-            if not isinstance(exc, (ClientError, BotoCoreError)):
-                log.exception("direct connect failed with an unexpected error")
-            code, msg, hint = describe_exception(exc)
-            job.add_issue(
-                Issue(
-                    "warning",
-                    "cost",
-                    f"Direct Connect links unavailable: {msg}",
-                    " ".join(x for x in (hint, "The resilience view will not show the links you have today.") if x),
-                    error_code=code,
-                )
+    # 3c2. Direct Connect ports and data out, to size the links an exit would need. Optional. Asked for
+    # the whole organisation: the links usually sit in a network account outside the scanned OU.
+    job.update("cost", 58, "Querying Cost Explorer for Direct Connect links")
+    try:
+        data["direct_connect"] = cost.fetch_direct_connect(session, None)
+    except Exception as exc:  # optional data: never fail a scan for it
+        if not isinstance(exc, (ClientError, BotoCoreError)):
+            log.exception("direct connect failed with an unexpected error")
+        code, msg, hint = describe_exception(exc)
+        job.add_issue(
+            Issue(
+                "warning",
+                "cost",
+                f"Direct Connect links unavailable: {msg}",
+                " ".join(x for x in (hint, "The resilience view will not show the links you have today.") if x),
+                error_code=code,
             )
-    else:
-        data["direct_connect"] = {"month": "", "hours": 0, "rows": []}
+        )
 
     # 3d. Savings Plans and reservations with their end dates, to time an exit. Optional.
     job.update("cost", 59, "Querying Cost Explorer for Savings Plans and reservations")
@@ -411,10 +409,13 @@ def run_scan(job: ScanJob) -> dict:
     if p.inventory:
         data["inventory"] = _run_inventory(job, session, accounts)
 
-    job.status = "complete" if not any(i.severity in ("error", "critical") for i in job.issues) else "partial"
-    job.update("complete", 100, f"Scan {job.status}: {len(accounts)} account(s), {len(job.issues)} issue(s)")
-    doc = _document(job, data)
+    status = "complete" if not any(i.severity in ("error", "critical") for i in job.issues) else "partial"
+    job.update("saving", 99, "Saving the scan")
+    doc = _document(job, data, status=status)
+    # Saved before the status says complete: the console loads the report the moment it sees that.
     store.save_scan(doc)
+    job.status = status
+    job.update("complete", 100, f"Scan {status}: {len(accounts)} account(s), {len(job.issues)} issue(s)")
     return doc
 
 

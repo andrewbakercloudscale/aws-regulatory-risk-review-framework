@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Fixed
+
+- "scan not found" straight after a scan finished: the scan is now saved before its status says
+  complete, so the report is there when the console asks for it. The message for a scan that really
+  is missing now says what happened.
+- Direct Connect links today are found across the whole organisation, not only the scanned OU: the
+  ports usually sit in a network account outside it. Data out still counts only the accounts in the
+  report.
+
 ### Added
 
 - **Sign out** in the AWS sign-in dialog, like `aws sso logout`: ends the token at AWS and removes

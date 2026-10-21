@@ -229,7 +229,8 @@ def _links_today(dx: dict | None, rows: dict[str, dict]) -> dict:
     ports: dict[tuple, dict] = {}
     out_gb = out_cost = 0.0
     for r in dx.get("rows", []):
-        if "DataXfer-Out" in r["usage_type"] and r["unit"] in ("GB", "GigaBytes"):
+        # Ports are counted wherever they are billed; data out only for the accounts in this report.
+        if "DataXfer-Out" in r["usage_type"] and r["unit"] in ("GB", "GigaBytes") and r["account_id"] in rows:
             out_gb += r["quantity"]
             out_cost += r["cost"]
         port = parse_port(r["usage_type"])

@@ -121,6 +121,9 @@ def test_direct_connect_ports_are_counted_from_port_hours():
     assert t["ports"][0]["location"].startswith("Teraco CT1") and t["ports"][0]["accounts"] == ["network"]
     assert t["out_tb_month"] == 2.0
     assert _links_today(None, {})["available"] is False
+    # Links billed to a network account outside the report still count; its data out does not.
+    t = _links_today(dx, {"2": {"name": "app-prod"}})
+    assert t["count"] == 4 and t["ports"][0]["accounts"] == ["1"] and t["out_tb_month"] == 0
 
 
 def test_without_tags_or_storage_it_degrades(demo):

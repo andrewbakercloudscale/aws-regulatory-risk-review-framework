@@ -346,8 +346,11 @@
     try {
       state.report = await api("/api/report", { method: "POST", body: { scan_id: state.scanId, filter, questionnaire: readQuestionnaire(), weighting } });
     } catch (e) {
-      $("#filterError").textContent = e.message;
-      toast(e.message);
+      const msg = /scan not found/i.test(e.message)
+        ? "This scan is not on this machine any more (deleted, or the console uses another data folder). Pick another scan."
+        : e.message;
+      $("#filterError").textContent = msg;
+      toast(msg);
       if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
       return;
     }

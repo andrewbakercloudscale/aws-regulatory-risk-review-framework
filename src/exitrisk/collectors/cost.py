@@ -268,27 +268,30 @@ def parse_port(usage_type: str) -> dict | None:
     return {"location": m["loc"], "kind": kind, "gbps": speed, "ports": 2 if m["pair"] else 1}
 
 
-def fetch_direct_connect(session: boto3.Session, account_ids: list[str]) -> dict:
+def fetch_direct_connect(session: boto3.Session, account_ids: list[str] | None = None) -> dict:
     """Direct Connect ports and data out per account, for the last complete month.
 
     Ports are counted from port-hours (a port connected all month bills every hour). Data out is the
-    GB sent over Direct Connect, with what it cost. One query per 100 accounts.
+    GB sent over Direct Connect, with what it cost. One query per 100 accounts; None asks for every
+    account in the organisation (the links usually sit in a network account outside the scanned OU).
     """
     client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
     start, end = month_window(1)
     hours = (date.fromisoformat(end) - date.fromisoformat(start)).days * 24
-    chunks = [
-        account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER] for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER)
-    ]
+    chunks: list[list[str] | None] = (
+        [None]
+        if account_ids is None
+        else [
+            account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER] for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER)
+        ]
+    )
 
-    def one(chunk: list[str]) -> list[dict]:
+    def one(chunk: list[str] | None) -> list[dict]:
         rows: list[dict] = []
-        filt = {
-            "And": [
-                {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": chunk}},
-                {"Dimensions": {"Key": "SERVICE", "Values": [DIRECT_CONNECT_SERVICE]}},
-            ]
-        }
+        service = {"Dimensions": {"Key": "SERVICE", "Values": [DIRECT_CONNECT_SERVICE]}}
+        filt = (
+            service if chunk is None else {"And": [{"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": chunk}}, service]}
+        )
         token = None
         while True:
             kwargs = {
