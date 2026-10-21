@@ -1623,7 +1623,6 @@
     $("#scanError").textContent = "";
     $("#scanProgress").hidden = true;
     $("#btnStartScan").disabled = false;
-    $("#sNameFilter").value = $("#fInclude").value;
     $("#sTarget").innerHTML = Object.entries(state.options.target).map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
     $("#sTarget").value = $("#qForm").target.value || "azure";
     try {
@@ -1742,8 +1741,6 @@
         }
         await refreshScans(id);
         state.scanId = id;
-        const nameFilter = $("#sNameFilter").value.trim();
-        if (nameFilter && s.status !== "failed") { $("#fInclude").value = nameFilter; $("#fMode").value = "contains"; }
         await loadReport();
       } catch (e) {
         // A 404 mid-scan means the console restarted and the in-memory scan was lost.

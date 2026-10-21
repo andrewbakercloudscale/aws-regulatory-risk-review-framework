@@ -22,6 +22,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ### Changed
 
+- New scan no longer has its own account-name field: the top-bar filter is the one place to narrow
+  the report by name, and changes it without a new scan.
 - New scan: the progress bar and any error sit in the dialog's footer, so they stay in view however
   far the form is scrolled, and the bar shows the moment you click Start scan.
 - Close, Add a portal, Download and Open the log are bordered buttons, not plain text.
