@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-21
+
 ### Changed
 - Controls redesigned: custom select boxes with their own chevron, one height for every input and
   button, soft focus ring, calmer hover. The Exit risk / Multi-region switch is now two large tabs
