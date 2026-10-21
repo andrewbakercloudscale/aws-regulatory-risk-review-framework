@@ -1764,9 +1764,13 @@
       ({ sessions: sso.sessions } = await api("/api/sso/sessions"));
     } catch (e) { console.error("sso sessions", e); sso.sessions = []; }
     const on = sso.sessions.filter((s) => s.signed_in);
+    // A portal is set up but no sign-in is live (never signed in, or it expired): flash the button.
+    const needed = sso.sessions.length > 0 && !on.length;
     $("#btnSso").classList.toggle("signed-in", on.length > 0);
+    $("#btnSso").classList.toggle("needs-sign-in", needed);
     $("#ssoLabel").textContent = on.length ? `SSO: ${on.map((s) => s.name).join(", ")}` : "AWS sign-in";
-    $("#btnSso").title = on.length ? `Signed in until ${new Date(on[0].expires_at).toLocaleString()}` : "Sign in through your AWS access portal (IAM Identity Center)";
+    $("#btnSso").title = on.length ? `Signed in until ${new Date(on[0].expires_at).toLocaleString()}`
+      : needed ? "Your AWS sign-in has expired: sign in again before you scan" : "Sign in through your AWS access portal (IAM Identity Center)";
   }
 
   // An animated bar and a line saying what is being waited for; null text hides it.
@@ -2231,6 +2235,8 @@
     $("#btnSsoUse").addEventListener("click", ssoUse);
     $("#ssoDialog").addEventListener("close", () => clearInterval(sso.loginTimer));
     refreshSsoBadge();
+    // An SSO sign-in lasts hours: check again every few minutes so the button flashes once it expires.
+    setInterval(refreshSsoBadge, 5 * 60 * 1000);
     $("#btnLoadOus").addEventListener("click", loadOus);
     $("#sOu").addEventListener("change", syncOus);
     $("#sProfile").addEventListener("change", loadOus);
