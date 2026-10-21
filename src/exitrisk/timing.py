@@ -14,14 +14,23 @@ the exit estimate, which excludes commitments; see docs/METHODOLOGY.md, "Timing"
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from datetime import date
 
-from .estimate import Questionnaire, money_range
+from .estimate import Questionnaire, _round_step, _short, money_range
 
 DAYS_PER_MONTH = 30.44
 # A commitment counts as "running past the exit" when it ends after the fastest exit would finish.
 MATERIAL_STRANDED = 1000.0  # USD: below this the finding is noise
+
+
+def owed_range(lo: float, hi: float) -> str:
+    """ "$1m to $2m"; "up to $2m" when the slow end owes next to nothing."""
+    if lo >= MATERIAL_STRANDED:
+        return money_range(lo, hi)
+    step = _round_step(hi)
+    return f"up to ${_short(math.ceil(hi / step) * step)}"
 
 
 def _date(text: str) -> date | None:
@@ -59,6 +68,43 @@ def _service(c: dict) -> str:
         .replace("Amazon ", "")
     )
     return f"{short} reservation"
+
+
+def _month_starts(first: date, last: date) -> list[date]:
+    out, d = [], first.replace(day=1)
+    while d <= last:
+        out.append(d)
+        d = date(d.year + (d.month == 12), d.month % 12 + 1, 1)
+    return out
+
+
+def _by_month(active: list[dict], today: date) -> list[dict]:
+    """What each month bills in commitments, and what would be written off if the exit finished then.
+
+    Each commitment counts its amortised monthly fee for the days of the month it still runs.
+    ``written_off`` for a month is everything billed after that month ends: finish the exit at the end
+    of it, and that is what is paid for capacity no longer used.
+    """
+    ends = [date.fromisoformat(c["end"]) for c in active]
+    months = _month_starts(today, max(ends))
+    rows = []
+    for m in months:
+        nxt = date(m.year + (m.month == 12), m.month % 12 + 1, 1)
+        sp = ri = 0.0
+        for c, end in zip(active, ends, strict=True):
+            days = (min(nxt, end) - max(m, today)).days
+            if days > 0:
+                amount = c["monthly"] * days / DAYS_PER_MONTH
+                if c["kind"] == "savings_plan":
+                    sp += amount
+                else:
+                    ri += amount
+        rows.append({"month": m.isoformat()[:7], "savings_plans": round(sp, 2), "reservations": round(ri, 2)})
+    left = 0.0
+    for r in reversed(rows):
+        r["written_off"] = round(left)
+        left += r["savings_plans"] + r["reservations"]
+    return rows
 
 
 def _commitments(rows: list[dict] | None, today: date, exit_end: tuple[date, date] | None) -> dict:
@@ -112,6 +158,7 @@ def _commitments(rows: list[dict] | None, today: date, exit_end: tuple[date, dat
         "remaining": round(remaining),
         "last_end": max(c["end"] for c in active),
         "runoff": [{"quarter": q, "monthly": round(m, 2)} for q, m in sorted(runoff.items())],
+        "by_month": _by_month(active, today),
         "rows": active[:15],
         **gaps,
     }
@@ -128,7 +175,7 @@ def _commitments(rows: list[dict] | None, today: date, exit_end: tuple[date, dat
                     if _add_months(exit_end[0], -months) > today
                 },
                 "stranded": [round(lo), round(hi)],
-                "stranded_range": money_range(lo, hi) if hi >= MATERIAL_STRANDED else None,
+                "stranded_range": owed_range(lo, hi) if hi >= MATERIAL_STRANDED else None,
                 "monthly_past_exit": round(sum(c["monthly"] for c in past), 2),
                 "pct_runs_off_before_exit": round(100 * (1 - sum(c["monthly"] for c in past) / monthly), 1),
             }
@@ -153,7 +200,7 @@ def _edp(q: Questionnaire, today: date, exit_end: tuple[date, date] | None) -> d
         lo = q.edp_annual_commit / 12 * _months(exit_end[1], end)
         hi = q.edp_annual_commit / 12 * _months(exit_end[0], end)
         out["shortfall"] = [round(lo), round(hi)]
-        out["shortfall_range"] = money_range(lo, hi) if hi >= MATERIAL_STRANDED else None
+        out["shortfall_range"] = owed_range(lo, hi) if hi >= MATERIAL_STRANDED else None
         out["ends_before_exit"] = end <= exit_end[0]
     return out
 

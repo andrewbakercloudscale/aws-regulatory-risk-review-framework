@@ -330,3 +330,17 @@ def test_products_left_out_drop_from_score_and_estimate_and_are_reported():
     }
     # Nothing left out means nothing to report.
     assert not build_report(scan)["summary"]["excluded_services"]
+
+
+def test_commitments_written_off_is_a_key_figure():
+    from datetime import date, timedelta
+
+    scan = build_demo_scan()
+    end = (date.today() + timedelta(days=5 * 365)).isoformat()
+    scan["commitments"] = [
+        {"kind": "reservation", "type": "", "service": "Amazon Redshift", "term": "3yr", "end": end, "monthly": 50_000}
+    ]
+    x = build_report(scan, questionnaire=Questionnaire(confirmed=True))["summary"]["executive"]
+    f = next(f for f in x["exit_facts"] if f["label"] == "Commitments written off")
+    assert "$" in f["value"] and "Savings Plans and reservations" in f["note"]
+    assert any("write-off" in t for t in x["findings"])

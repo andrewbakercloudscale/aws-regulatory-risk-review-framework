@@ -6,6 +6,19 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- Executive summary: "Commitments written off", the Savings Plans, reservations and any enterprise
+  discount shortfall still owed once the exit finishes (paid for, no longer used), as a key figure.
+- Timing: "Commitments written off, over time" chart. Each month's Savings Plans and reservations to
+  the last end date, the exit window shaded, and a line of what would be written off if the exit
+  finished at the end of that month.
+
+### Changed
+
+- "Stranded" commitments are now called "written off"; a range that starts near zero reads "up to $200k".
+- The quarterly run-off bars under Timing are replaced by the chart.
+
 ## [0.10.0] - 2026-10-21
 
 ### Added

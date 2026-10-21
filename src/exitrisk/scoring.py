@@ -27,11 +27,18 @@ from datetime import datetime, timezone
 
 from . import __version__
 from .catalog import AGENTIC_FACTORS, Catalog, load_catalog
-from .estimate import TARGET_LABELS, TARGET_PHRASES, TYPICAL_COUNTS, Questionnaire, build_estimate, service_effort
+from .estimate import (
+    TARGET_LABELS,
+    TARGET_PHRASES,
+    TYPICAL_COUNTS,
+    Questionnaire,
+    build_estimate,
+    service_effort,
+)
 from .filtering import AccountFilter
 from .issues import Issue
 from .resilience import build_resilience
-from .timing import build_timing
+from .timing import MATERIAL_STRANDED, build_timing, owed_range
 
 RATINGS = [(25, "Low"), (40, "Moderate"), (55, "Elevated"), (70, "High"), (101, "Critical")]
 
@@ -629,6 +636,8 @@ def _executive_summary(
     context = _context(summary)
     findings = _findings(summary, accounts) + _timing_findings(timing or {}) + _resilience_findings(resilience or {})
     exit_facts, exit_line = _exit(est, q, defaults)
+    if exit_facts and (written_off := _written_off(timing or {})):
+        exit_facts.insert(2, {**written_off, "provisional": defaults})
     actions = _actions(summary, accounts, defaults, deep_scan, resilience or {}, timing or {})
     confidence, reasons = _confidence(summary, scan, defaults, deep_scan)
     plain = lambda x: f"{x['lead']} {x['text']}"  # noqa: E731
@@ -793,6 +802,28 @@ def _exit(est: dict, q: Questionnaire, defaults: bool) -> tuple[list[dict], str]
     return facts, line
 
 
+def _written_off(tm: dict) -> dict | None:
+    """Commitments still running when the exit finishes: paid for, no longer used, so written off."""
+    c, e = tm.get("commitments") or {}, tm.get("edp") or {}
+    if not c.get("stranded") and not e.get("shortfall"):
+        return None
+    sp, edp = c.get("stranded") or [0, 0], e.get("shortfall") or [0, 0]
+    lo, hi = sp[0] + edp[0], sp[1] + edp[1]
+    if hi < MATERIAL_STRANDED:
+        return {
+            "label": "Commitments written off",
+            "value": "None",
+            "note": "every Savings Plan and reservation ends before the fastest exit finishes",
+        }
+    parts = [f"{owed_range(*sp)} of Savings Plans and reservations" if sp[1] >= MATERIAL_STRANDED else ""]
+    parts.append(f"{owed_range(*edp)} of enterprise discount commitment" if edp[1] >= MATERIAL_STRANDED else "")
+    return {
+        "label": "Commitments written off",
+        "value": owed_range(lo, hi),
+        "note": f"still owed once the exit finishes: {_join([x for x in parts if x])}; more if it finishes sooner",
+    }
+
+
 def _resilience_findings(r: dict) -> list[dict]:
     """Correlated failure: how much of the critical estate one regional event would take down."""
     c, crit = r.get("concentration") or {}, r.get("criticality") or {}
@@ -860,7 +891,7 @@ def _timing_findings(tm: dict) -> list[dict]:
         out.append(
             {
                 "lead": "Commitments outlast the exit:",
-                "text": f"{_join(parts)} would still be owed when it finishes; the last commitment ends "
+                "text": f"{_join(parts)} would still be owed when it finishes, a write-off; the last commitment ends "
                 f"{_month(max(x for x in ((c.get('last_end') or '')[:7], e.get('end_month') or '') if x))}.",
             }
         )

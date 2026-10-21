@@ -243,10 +243,14 @@ fast end does, *Does not fit* when neither does.
 RDS, ElastiCache, Redshift, OpenSearch and MemoryDB), with each commitment's end date and amortised
 monthly cost, so upfront fees are already spread over the term. Commitments are bought in one account
 and shared, so they cover the whole organisation, not just the filtered accounts. *Still to run* is
-the monthly cost times the months left. *Stranded* is the part still owed after the exit finishes:
-from the slow end (least) to the fast end (most). A planned exit that outlasts every commitment strands
-nothing; leaving in a hurry would owe everything still to run, which is shown instead. The view also
-gives the last date a new 1-year or 3-year term can start and still end before the fastest exit.
+the monthly cost times the months left. *Written off* is the part still owed after the exit finishes,
+paid for but no longer used: from the slow end (least) to the fast end (most). A planned exit that
+outlasts every commitment writes off nothing; leaving in a hurry would owe everything still to run,
+which is shown instead. The total, with any enterprise discount shortfall, is a key figure in the
+executive summary. A chart shows each month's commitments to the last end date, with the exit window
+shaded, and a line of what would be written off if the exit finished at the end of each month (the sum
+of everything billed after it). The view also gives the last date a new 1-year or 3-year term can start
+and still end before the fastest exit.
 
 **Enterprise discount (EDP or PPA).** No AWS API exposes it, so its end month and annual commitment are
 typed under Exit model. The shortfall is the commitment from the exit finishing to the agreement's end:

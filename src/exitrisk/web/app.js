@@ -463,6 +463,7 @@
         tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend` : "engineering and parallel running", e.provisional),
         tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, e.provisional),
         tile("Engineering effort", e.ranges.effort, teamSize(e.team.capacity_fte), e.provisional),
+        ...writtenOffTile(s.executive, e.provisional),
       ]),
     ].join("");
     const x = s.executive;
@@ -478,6 +479,12 @@
     const confRating = { High: "Low", Medium: "High", Low: "Critical" }[x.confidence];
     ratingBadge($("#briefConf"), confRating, `Confidence: ${x.confidence}`);
     $("#briefConfWhy").textContent = x.confidence_reasons.join(" ");
+  }
+
+  // Savings Plans, reservations and EDP still running when the exit finishes: paid for, no longer used.
+  function writtenOffTile(x, provisional) {
+    const f = (x.exit_facts || []).find((v) => v.label === "Commitments written off");
+    return f ? [tile(f.label, f.value, f.value === "None" ? "all end before the fastest exit finishes" : "still owed after the exit; more if it finishes sooner", provisional)] : [];
   }
 
   // Chart.js defaults - recessive chrome, thin marks, tooltips on.
@@ -1060,7 +1067,7 @@
     }
     if (c.available && !c.empty) {
       pts.push(c.stranded_range
-        ? `About ${c.stranded_range} of commitments would still be owed after the exit finishes; ${money(c.monthly_past_exit)}/mo runs past the fastest finish.`
+        ? `About ${c.stranded_range} of commitments would be written off: still owed after the exit finishes; ${money(c.monthly_past_exit)}/mo runs past the fastest finish.`
         : `Every Savings Plan and reservation ends before the fastest exit finishes, so a planned exit pays nothing to break them. Leaving in a hurry would still owe ${c.stressed_range}.`);
       if (c.buy_by?.["3yr"]) pts.push(`A new 3-year term bought after ${monthYear(c.buy_by["3yr"])} would outlast the fastest exit; ${c.buy_by["1yr"] ? `1-year terms stay safe until ${monthYear(c.buy_by["1yr"])}` : "buy 1-year terms"}.`);
       else if (c.buy_by?.["1yr"]) pts.push(`3-year terms already outlast the fastest exit; 1-year terms stay safe until ${monthYear(c.buy_by["1yr"])}.`);
@@ -1071,11 +1078,7 @@
         : `The EDP ends ${monthYear(`${e.end_month}-15`)}${e.ends_before_exit ? ", before the exit finishes: renew on a shorter term or without a commit" : ""}.`);
     }
     $("#timePoints").innerHTML = pts.length ? pts.map((x) => `<li>${esc(x)}</li>`).join("") : '<li class="hint">Enter a notice period and your EDP to test the timing.</li>';
-    const maxRun = Math.max(...(c.runoff || []).map((x) => x.monthly), 1);
-    $("#timeRunoff").innerHTML = c.runoff?.length
-      ? `<p class="muted small">Monthly commitment that runs off, by quarter</p>` + c.runoff.map((x) => `<div class="split-row"><div class="split-label"><span>${esc(x.quarter)}</span><span class="num-cell">${money(x.monthly)}/mo</span></div>
-        <div class="bar"><i style="width:${(100 * x.monthly / maxRun).toFixed(1)}%;background:${css("--accent")}"></i></div></div>`).join("")
-      : "";
+    renderWriteOff(t);
 
     const undated = c.undated ? ` ${plural(c.undated, "commitment")} (${money(c.undated_monthly)}/mo) came without an end date, so ${c.undated === 1 ? "it is" : "they are"} not in the figures below; check ${c.undated === 1 ? "it" : "them"} in the AWS Billing console.` : "";
     if (!c.available || c.empty) {
@@ -1083,8 +1086,69 @@
       $("#timeTable").innerHTML = "";
       return;
     }
-    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Stranded is what would still be owed between the exit finishing and the commitment ending.${undated}`;
-    $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Stranded</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
+    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Written off is what would still be owed between the exit finishing and the commitment ending: paid for, no longer used.${undated}`;
+    $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Written off</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
+  }
+
+  // Commitments by month, and what is written off if the exit finishes in that month. Months after the
+  // fastest finish are drawn solid (written off); before it, faded (still in use during the exit).
+  function renderWriteOff(t) {
+    const c = t.commitments, rows = c.by_month || [];
+    $("#writeOffCard").hidden = !c.available || c.empty || !rows.length;
+    if ($("#writeOffCard").hidden) return;
+    const keys = rows.map((x) => x.month);
+    const at = (iso) => (iso ? keys.indexOf(iso.slice(0, 7)) : -1);
+    const fast = at(t.exit_end?.[0]), slow = at(t.exit_end?.[1]);
+    const fastIx = fast < 0 && t.exit_end && t.exit_end[0].slice(0, 7) > keys.at(-1) ? keys.length : fast;
+    const fade = (hex, i) => (fastIx >= 0 && i <= fastIx ? `${hex}55` : hex);
+    const blue = css("--tone-fact"), purple = css("--tone-est"), red = css("--tone-risk");
+    const owed = c.stranded;
+    $("#writeOffCap").textContent = (t.exit_end
+      ? `The exit finishes between ${monthYear(t.exit_end[0])} and ${monthYear(t.exit_end[1])} (shaded). Bars after the fastest finish are commitments paid for but no longer used: ${owed && owed[1] >= 1000 ? c.stranded_range : "none"} written off. `
+      : "") + "The red line is what would be written off if the exit finished at the end of that month.";
+    // The exit window, shaded behind the bars.
+    const windowBand = {
+      id: "exitWindow",
+      beforeDatasetsDraw(ch) {
+        if (fast < 0 && slow < 0) return;
+        const x = ch.scales.x, a = ch.chartArea, step = x.width / keys.length;
+        const x0 = fast >= 0 ? x.getPixelForValue(fast) + step / 2 : a.left;
+        const x1 = slow >= 0 ? x.getPixelForValue(slow) + step / 2 : a.right;
+        if (x0 >= a.right) return;
+        const g = ch.ctx;
+        g.save();
+        g.fillStyle = `${red}1f`;
+        g.fillRect(x0, a.top, Math.min(x1, a.right) - x0, a.bottom - a.top);
+        g.fillStyle = css("--ink-2");
+        g.font = `600 11px ${css("--font") || "system-ui"}`;
+        g.fillText("Exit finishes", x0 + 6, a.top + 14);
+        g.restore();
+      },
+    };
+    chart("chWriteOff", {
+      type: "bar",
+      data: {
+        labels: keys.map((m) => month(m, true)),
+        datasets: [
+          { type: "line", label: "Written off if the exit finishes that month", data: rows.map((x) => x.written_off), yAxisID: "y2", borderColor: red, backgroundColor: red, borderWidth: 2, pointRadius: 0, tension: 0.2, order: 0 },
+          { label: "Savings Plans", data: rows.map((x) => x.savings_plans), backgroundColor: rows.map((_, i) => fade(blue, i)), borderRadius: 2, maxBarThickness: 26, order: 1 },
+          { label: "Reservations", data: rows.map((x) => x.reservations), backgroundColor: rows.map((_, i) => fade(purple, i)), borderRadius: 2, maxBarThickness: 26, order: 1 },
+        ],
+      },
+      options: {
+        scales: {
+          x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 10 } },
+          y: { stacked: true, title: { display: true, text: "Billed each month" }, ticks: { callback: (v) => money(v) } },
+          y2: { position: "right", beginAtZero: true, grid: { display: false }, title: { display: true, text: "Written off" }, ticks: { callback: (v) => money(v) } },
+        },
+        plugins: {
+          legend: { position: "bottom", labels: { generateLabels: (ch) => window.Chart.defaults.plugins.legend.labels.generateLabels(ch).map((l, i) => ({ ...l, fillStyle: [red, blue, purple][i], strokeStyle: [red, blue, purple][i] })) } },
+          tooltip: { mode: "index", callbacks: { title: (items) => month(rows[items[0].dataIndex].month), label: (x) => ` ${x.dataset.label}: ${money(x.raw)}` } },
+        },
+        interaction: { mode: "index", intersect: false },
+      },
+      plugins: [windowBand],
+    });
   }
 
   // One A4 page for the executive committee, printed on its own (body.onepage).
