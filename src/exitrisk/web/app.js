@@ -998,9 +998,33 @@
     $("#opRisks").innerHTML = (x.findings_rich || []).slice(0, 3).map(lead).join("");
     $("#opDecisions").innerHTML = (x.actions_rich || []).slice(0, 3).map(lead).join("");
     const top = r.accounts.filter((a) => a.score != null && a.monthly_spend > 0).slice(0, 5);
-    $("#opAccounts").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Per month</th><th>Risk</th><th class="num-cell">Spend at risk / month</th><th>Main lock-in</th></tr></thead><tbody>` +
-      top.map((a) => `<tr><td><strong>${esc(a.name)}</strong></td><td class="num-cell">${money(a.monthly_spend)}</td><td><span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span></td><td class="num-cell">${money(a.spend_at_risk)}</td><td>${esc(a.top_lockin.slice(0, 3).map((v) => v.service).join(", ") || "none")}</td></tr>`).join("") + "</tbody>";
+    const o = r.resilience?.owners;
+    const showOwner = !!o?.tagged_accounts && !o.single_owner;
+    $("#opAccounts").innerHTML = `<thead><tr><th>Account</th>${showOwner ? "<th>Owner</th>" : ""}<th class="num-cell">Per month</th><th>Risk</th><th class="num-cell">Spend at risk / month</th><th>Main lock-in</th></tr></thead><tbody>` +
+      top.map((a) => `<tr><td><strong>${esc(a.name)}</strong></td>${showOwner ? `<td class="nowrap">${esc(a.owner || a.executive || "–")}</td>` : ""}<td class="num-cell">${money(a.monthly_spend)}</td><td><span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span></td><td class="num-cell">${money(a.spend_at_risk)}</td><td>${esc(a.top_lockin.slice(0, showOwner ? 2 : 3).map((v) => v.service).join(", ") || "none")}</td></tr>`).join("") + "</tbody>";
+    renderOnePagerOwners(o);
     $("#opFoot").textContent = `Confidence: ${x.confidence}. ${x.confidence_reasons.join(" ")} Cost and time are ranges for a planning decision, not a delivery quote. Generated ${new Date(m.generated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} by aws-regulatory-risk-review-framework v${m.tool_version}, scan ${m.scan_id}. The full report has the method, every account and service, and the data gaps.`;
+  }
+
+  // The executives to talk to: the top four by spend at risk, and how much spend has no owner tag.
+  function renderOnePagerOwners(o) {
+    $("#opOwners").hidden = !o;
+    if (!o) return;
+    const list = $("#opOwnersList"), untagged = o.accounts_with_spend - o.tagged_accounts;
+    const gap = untagged ? ` ${plural(untagged, "account")} with spend (${money(o.untagged_monthly)} a month) have no owner tag.` : "";
+    list.innerHTML = "";
+    if (!o.tagged_accounts) {
+      $("#opOwnersLead").textContent = "No account has an owner or executive tag: tag accounts in AWS Organizations so each risk has a named owner.";
+      return;
+    }
+    if (o.single_owner) {
+      $("#opOwnersLead").textContent = `${o.single_owner} owns every tagged account.${gap}`;
+      return;
+    }
+    const rows = o.by_executive.slice(0, 4), more = o.by_executive.length - rows.length;
+    $("#opOwnersLead").textContent = `${num(o.tagged_accounts)} of ${plural(o.accounts_with_spend, "account")} with spend report to ${plural(o.by_executive.length, "executive or owner", "executives or owners")}${more > 0 ? ` (top ${rows.length} below)` : ""}.` +
+      (untagged ? ` ${num(untagged)} (${money(o.untagged_monthly)} a month) have no owner tag.` : "");
+    list.innerHTML = rows.map((g) => `<li><strong>${esc(g.name)}</strong> ${money(g.spend_at_risk)}/month at risk <span class="muted">· ${plural(g.accounts, "account")}</span></li>`).join("");
   }
 
   function renderIssues(r) {

@@ -214,7 +214,7 @@ exitrisk catalog                                                        # list s
 ![New scan](docs/images/new-scan-dialog.png)
 
 **One-page ExCo summary**: score, headline, six tiles, tier bar, top findings and decisions, and the
-accounts that drive the exit, on one A4 page. **Export PDF → One-page summary** in the header, or `exitrisk pdf --onepage`.
+accounts that drive the exit with their owners, and who owns the risk, on one A4 page. **Export PDF → One-page summary** in the header, or `exitrisk pdf --onepage`.
 
 ![One-page summary](docs/images/one-page-summary.png)
 

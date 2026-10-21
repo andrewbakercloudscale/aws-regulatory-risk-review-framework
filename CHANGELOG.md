@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- One-page summary: **Who owns the risk** names the top executives or owners by spend at risk and
+  how much spend has no owner tag, and the accounts table gains an Owner column. Still one A4 page.
+
 ### Fixed
 - Multi-region: Amazon Lex counts as available in Europe (Ireland). AWS's public regional services
   table omits it, though the Lex V2 endpoints answer there. Known errors in that table are now
