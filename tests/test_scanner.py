@@ -108,6 +108,34 @@ def test_several_ous_scan_each_account_once(monkeypatch):
         scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(ou_ids=["ou-zzz"])))
 
 
+def test_scan_reads_the_ou_tree_fresh_not_from_the_picker_cache(monkeypatch):
+    stale = {"id": "r-1", "name": "Root", "path": "Root", "children": []}
+    fresh = {
+        "id": "r-1",
+        "name": "Root",
+        "path": "Root",
+        "children": [{"id": "ou-new", "name": "New", "path": "Root / New", "children": []}],
+    }
+    scanner.organizations.remember_org_and_tree(None, {"id": "o-1"}, stale)  # the OU picker read it earlier
+    monkeypatch.setattr(scanner, "make_session", lambda profile: object())
+    monkeypatch.setattr(scanner, "caller_identity", lambda s: {"account_id": "111111111111", "arn": "arn:x"})
+    monkeypatch.setattr(
+        scanner.organizations, "describe_org", lambda s: {"id": "o-1", "management_account_id": "111111111111"}
+    )
+    monkeypatch.setattr(scanner.organizations, "list_ou_tree", lambda s: fresh)
+    monkeypatch.setattr(
+        scanner.organizations,
+        "list_accounts_under",
+        lambda s, ou: [scanner.organizations.Account("1", "acct-1", "", "ACTIVE", ou["id"], ou["path"])],
+    )
+    monkeypatch.setattr(
+        scanner.cost, "fetch_costs", lambda s, ids, m: ([], {"start": "2026-09-01", "end": "2026-10-01", "months": 1})
+    )
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(ou_ids=["ou-new"])))
+    assert doc["ou"]["id"] == "ou-new"  # an OU created after the picker's read is found
+    assert scanner.organizations.cached_org_and_tree(None)[1] is fresh  # and the picker sees it too
+
+
 def _single_account(monkeypatch):
     monkeypatch.setattr(scanner, "make_session", lambda profile: object())
     monkeypatch.setattr(scanner.cost, "fetch_commitments", lambda s: [])

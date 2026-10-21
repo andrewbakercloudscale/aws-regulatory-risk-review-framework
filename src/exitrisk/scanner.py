@@ -187,12 +187,11 @@ def run_scan(job: ScanJob) -> dict:
     # 2. Organization and accounts.
     job.update("organizations", 15, "Reading the organization's OU tree")
     try:
-        if hit := organizations.cached_org_and_tree(p.profile):  # the console's OU picker just read it
-            data["org"], tree = hit
-        else:
-            data["org"] = organizations.describe_org(session)
-            tree = organizations.list_ou_tree(session)
-            organizations.remember_org_and_tree(p.profile, data["org"], tree)
+        # Always read fresh: a scan is evidence, so an OU moved minutes ago must count. The picker's
+        # cached copy is refreshed with what the scan saw.
+        data["org"] = organizations.describe_org(session)
+        tree = organizations.list_ou_tree(session)
+        organizations.remember_org_and_tree(p.profile, data["org"], tree)
         ous = [organizations.find_ou(tree, i) for i in p.ous] if p.ous else [tree]
         missing = [i for i, ou in zip(p.ous, ous, strict=False) if ou is None]
         if missing:

@@ -65,8 +65,8 @@ def list_ou_tree(session: boto3.Session) -> dict:
     return tree
 
 
-# The OU tree changes rarely and takes ~10 s to read in a large organisation, so the console's OU
-# picker and the scan that follows share one read. Keyed by AWS profile.
+# The OU tree takes ~10 s to read in a large organisation, so the console's OU picker caches it.
+# Scans never use this cache: they always read the tree fresh. Keyed by AWS profile.
 TREE_CACHE_SECONDS = 900
 _tree_cache: dict[str, tuple[float, dict, dict]] = {}
 _tree_lock = threading.Lock()
