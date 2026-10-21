@@ -8,6 +8,7 @@ is the fairest measure of how much each workload actually costs to run.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 import boto3
@@ -269,6 +270,33 @@ def _attrs(raw: dict | None) -> dict[str, str]:
     return {k.lower(): v for k, v in (raw or {}).items()}
 
 
+def _term(a: dict[str, str]) -> str:
+    """``1yr`` or ``3yr``: from the term attribute ("3yr", "3 Year", "1 year"), else from the start and end dates."""
+    raw = a.get("purchaseterm") or a.get("leaseterm") or a.get("term") or ""
+    m = re.match(r"\s*(\d+)\s*(yr|year)", raw, re.I)
+    if m:
+        return f"{m.group(1)}yr"
+    start, end = _day(a.get("startdatetime")), _day(a.get("enddatetime"))
+    if start and end:
+        return f"{max(1, round((end - start).days / 365))}yr"
+    return raw.strip()
+
+
+def _day(v: str | None) -> date | None:
+    try:
+        return date.fromisoformat((v or "")[:10])
+    except ValueError:
+        return None
+
+
+def _end(a: dict[str, str], term: str) -> str:
+    """The end date as YYYY-MM-DD; worked out from the start date and term when AWS leaves it out."""
+    end = _day(a.get("enddatetime"))
+    if not end and (start := _day(a.get("startdatetime"))) and (m := re.match(r"(\d+)yr$", term)):
+        end = start.replace(year=start.year + int(m.group(1)))
+    return end.isoformat() if end else ""
+
+
 def fetch_commitments(session: boto3.Session) -> list[dict]:
     """Savings Plans and reservations active in the last complete month, with their end dates.
 
@@ -280,6 +308,7 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
     start, end = month_window(1)
     period = {"Start": start, "End": end}
     out: list[dict] = []
+    keys_seen: set[str] = set()  # attribute names, logged if an end date is missing
 
     token = None
     while True:
@@ -293,6 +322,7 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
             raise
         for d in resp.get("SavingsPlansUtilizationDetails", []):
             a = _attrs(d.get("Attributes"))
+            keys_seen.update(a)
             out.append(
                 {
                     "kind": "savings_plan",
@@ -301,9 +331,9 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
                     "service": "",
                     "account_id": a.get("accountid", ""),
                     "region": a.get("region", ""),
-                    "term": a.get("purchaseterm", ""),
+                    "term": (term := _term(a)),
                     "payment": a.get("paymentoption", ""),
-                    "end": a.get("enddatetime", "")[:10],
+                    "end": _end(a, term),
                     "monthly": round(float((d.get("AmortizedCommitment") or {}).get("TotalAmortizedCommitment", 0)), 2),
                     "utilization_pct": _pct((d.get("Utilization") or {}).get("UtilizationPercentage")),
                 }
@@ -336,6 +366,7 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
                         continue
                     seen.add(rid)
                     a = _attrs(g.get("Attributes"))
+                    keys_seen.update(a)
                     u = g.get("Utilization") or {}
                     out.append(
                         {
@@ -345,9 +376,9 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
                             "service": service,
                             "account_id": a.get("accountid", ""),
                             "region": a.get("region", ""),
-                            "term": a.get("leaseterm", "") or a.get("term", ""),
-                            "payment": a.get("subscriptiontype", ""),
-                            "end": a.get("enddatetime", "")[:10],
+                            "term": (term := _term(a)),
+                            "payment": a.get("subscriptiontype", "") or a.get("paymentoption", ""),
+                            "end": _end(a, term),
                             "monthly": round(float(u.get("TotalAmortizedFee", 0) or 0), 2),
                             "utilization_pct": _pct(u.get("UtilizationPercentage")),
                         }
@@ -355,6 +386,15 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
             token = resp.get("NextPageToken")
             if not token:
                 break
+    undated = [c for c in out if not c["end"]]
+    if undated:
+        # Timing cannot place these; the attribute names show what AWS sent instead.
+        log.warning(
+            "%d commitment(s) have no end date, e.g. %s; Timing counts them but cannot date them. Attributes: %s",
+            len(undated),
+            undated[0]["id"] or undated[0]["type"],
+            ", ".join(sorted(keys_seen)) or "none",
+        )
     log.info(
         "commitments: %d savings plan(s), %d reservation(s), month %s",
         sum(1 for c in out if c["kind"] == "savings_plan"),

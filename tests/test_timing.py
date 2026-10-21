@@ -59,4 +59,12 @@ def test_edp_shortfall_when_it_outlasts_the_exit():
 def test_empty_estimate_has_no_exit_dates():
     t = build_timing({"commitments": []}, {"empty": True}, Questionnaire(exit_deadline_months=12), today=TODAY)
     assert t["exit_end"] is None and t["deadline"]["status"] == "unknown"
-    assert t["commitments"] == {"available": True, "empty": True}
+    assert t["commitments"] == {"available": True, "empty": True, "undated": 0, "undated_monthly": 0}
+
+
+def test_undated_commitments_are_counted_not_dropped():
+    undated = {**_c(12, 700), "end": ""}
+    c = build_timing({"commitments": [_c(30, 1000), undated]}, EST, Questionnaire(), today=TODAY)["commitments"]
+    assert c["count"] == 1 and c["undated"] == 1 and c["undated_monthly"] == 700
+    only = build_timing({"commitments": [undated]}, EST, Questionnaire(), today=TODAY)["commitments"]
+    assert only["empty"] and only["undated"] == 1

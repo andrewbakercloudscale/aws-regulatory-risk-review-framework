@@ -206,3 +206,61 @@ def test_fetch_commitments_reads_savings_plans_and_reservations(monkeypatch):
         ("reservation", "ri-1", "2029-05-21", 26500.0, "3yr"),
     ]
     assert rows[0]["utilization_pct"] == 97.5 and rows[1]["type"] == "Reserved db.r6g.4xlarge"
+
+
+def test_fetch_commitments_fills_term_and_end_from_other_attributes(monkeypatch):
+    """Attribute shapes vary (PascalCase or camelCase, "3 Year" or "3yr", end date missing): read them all."""
+    client = boto3.client("ce", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
+    stub = Stubber(client)
+    plan = {
+        "Utilization": {"UtilizationPercentage": "100"},
+        "AmortizedCommitment": {"TotalAmortizedCommitment": "1000"},
+    }
+    stub.add_response(
+        "get_savings_plans_utilization_details",
+        {
+            "SavingsPlansUtilizationDetails": [
+                {
+                    **plan,
+                    "SavingsPlanArn": "arn:aws:savingsplans::111111111111:savingsplan/sp-a",
+                    "Attributes": {"PurchaseTerm": "1 Year", "StartDateTime": "2026-03-15T00:00:00Z"},
+                },
+                {
+                    **plan,
+                    "SavingsPlanArn": "arn:aws:savingsplans::111111111111:savingsplan/sp-b",
+                    "Attributes": {"PaymentOption": "All Upfront"},
+                },
+            ],
+            "TimePeriod": {"Start": "2026-09-01", "End": "2026-10-01"},
+        },
+    )
+    ec2 = {
+        "TimePeriod": {"Start": "2026-09-01", "End": "2026-10-01"},
+        "Groups": [
+            {
+                "Key": "SUBSCRIPTION_ID",
+                "Value": "ri-a",
+                "Attributes": {
+                    "instanceType": "m6i.2xlarge",
+                    "startDateTime": "2025-06-01T00:00:00.000Z",
+                    "endDateTime": "2028-06-01T00:00:00.000Z",
+                    "subscriptionType": "Partial Upfront",
+                },
+                "Utilization": {"UtilizationPercentage": "92", "TotalAmortizedFee": "410.5"},
+            }
+        ],
+    }
+    for service in cost.RESERVATION_SERVICES:
+        if service == "Amazon Elastic Compute Cloud - Compute":
+            stub.add_response("get_reservation_utilization", {"UtilizationsByTime": [ec2]})
+        else:
+            stub.add_client_error("get_reservation_utilization", "DataUnavailableException")
+    session = _session()
+    monkeypatch.setattr(session, "client", lambda *a, **k: client)
+    with stub:
+        rows = cost.fetch_commitments(session)
+    assert [(r["id"], r["term"], r["end"], r["payment"]) for r in rows] == [
+        ("sp-a", "1yr", "2027-03-15", ""),
+        ("sp-b", "", "", "All Upfront"),
+        ("ri-a", "3yr", "2028-06-01", "Partial Upfront"),
+    ]

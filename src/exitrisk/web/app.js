@@ -724,12 +724,13 @@
         <div class="bar"><i style="width:${(100 * x.monthly / maxRun).toFixed(1)}%;background:${css("--accent")}"></i></div></div>`).join("")
       : "";
 
+    const undated = c.undated ? ` ${plural(c.undated, "commitment")} (${money(c.undated_monthly)}/mo) came without an end date, so ${c.undated === 1 ? "it is" : "they are"} not in the figures below; check ${c.undated === 1 ? "it" : "them"} in the AWS Billing console.` : "";
     if (!c.available || c.empty) {
-      $("#timeNote").textContent = c.reason || "No active Savings Plans or reservations in this scan.";
+      $("#timeNote").textContent = (c.reason || (c.undated ? "No dated Savings Plans or reservations in this scan." : "No active Savings Plans or reservations in this scan.")) + undated;
       $("#timeTable").innerHTML = "";
       return;
     }
-    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Stranded is what would still be owed between the exit finishing and the commitment ending.`;
+    $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Stranded is what would still be owed between the exit finishing and the commitment ending.${undated}`;
     $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Stranded</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
   }
 

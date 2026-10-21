@@ -65,6 +65,8 @@ def _commitments(rows: list[dict] | None, today: date, exit_end: tuple[date, dat
     if rows is None:
         return {"available": False, "reason": "This scan predates commitment tracking; run a new scan."}
     active = []
+    # Billed this month but with no end date from AWS: counted and shown, never silently dropped.
+    undated = [c for c in rows if c.get("monthly", 0) > 0 and not _date(c.get("end", ""))]
     for c in rows:
         end = _date(c.get("end", ""))
         if not end or end <= today or c.get("monthly", 0) <= 0:
@@ -88,8 +90,9 @@ def _commitments(rows: list[dict] | None, today: date, exit_end: tuple[date, dat
                 "stranded": [round(x) for x in stranded] if stranded else None,
             }
         )
+    gaps = {"undated": len(undated), "undated_monthly": round(sum(c["monthly"] for c in undated), 2)}
     if not active:
-        return {"available": True, "empty": True}
+        return {"available": True, "empty": True, **gaps}
     active.sort(key=lambda c: -c["remaining"])
     monthly = sum(c["monthly"] for c in active)
     remaining = sum(c["remaining"] for c in active)
@@ -110,6 +113,7 @@ def _commitments(rows: list[dict] | None, today: date, exit_end: tuple[date, dat
         "last_end": max(c["end"] for c in active),
         "runoff": [{"quarter": q, "monthly": round(m, 2)} for q, m in sorted(runoff.items())],
         "rows": active[:15],
+        **gaps,
     }
     if exit_end:
         lo = sum(c["stranded"][0] for c in active)
