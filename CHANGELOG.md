@@ -6,6 +6,16 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **AI coding agents** in the Exit model: each catalog service carries an `agentic` rating (high,
+  medium, low, none). With the toggle on, engineering weeks drop about 50% for high (Lambda, API
+  Gateway, Step Functions, CloudFormation), 25% for medium, 10% for low and nothing for data moves and
+  managed-service redesign. The saving shows in the answers and assumptions, the rating in Appendix A
+  and SERVICE_CATALOG.md. The score does not change. Catalog version 2026.10.4.
+- **Leave products out** in the Exit model: tick AWS products (for example Marketplace, or a service
+  being retired) to remove them from the score and the estimate; the report states what was left out
+  and its monthly spend.
+
 ### Fixed
 - Charts no longer stay blank: they redraw when the tab comes back to the foreground, after printing,
   after a back/forward restore, and when Chrome restores a dropped canvas; a chart that cannot draw

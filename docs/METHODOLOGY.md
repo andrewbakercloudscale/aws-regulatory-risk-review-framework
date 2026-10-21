@@ -128,7 +128,7 @@ worse than "Terraform with drift" because the IaC itself must be rewritten.
 ### Effort (engineer-weeks)
 
 ```
-service effort   = catalog effort_weeks × size multiplier            for every service ≥ materiality, per account
+service effort   = catalog effort_weeks × size multiplier × AI agent factor   for every service ≥ materiality, per account
 size multiplier  = clamp( max( √(monthly spend / 1,000 USD), √(resource count / typical count) ), 0.25, 8 )
 account overhead = 1 week per account with material spend           (network, IAM, decommissioning)
 delivery         = (Σ service effort + account overhead) × CI/CD × IaC × target × regulated
@@ -141,6 +141,20 @@ The square-root size multiplier encodes economies of scale: four times the spend
 work, because the design, tooling and testing approach are reused. Typical counts used with the deep
 scan include 25 Lambda functions, 10 DynamoDB tables, 10 state machines and 30 CloudFormation stacks
 per "typical workload" (`TYPICAL_COUNTS` in `estimate.py`).
+
+**AI coding agents.** When the Exit model says teams use AI coding agents, each service's weeks are
+multiplied by its catalog `agentic` rating: high 0.5 (code and templates an agent can translate:
+Lambda, API Gateway, Step Functions, CloudFormation, CI/CD), medium 0.75 (config and integration
+rewrites: EKS manifests, networking, AI services), low 0.9 (mostly rehosting or re-pointing: EC2, RDS,
+S3, DynamoDB redesign with its data move), none 1.0 (data moves, hardware, contracts: EFS, Glacier,
+Direct Connect, Marketplace). The factor applies before the delivery factor, so engineers reviewing
+and testing the agents' changes are still counted. It shortens the work, not the lock-in: the score
+does not change. The rating per service is in [SERVICE_CATALOG.md](SERVICE_CATALOG.md).
+
+**Products left out.** The Exit model can leave named AWS products out (for example Marketplace
+software re-contracted anyway, or a service being retired). Their spend is removed from the score,
+the tiers, the estimate and the trend, and the report says what was left out and how much it spends
+a month at the top of the report and in the answers.
 
 ### Duration
 

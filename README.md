@@ -59,8 +59,10 @@ exit" (a fact a board can govern).
   of spend they hold.
 - **Filters to production** (or anything else) by account name: contains / starts with / ends with /
   regex, plus exclusions, e.g. `prod, prd` excluding `sandbox`.
-- **Estimates the exit**: engineer effort, calendar duration and cost, adjusted by a questionnaire on
-  the page: standard CI/CD? Terraform up to date? How big is the core cloud team?
+- **Estimates the exit**: engineer effort, calendar duration and cost, adjusted by the answers under
+  **Exit model** in the top bar: standard CI/CD? Terraform up to date? How big is the core cloud team?
+  Do teams use AI coding agents (each service is rated for how much an agent cuts its porting work:
+  Lambda about half, data moves not at all)? Which AWS products to leave out of the score and estimate?
 - **Costs a second region** (Multi-region tab): extra cost to run, cost and time to achieve, extra
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs

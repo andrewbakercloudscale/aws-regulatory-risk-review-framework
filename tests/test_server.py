@@ -34,13 +34,20 @@ def test_demo_report_roundtrip():
         json={
             "scan_id": scan_id,
             "filter": {"include": "prod"},
-            "questionnaire": {"cicd": "standard", "cloud_team_size": 25},
+            "questionnaire": {
+                "cicd": "standard",
+                "cloud_team_size": 25,
+                "ai_agents": True,
+                "exclude_services": ["AWS Lambda"],
+            },
         },
     )
     assert r.status_code == 200
     body = r.json()
     assert body["meta"]["filter"]["include"] == "prod"
     assert body["estimate"]["inputs"]["cloud_team_size"] == 25
+    assert body["estimate"]["effort"]["agentic_saved_weeks"] > 0
+    assert [x["service"] for x in body["summary"]["excluded_services"]] == ["AWS Lambda"]
 
 
 def test_bad_inputs():

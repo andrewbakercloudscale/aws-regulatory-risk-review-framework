@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from exitrisk.catalog import Catalog, CatalogError, load_catalog
@@ -88,3 +90,41 @@ def test_lifecycle_notes_and_recent_additions():
     ]:
         info = cat.lookup(svc)
         assert info.classified and info.tier == tier, svc
+
+
+def test_every_service_rates_how_much_ai_agents_help():
+    cat = load_catalog()
+    raw = (Path(__file__).resolve().parents[1] / "src/exitrisk/data/service_catalog.yaml").read_text()
+    assert raw.count("    agentic: ") == len(cat.services)  # rated on purpose, not by the default
+    for name, rating in [
+        ("AWS Lambda", "high"),
+        ("Amazon API Gateway", "high"),
+        ("AWS Step Functions", "high"),
+        ("AWS CloudFormation", "high"),
+        ("Amazon Elastic File System", "none"),
+        ("Amazon DynamoDB", "low"),
+    ]:
+        assert cat.lookup(name).agentic == rating, name
+    assert all(s.agentic == "none" for s in cat.services if s.excluded)
+
+
+def test_bad_agentic_rating_rejected():
+    raw = {
+        "tiers": {1: {"label": "Portable", "score": 10}},
+        "unclassified": {"tier": 3, "why": "x", "migration": "y", "effort_weeks": 1, "duration": "z"},
+        "services": [
+            {
+                "service": "S",
+                "display": "S",
+                "category": "C",
+                "tier": 1,
+                "why": "w",
+                "migration": "m",
+                "effort_weeks": 1,
+                "duration": "d",
+                "agentic": "magic",
+            }
+        ],
+    }
+    with pytest.raises(CatalogError, match="agentic"):
+        Catalog(raw)

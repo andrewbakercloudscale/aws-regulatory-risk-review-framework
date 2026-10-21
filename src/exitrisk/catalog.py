@@ -10,6 +10,8 @@ from pathlib import Path
 import yaml
 
 TIER_RANGE = range(1, 6)
+# How much AI coding agents cut a service's engineering weeks (fraction of the work left).
+AGENTIC_FACTORS = {"high": 0.5, "medium": 0.75, "low": 0.9, "none": 1.0}
 REQUIRED_FIELDS = ("service", "display", "category", "tier", "why", "migration", "effort_weeks", "duration")
 
 
@@ -27,6 +29,7 @@ class ServiceInfo:
     aliases: tuple[str, ...] = ()
     excluded: bool = False
     classified: bool = True
+    agentic: str = "low"
 
     def to_dict(self) -> dict:
         return {
@@ -42,6 +45,7 @@ class ServiceInfo:
             "aliases": list(self.aliases),
             "excluded": self.excluded,
             "classified": self.classified,
+            "agentic": self.agentic,
         }
 
 
@@ -63,6 +67,11 @@ class Catalog:
                 raise CatalogError(f"catalog entry {entry.get('service', '?')!r} missing {missing}")
             if int(entry["tier"]) not in TIER_RANGE:
                 raise CatalogError(f"catalog entry {entry['service']!r} has tier {entry['tier']} outside 1-5")
+            agentic = str(entry.get("agentic", "low"))
+            if agentic not in AGENTIC_FACTORS:
+                raise CatalogError(
+                    f"catalog entry {entry['service']!r} has agentic {agentic!r}, not one of {list(AGENTIC_FACTORS)}"
+                )
             info = ServiceInfo(
                 service=entry["service"],
                 display=entry["display"],
@@ -75,6 +84,7 @@ class Catalog:
                 targets=entry.get("targets") or {},
                 aliases=tuple(entry.get("aliases") or ()),
                 excluded=bool(entry.get("excluded", False)),
+                agentic=agentic,
             )
             for name in (info.service, *info.aliases):
                 if name in self._index:

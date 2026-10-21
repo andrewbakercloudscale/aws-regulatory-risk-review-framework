@@ -12,7 +12,7 @@
   const LS_THEME = "exitrisk.theme";
   const LS_ORG_PROFILE = "exitrisk.orgProfile"; // last profile that could read the OU tree
   const MGMT_RE = /mgmt|management|payer|master|org/i;
-  const state = { scanId: null, report: null, catalog: null, options: null, charts: {}, pollTimer: null };
+  const state = { exclude: new Set(), scanId: null, report: null, catalog: null, options: null, charts: {}, pollTimer: null };
 
   // ------------------------------------------------------------------ utils
   const $ = (sel) => document.querySelector(sel);
@@ -116,6 +116,7 @@
         else form[k].value = v;
       }
     }
+    state.exclude = new Set(Array.isArray(q.exclude_services) ? q.exclude_services : []);
     syncDatacenter();
   }
 
@@ -134,6 +135,7 @@
       else if (Q_NUM.includes(el.name)) q[el.name] = el.value === "" ? undefined : Number(el.value);
       else q[el.name] = el.name === "currency" ? el.value.toUpperCase() : el.value;
     }
+    q.exclude_services = [...(state.exclude || [])].sort();
     try { localStorage.setItem(LS_Q, JSON.stringify(q)); } catch { /* ignore */ }
     return q;
   }
@@ -193,6 +195,7 @@
       renderIssues(r);
       renderAppendix(r);
       renderOnePager(r);
+      renderExclusions(r);
     } catch (e) {
       // A rendering bug must not leave a half-drawn report that looks complete, or hang the PDF export.
       console.error("render failed", e);
@@ -229,7 +232,7 @@
   }
 
   function tile(label, value, sub, provisional) {
-    return `<div class="tile${provisional ? " is-provisional" : ""}"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(value)}${provisional ? ' <span class="prov-tag" title="Uses default answers: answer the questions in section 5">Provisional</span>' : ""}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
+    return `<div class="tile${provisional ? " is-provisional" : ""}"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(value)}${provisional ? ' <span class="prov-tag" title="Uses default answers: answer the questions under Exit model">Provisional</span>' : ""}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
   }
 
   function ratingBadge(el, rating, text) {
@@ -625,7 +628,9 @@
       ["Application engineers", `${q.app_engineers_fte} FTE`], ["Target", o.target[q.target]],
       ...(e.datacenter ? [["Data centre", o.dc_facility[q.dc_facility]], ["Disaster-recovery site", q.dc_dr_site ? "Yes, a second site" : "No"]] : []),
       ["Blended day rate", `${num(q.day_rate)} ${q.currency}`],
-      ["Contingency", `${q.contingency_pct}%`], ["Parallel running", `${q.parallel_run_months} months`], ["Regulated", q.regulated ? "Yes" : "No"]];
+      ["Contingency", `${q.contingency_pct}%`], ["Parallel running", `${q.parallel_run_months} months`], ["Regulated", q.regulated ? "Yes" : "No"],
+      ["AI coding agents", q.ai_agents ? `Yes, about ${num(e.effort.agentic_saved_weeks / 4.33, 0)} person-months less work` : "Not used"],
+      ["Left out", r.summary.excluded_services.length ? `${r.summary.excluded_services.map((s) => s.display).join(", ")} (${money(r.summary.excluded_services_monthly)}/mo)` : "Nothing"]];
     $("#answers").innerHTML = ans.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
     $("#assumptions").innerHTML = e.assumptions.map((a) => `<li>${esc(a)}</li>`).join("");
   }
@@ -816,6 +821,17 @@
       : `<tbody><tr><td class="hint">No issues recorded. Every API call in the scan succeeded.</td></tr></tbody>`;
   }
 
+  // Exit model: the products with spend in scope, ticked when left out of the score and estimate.
+  function renderExclusions(r) {
+    const find = $("#exclFilter").value.trim().toLowerCase();
+    const rows = (r.product_choices || []).filter((p) => !find || p.display.toLowerCase().includes(find) || p.service.toLowerCase().includes(find));
+    $("#exclList").innerHTML = rows.length
+      ? rows.map((p) => `<label class="check"><input type="checkbox" data-svc="${esc(p.service)}"${state.exclude.has(p.service) ? " checked" : ""}><span>${esc(p.display)}</span><span class="excl-spend">${money(p.monthly_spend)}/mo</span></label>`).join("")
+      : `<p class="muted small">${find ? "No product matches." : "No spend in scope."}</p>`;
+    const left = r.summary.excluded_services;
+    $("#exclNote").textContent = left.length ? `${plural(left.length, "product")} left out: ${money(r.summary.excluded_services_monthly)}/month.` : "Nothing left out.";
+  }
+
   function renderAppendix(r) {
     const cat = state.catalog;
     const used = new Map(r.services.map((s) => [s.service, s]));
@@ -840,7 +856,7 @@
         <div class="table-wrap"><table class="data catalog"><colgroup><col style="width:15%"><col style="width:27%"><col style="width:28%"><col style="width:20%"><col style="width:10%"></colgroup><thead><tr><th>Service</th><th>Why this tier</th><th>Recommended migration path</th><th>Equivalents</th><th>Typical duration</th></tr></thead><tbody>` +
         list.map((s) => {
           const u = used.get(s.service) || s.aliases.map((a) => used.get(a)).find(Boolean);
-          return `<tr><td>${esc(s.display)}<div class="hint">${esc(s.category)}</div>${u ? `<div class="hint">${money(u.monthly_spend)}/mo in scope</div>` : ""}</td>
+          return `<tr><td>${esc(s.display)}<div class="hint">${esc(s.category)}</div><div class="hint" title="How much AI coding agents cut the work when the Exit model says they are used">AI agent help: ${esc(s.agentic)}</div>${u ? `<div class="hint">${money(u.monthly_spend)}/mo in scope</div>` : ""}</td>
           <td>${esc(s.why)}</td><td>${esc(s.migration)}</td>
           <td class="targets">${s.targets.azure ? `<div><strong>Azure:</strong> ${esc(s.targets.azure)}</div>` : ""}${s.targets.gcp ? `<div><strong>GCP:</strong> ${esc(s.targets.gcp)}</div>` : ""}${s.targets.other ? `<div><strong>Neutral:</strong> ${esc(s.targets.other)}</div>` : ""}</td>
           <td>${esc(s.duration)}</td></tr>`;
@@ -1562,6 +1578,15 @@
       f.querySelector("input:not([type=hidden]), select")?.focus({ preventScroll: true });
     };
     $("#btnModel").addEventListener("click", () => openModel());
+    $("#exclFilter").addEventListener("input", () => state.report && renderExclusions(state.report));
+    $("#exclFilter").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+    $("#exclList").addEventListener("change", (e) => {
+      const svc = e.target.dataset.svc;
+      if (!svc) return;
+      if (e.target.checked) state.exclude.add(svc); else state.exclude.delete(svc);
+      readQuestionnaire();
+      loadReport();
+    });
     $("#btnAnswerQs").addEventListener("click", (ev) => { ev.preventDefault(); openModel(); });
     document.querySelectorAll("[data-model]").forEach((b) => b.addEventListener("click", () => openModel(b.dataset.model)));
     for (const id of ["#btnCloseModel", "#btnCloseModelX"]) $(id).addEventListener("click", () => $("#modelDialog").close());

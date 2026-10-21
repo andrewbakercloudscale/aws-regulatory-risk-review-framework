@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from . import __version__
-from .catalog import Catalog, load_catalog
+from .catalog import AGENTIC_FACTORS, Catalog, load_catalog
 from .estimate import TARGET_LABELS, TARGET_PHRASES, TYPICAL_COUNTS, Questionnaire, build_estimate, service_effort
 from .filtering import AccountFilter
 from .issues import Issue
@@ -149,11 +149,15 @@ class _Spend:
     products: dict = field(default_factory=lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(float))))
     product_accounts: dict[tuple, set] = field(default_factory=lambda: defaultdict(set))
     excluded: float = 0.0
+    # Products the Exit model leaves out (catalog service -> spend), and every product with spend in
+    # scope, so the console can offer them for exclusion and show what was left out.
+    user_excluded: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    offered: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     unclassified: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     negative_lines: int = 0
 
 
-def _aggregate(costs: list[dict], in_scope: dict, catalog: Catalog) -> _Spend:
+def _aggregate(costs: list[dict], in_scope: dict, catalog: Catalog, leave_out: frozenset[str] = frozenset()) -> _Spend:
     sp = _Spend()
     for r in costs:
         if r["account_id"] not in in_scope:
@@ -166,6 +170,10 @@ def _aggregate(costs: list[dict], in_scope: dict, catalog: Catalog) -> _Spend:
             continue  # Cost Explorer lists free-tier services at exactly zero
         if r["amount"] < 0:
             sp.negative_lines += 1
+            continue
+        sp.offered[info.service] += r["amount"]
+        if info.service in leave_out:
+            sp.user_excluded[info.service] += r["amount"]
             continue
         # Key by catalog entry so billing lines of one service (Connect, Contact Lens, telephony...)
         # count once for effort and lock-in, not once per line.
@@ -182,6 +190,31 @@ def _aggregate(costs: list[dict], in_scope: dict, catalog: Catalog) -> _Spend:
         if not info.classified:
             sp.unclassified[r["service"]] += r["amount"]
     return sp
+
+
+def _left_out(sp: _Spend, n_months: int, catalog: Catalog) -> list[dict]:
+    """Products the Exit model left out of the score and estimate, largest first."""
+    return [
+        {"service": svc, "display": catalog.lookup(svc).display, "monthly_spend": round(amt / n_months, 2)}
+        for svc, amt in sorted(sp.user_excluded.items(), key=lambda kv: -kv[1])
+    ]
+
+
+def _product_choices(sp: _Spend, n_months: int, catalog: Catalog) -> list[dict]:
+    """Every product with spend in scope, for the Exit model's 'leave out' list, largest first."""
+    out = []
+    for svc, amt in sorted(sp.offered.items(), key=lambda kv: -kv[1]):
+        info = catalog.lookup(svc)
+        out.append(
+            {
+                "service": svc,
+                "display": info.display,
+                "tier": info.tier,
+                "monthly_spend": round(amt / n_months, 2),
+                "excluded": svc in sp.user_excluded,
+            }
+        )
+    return out
 
 
 def _spend_issues(sp: _Spend, n_months: int) -> list[dict]:
@@ -229,6 +262,7 @@ def _accounts(
         weight = weight_fn(monthly) / total_weight if total_weight else 0.0
         tier_spend = {t: 0.0 for t in range(1, 6)}
         effort_by_tier = {t: 0.0 for t in range(1, 6)}
+        agentic_saved = 0.0
         inv_totals = (inventory.get(aid) or {}).get("totals", {})
         top = []
         for svc, amt in svc_totals.items():
@@ -238,7 +272,11 @@ def _accounts(
             if m >= q.materiality:
                 probe = TYPICAL_COUNTS.get(info.service)
                 count = inv_totals.get(probe[0]) if probe else None
-                effort_by_tier[info.tier] += service_effort(info.effort_weeks, m, count, probe[1] if probe else None)
+                weeks = service_effort(info.effort_weeks, m, count, probe[1] if probe else None)
+                if q.ai_agents:
+                    agentic_saved += weeks * (1 - AGENTIC_FACTORS[info.agentic])
+                    weeks *= AGENTIC_FACTORS[info.agentic]
+                effort_by_tier[info.tier] += weeks
             top.append((m, info))
             agg = services.setdefault(
                 info.service,
@@ -249,6 +287,7 @@ def _accounts(
                     "tier": info.tier,
                     "tier_label": catalog.tier_label(info.tier),
                     "classified": info.classified,
+                    "agentic": info.agentic,
                     "monthly_spend": 0.0,
                     "accounts": 0,
                 },
@@ -278,6 +317,7 @@ def _accounts(
                 ][:3],
                 "effort_by_tier": {t: round(v, 2) for t, v in effort_by_tier.items()},
                 "effort_weeks": round(sum(effort_by_tier.values()), 1),
+                "agentic_saved_weeks": round(agentic_saved, 2),
                 "inventory": inv_totals,
             }
         )
@@ -398,7 +438,7 @@ def build_report(
         if not i.get("account_id") or i["account_id"] in in_scope or i["account_id"] not in all_accounts
     ]
 
-    sp = _aggregate(scan.get("costs", []), in_scope, catalog)
+    sp = _aggregate(scan.get("costs", []), in_scope, catalog, frozenset(questionnaire.exclude_services))
     issues += _spend_issues(sp, n_months)
     total_monthly = sum(sum(s.values()) for s in sp.per_account.values()) / n_months
     inventory = scan.get("inventory") or {}
@@ -427,6 +467,8 @@ def build_report(
         "services": len(services_out),
         "unclassified_services": len(sp.unclassified),
         "excluded_billing_monthly": round(sp.excluded / n_months, 2),
+        "excluded_services": _left_out(sp, n_months, catalog),
+        "excluded_services_monthly": round(sum(sp.user_excluded.values()) / n_months, 2),
         "top_lockin_services": [s for s in services_out if s["tier"] >= 4][:5],
         # "Bespoke" = AWS-only services (High/Critical tiers) with material spend in scope.
         "bespoke_services": sum(
@@ -486,6 +528,7 @@ def build_report(
         "tiers": tiers,
         "accounts": accounts_out,
         "services": services_out,
+        "product_choices": _product_choices(sp, n_months, catalog),
         "trend": [
             {"month": m, "tier_spend": {t: round(sp.trend[m][t], 2) for t in range(1, 6)}} for m in months_in_data
         ],
@@ -510,6 +553,14 @@ def _coverage_notes(scan: dict, summary: dict, all_accounts: list, account_filte
         notes.append(
             f"No account matches the filter ({account_filter.to_dict()['description']}). "
             f"The scan holds {_plural(len(all_accounts), 'account')}: {names}. Clear or change the filter."
+        )
+    if summary["excluded_services"]:
+        left = _join(s["display"] for s in summary["excluded_services"][:6])
+        more = len(summary["excluded_services"]) - 6
+        notes.append(
+            f"Left out of the score and estimate at your request (Exit model): {left}"
+            + (f" and {more} more" if more > 0 else "")
+            + f", {_money(summary['excluded_services_monthly'])}/month."
         )
     return notes
 
@@ -616,7 +667,8 @@ def _headline(s: dict, est: dict, defaults: bool) -> str:
     headline = f"Exit risk is {s['rating_by_spend']}. {kind[0].upper() + kind[1:]}{take}."
     if defaults and not empty:
         headline += (
-            " Cost and time are not yet estimated for your organisation: answer the delivery questions in section 5."
+            " Cost and time are not yet estimated for your organisation:"
+            " answer the delivery questions under Exit model."
         )
     return headline
 
@@ -842,7 +894,7 @@ def _actions(
     if defaults:
         actions.append(
             {
-                "lead": "Answer the delivery questions in section 5",
+                "lead": "Answer the delivery questions under Exit model",
                 "text": "(CI/CD, Terraform, team size, day rate). Until then the cost and time figures use default "
                 "answers, not your organisation's.",
             }

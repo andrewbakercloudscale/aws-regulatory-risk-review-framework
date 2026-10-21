@@ -282,3 +282,51 @@ def test_one_account_reads_as_one_account():
 def test_empty_estimate_has_no_ranges():
     r = build_report(build_demo_scan(), AccountFilter(include="no-such-account"))
     assert set(r["estimate"]["ranges"].values()) == {None}
+
+
+def test_ai_agents_cut_effort_by_each_services_rating():
+    costs = [
+        {"month": "2026-01", "account_id": "1", "service": "AWS Lambda", "amount": 4000},  # high
+        {"month": "2026-01", "account_id": "1", "service": "Amazon DynamoDB", "amount": 4000},  # low
+        {"month": "2026-01", "account_id": "1", "service": "Amazon Elastic File System", "amount": 4000},  # none
+    ]
+    scan = _scan(costs, [{"id": "1", "name": "a"}])
+    without = build_report(scan, questionnaire=Questionnaire())["accounts"][0]["effort_by_tier"]
+    r = build_report(scan, questionnaire=Questionnaire(ai_agents=True))
+    with_ai = r["accounts"][0]["effort_by_tier"]
+    assert with_ai[4] == pytest.approx(without[4] * 0.5, abs=0.01)  # Lambda
+    assert with_ai[5] == pytest.approx(without[5] * 0.9, abs=0.01)  # DynamoDB: redesign and a data move
+    assert with_ai[1] == pytest.approx(without[1], abs=0.01)  # EFS: a data move an agent cannot shorten
+    assert r["accounts"][0]["agentic_saved_weeks"] > 0
+    assert r["estimate"]["effort"]["agentic_saved_weeks"] > 0
+    assert any(a.startswith("AI coding agents") for a in r["estimate"]["assumptions"])
+    # The score does not change: agents shorten the work, not the lock-in.
+    assert r["summary"]["score"] == build_report(scan)["summary"]["score"]
+
+
+def test_products_left_out_drop_from_score_and_estimate_and_are_reported():
+    costs = [
+        {"month": "2026-01", "account_id": "1", "service": "AWS Lambda", "amount": 100},
+        {"month": "2026-01", "account_id": "1", "service": "AWS Marketplace (third-party)", "amount": 300},
+        {"month": "2026-01", "account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "amount": 100},
+    ]
+    scan = _scan(costs, [{"id": "1", "name": "a"}])
+    r = build_report(scan, questionnaire=Questionnaire(exclude_services=["AWS Marketplace (third-party)"]))
+    s = r["summary"]
+    assert s["monthly_spend"] == 200
+    assert s["score"] == pytest.approx((100 * 75 + 100 * 10) / 200)
+    assert s["excluded_services"] == [
+        {"service": "AWS Marketplace (third-party)", "display": "Marketplace (3rd party)", "monthly_spend": 300}
+    ]
+    assert s["excluded_services_monthly"] == 300
+    assert any("Left out" in n and "Marketplace" in n for n in s["coverage"])
+    assert all(x["service"] != "AWS Marketplace (third-party)" for x in r["services"])
+    # The console still offers every product, with the left-out one ticked.
+    choices = {c["service"]: c["excluded"] for c in r["product_choices"]}
+    assert choices == {
+        "AWS Marketplace (third-party)": True,
+        "AWS Lambda": False,
+        "Amazon Elastic Compute Cloud - Compute": False,
+    }
+    # Nothing left out means nothing to report.
+    assert not build_report(scan)["summary"]["excluded_services"]

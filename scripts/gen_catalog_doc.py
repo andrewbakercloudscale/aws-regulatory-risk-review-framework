@@ -55,6 +55,10 @@ def render() -> str:
         f"{len(services)} services classified. Unknown services score as tier 3 and are flagged on the "
         "report's data-quality panel.",
         "",
+        "**AI agent help** is how much AI coding agents cut a service's engineering weeks when the Exit model "
+        "says teams use them: high about 50% (code and templates an agent can translate), medium about 25%, "
+        "low about 10%, none for data moves, hardware, contracts and managed-service redesign.",
+        "",
     ]
     for t in (5, 4, 3, 2, 1):
         group = sorted((s for s in services if s.tier == t), key=lambda s: (s.category, s.display))
@@ -62,15 +66,15 @@ def render() -> str:
             f"## Tier {t} - {cat.tier_label(t)} ({len(group)})",
             "",
             "| Service | Category | Why this tier | Recommended migration path | Azure | Google Cloud | "
-            "Cloud-neutral | Typical duration | Eng-weeks / workload |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "Cloud-neutral | Typical duration | Eng-weeks / workload | AI agent help |",
+            "|---|---|---|---|---|---|---|---|---|---|",
         ]
         for s in group:
             tg = s.targets
             lines.append(
                 f"| **{cell(s.display)}** | {cell(s.category)} | {cell(s.why)} | {cell(s.migration)} | "
                 f"{cell(tg.get('azure', ''))} | {cell(tg.get('gcp', ''))} | {cell(tg.get('other', ''))} | "
-                f"{cell(s.duration)} | {s.effort_weeks:g} |"
+                f"{cell(s.duration)} | {s.effort_weeks:g} | {s.agentic} |"
             )
         lines.append("")
     excluded = [s for s in cat.services if s.excluded]

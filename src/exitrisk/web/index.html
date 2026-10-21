@@ -83,7 +83,7 @@
       </li>
       <li class="card">
         <h3><span class="step-n">3</span> Scan and report</h3>
-        <p>Scan the organisation (seconds for hundreds of accounts), filter to production, answer the questions in section 5 and export the PDF.</p>
+        <p>Scan the organisation (seconds for hundreds of accounts), filter to production, answer the questions under Exit model and export the PDF.</p>
         <div class="row"><button type="button" class="btn" id="btnGsScan">New scan</button></div>
       </li>
     </ol>
@@ -337,7 +337,7 @@
         <p>The report gives <strong>two OU scores</strong>. <strong>By spend</strong> weights each account by its share of in-scope spend, so a small account full of proprietary services scores high on its own yet moves the score very little. <strong>By number of accounts</strong> counts every account with spend equally, so one large account (for example a contact centre on Connect) cannot dominate it. A gap between the two shows whether risk is concentrated in a few big accounts or spread across many. An account's <strong>contribution</strong> is its inherent risk × its weight under the weighting chosen in the bar at the top (by spend unless changed).</p>
         <p>Ratings: Low &lt; 25 ≤ Moderate &lt; 40 ≤ Elevated &lt; 55 ≤ High &lt; 70 ≤ Critical.</p>
         <h3>Estimate</h3>
-        <p>The cost and time figures depend on the delivery questions in section 5. Until they are answered, the report marks the figures provisional and keeps them out of the bottom line.</p>
+        <p>The cost and time figures depend on the delivery questions under Exit model. Until they are answered, the report marks the figures provisional and keeps them out of the bottom line.</p>
         <p>Effort is built bottom-up: each material service in each account contributes the catalog's engineer-weeks for one workload, scaled by the square root of its spend relative to US$1,000/month (and by its resource count where the deep scan ran). Account overhead, a target landing zone, programme management and contingency are added, and the total is adjusted for delivery maturity from the questionnaire. Duration is the longer of effort ÷ available capacity and the critical path of the hardest tier present.</p>
         <h3>Limitations</h3>
         <ul>
@@ -367,7 +367,7 @@
       </div>
     </header>
     <p class="op-headline" id="opHeadline"></p>
-    <p class="op-prov" id="opProv" hidden><strong>Cost and time are provisional.</strong> They use default delivery answers, not this organisation's: answer the questions in section 5 of the full report.</p>
+    <p class="op-prov" id="opProv" hidden><strong>Cost and time are provisional.</strong> They use default delivery answers, not this organisation's: answer the questions under Exit model in the console.</p>
     <div class="op-tiles" id="opTiles"></div>
     <div class="op-tiers">
       <div class="op-tierbar" id="opTierBar"></div>
@@ -516,68 +516,77 @@
   </div>
 </main>
 
-<!-- New scan dialog -->
 <!-- Exit model: the answers behind the estimate, timing and resilience -->
 <dialog id="modelDialog" class="dialog wide" aria-labelledby="modelTitle">
   <div class="dialog-head"><h2 id="modelTitle">Exit model</h2><button type="button" class="btn ghost" id="btnCloseModelX" aria-label="Close">✕</button></div>
   <p class="muted small">Your answers drive the cost and time estimate, the timing and the resilience figures. The report updates as you change them. Saved in this browser only.</p>
   <div class="model-grid">
-  <form class="card questionnaire" id="qForm" autocomplete="off">
-    <h3>About your organisation</h3>
-    <p class="muted small">These answers drive the estimate. They are saved in this browser only.</p>
-    <p class="q-status" id="qStatus"></p>
-    <input type="hidden" name="confirmed" value="false">
-    <label>Do teams use a standard CI/CD pipeline to create assets?
-      <select name="cicd"></select></label>
-    <label>Do you use Terraform, and is it up to date?
-      <select name="iac"></select></label>
-    <div class="pair">
-      <label>People in the core cloud team<input name="cloud_team_size" type="number" min="1" step="1"></label>
-      <label>% of their time on the exit<input name="cloud_team_allocation_pct" type="number" min="5" max="100" step="5"></label>
-    </div>
-    <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1"></label>
-    <label>Target platform<select name="target"></select></label>
-    <div id="dcFields" class="dc-fields" hidden>
-      <label>Where will the hardware go?<select name="dc_facility"></select></label>
-      <label class="check"><input name="dc_dr_site" type="checkbox"> Buy a second site for disaster recovery</label>
-    </div>
-    <div class="pair">
-      <label>Blended day rate<input name="day_rate" type="number" min="0" step="50"></label>
-      <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}"></label>
-    </div>
-    <div class="pair">
-      <label>FX: currency per 1 USD<input name="fx_per_usd" type="number" min="0.0001" step="0.01"></label>
-      <label>Contingency %<input name="contingency_pct" type="number" min="0" max="100" step="5"></label>
-    </div>
-    <div class="pair">
-      <label>Parallel-run months<input name="parallel_run_months" type="number" min="0" max="36" step="1"></label>
-      <label>Materiality (USD/month)<input name="materiality" type="number" min="0" step="5"></label>
-    </div>
-    <label class="check"><input name="regulated" type="checkbox"> Regulated entity (exit plan evidence, regulator notification, assurance testing)</label>
-    <button type="button" id="btnRecalc" class="btn primary no-print">These answers are right: recalculate</button>
-  </form>
+    <form class="card questionnaire" id="qForm" autocomplete="off">
+      <h3>About your organisation</h3>
+      <p class="muted small">These answers drive the estimate. They are saved in this browser only.</p>
+      <p class="q-status" id="qStatus"></p>
+      <input type="hidden" name="confirmed" value="false">
+      <label>Do teams use a standard CI/CD pipeline to create assets?
+        <select name="cicd"></select></label>
+      <label>Do you use Terraform, and is it up to date?
+        <select name="iac"></select></label>
+      <div class="pair">
+        <label>People in the core cloud team<input name="cloud_team_size" type="number" min="1" step="1"></label>
+        <label>% of their time on the exit<input name="cloud_team_allocation_pct" type="number" min="5" max="100" step="5"></label>
+      </div>
+      <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1"></label>
+      <label>Target platform<select name="target"></select></label>
+      <div id="dcFields" class="dc-fields" hidden>
+        <label>Where will the hardware go?<select name="dc_facility"></select></label>
+        <label class="check"><input name="dc_dr_site" type="checkbox"> Buy a second site for disaster recovery</label>
+      </div>
+      <div class="pair">
+        <label>Blended day rate<input name="day_rate" type="number" min="0" step="50"></label>
+        <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}"></label>
+      </div>
+      <div class="pair">
+        <label>FX: currency per 1 USD<input name="fx_per_usd" type="number" min="0.0001" step="0.01"></label>
+        <label>Contingency %<input name="contingency_pct" type="number" min="0" max="100" step="5"></label>
+      </div>
+      <div class="pair">
+        <label>Parallel-run months<input name="parallel_run_months" type="number" min="0" max="36" step="1"></label>
+        <label>Materiality (USD/month)<input name="materiality" type="number" min="0" step="5"></label>
+      </div>
+      <label class="check"><input name="ai_agents" type="checkbox"> Teams use AI coding agents to port code and templates (cuts the work on Lambda, API Gateway, Step Functions, CloudFormation and similar; not on data moves)</label>
+      <label class="check"><input name="regulated" type="checkbox"> Regulated entity (exit plan evidence, regulator notification, assurance testing)</label>
+      <button type="button" id="btnRecalc" class="btn primary no-print">These answers are right: recalculate</button>
+    </form>
     <div class="model-col">
-  <form class="card questionnaire" id="timeForm" autocomplete="off">
-    <h3>Deadline and contract</h3>
-    <label>Regulator or board notice period (months, 0 = none)<input name="exit_deadline_months" type="number" min="0" max="240" step="1"></label>
-    <div class="pair">
-      <label>Enterprise Discount Program ends<input name="edp_end" type="month"></label>
-      <label>EDP annual commit (USD)<input name="edp_annual_commit" type="number" min="0" step="100000"></label>
-    </div>
-    <p class="muted small">Leave the EDP blank if you have none. Saved in this browser only; these do not change the estimate.</p>
-  </form>
-  <form class="card questionnaire" id="resForm" autocomplete="off">
-    <h3>Which accounts are critical?</h3>
-    <p class="muted small" id="resTagNote"></p>
-    <label>Also treat as critical (name contains, comma-separated)<input name="critical_accounts" maxlength="200" placeholder="payments, cards, core-banking"></label>
-    <label>Link speed for moving data out (Gbps)<input name="transfer_gbps" type="number" min="0.1" max="1000" step="1"></label>
-    <p class="muted small">Half the link speed is assumed usable. Saved in this browser only.</p>
-  </form>
+      <form class="card questionnaire" id="timeForm" autocomplete="off">
+        <h3>Deadline and contract</h3>
+        <label>Regulator or board notice period (months, 0 = none)<input name="exit_deadline_months" type="number" min="0" max="240" step="1"></label>
+        <div class="pair">
+          <label>Enterprise Discount Program ends<input name="edp_end" type="month"></label>
+          <label>EDP annual commit (USD)<input name="edp_annual_commit" type="number" min="0" step="100000"></label>
+        </div>
+        <p class="muted small">Leave the EDP blank if you have none. Saved in this browser only; these do not change the estimate.</p>
+      </form>
+      <form class="card questionnaire" id="resForm" autocomplete="off">
+        <h3>Which accounts are critical?</h3>
+        <p class="muted small" id="resTagNote"></p>
+        <label>Also treat as critical (name contains, comma-separated)<input name="critical_accounts" maxlength="200" placeholder="payments, cards, core-banking"></label>
+        <label>Link speed for moving data out (Gbps)<input name="transfer_gbps" type="number" min="0.1" max="1000" step="1"></label>
+        <p class="muted small">Half the link speed is assumed usable. Saved in this browser only.</p>
+      </form>
+      <div class="card questionnaire" id="exclForm">
+        <h3>Leave out of the score and estimate</h3>
+        <p class="muted small">Tick AWS products to ignore, for example Marketplace software you re-contract anyway or a service you are retiring. The report says what was left out.</p>
+        <label class="sr-only" for="exclFilter">Find a product</label>
+        <input id="exclFilter" type="search" placeholder="Find a product" autocomplete="off">
+        <div id="exclList" class="excl-list"></div>
+        <p class="muted small" id="exclNote"></p>
+      </div>
     </div>
   </div>
   <div class="dialog-actions"><button type="button" class="btn primary" id="btnCloseModel">Done</button></div>
 </dialog>
 
+<!-- New scan dialog -->
 <dialog id="scanDialog" class="dialog">
   <form method="dialog" id="scanForm">
     <h2>New scan</h2>
@@ -597,7 +606,7 @@
       <p class="muted small">The OU limits what is scanned. The name filter limits the report and can be changed any time in the bar at the top.</p>
     </fieldset>
     <label>Where would you exit to?<select name="target" id="sTarget"></select></label>
-    <p class="muted small">Sets the target platform for the cost and time estimate (section 5). You can change it there later.</p>
+    <p class="muted small">Sets the target platform for the cost and time estimate (section 5). You can change it later under Exit model.</p>
     <label>Months of spend history<input name="months" type="number" min="1" max="12" value="12"></label>
     <p class="muted small">12 months shows spend growth by product type; fewer months make growth figures noisy.</p>
     <label class="check"><input type="checkbox" name="inventory" id="sInventory"> Deep scan: count resources in each member account</label>

@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
+from typing import Annotated
 
 from pydantic import BaseModel, Field
+
+from .catalog import AGENTIC_FACTORS
 
 CICD_FACTORS = {"standard": 0.85, "partial": 1.0, "manual": 1.3}
 IAC_FACTORS = {"terraform_current": 0.8, "terraform_drift": 1.1, "cloudformation": 1.25, "none": 1.5}
@@ -109,6 +112,14 @@ class Questionnaire(BaseModel):
     contingency_pct: int = Field(25, ge=0, le=100)
     parallel_run_months: int = Field(6, ge=0, le=36)
     regulated: bool = True
+    # AI coding agents translate code and templates: each service's weeks shrink by its catalog
+    # ``agentic`` rating (see catalog.AGENTIC_FACTORS). Off until the organisation says it uses them.
+    ai_agents: bool = False
+    # AWS products the organisation leaves out of the score and the estimate (catalog service names),
+    # for example Marketplace software it re-contracts anyway, or a service it already plans to retire.
+    exclude_services: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list, max_length=300
+    )
     materiality: float = Field(25, ge=0, le=1_000_000)
     # Timing (not the estimate): the months you would have to exit (supplier notice, regulator
     # expectation; 0 = not set), and an enterprise discount agreement's end month and yearly commit.
@@ -244,6 +255,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
         for t, w in a["effort_by_tier"].items():
             by_tier[int(t)] += w
     service_weeks = sum(by_tier.values())
+    agentic_saved = sum(a.get("agentic_saved_weeks", 0.0) for a in accounts)
     material_accounts = sum(1 for a in accounts if a["monthly_spend"] >= q.materiality)
     account_weeks = ACCOUNT_OVERHEAD_WEEKS * material_accounts
 
@@ -331,6 +343,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "person_months": round(total / WEEKS_PER_MONTH, 1),
             "by_tier": {t: round(w * factor, 1) for t, w in by_tier.items()},
             "material_accounts": material_accounts,
+            "agentic_saved_weeks": round(agentic_saved * factor, 1),
         },
         team={
             "capacity_fte": round(capacity, 1),
@@ -379,6 +392,22 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             f"Parallel running: {q.parallel_run_months} months at {PARALLEL_RUN_OVERLAP:.0%} of current AWS spend "
             "(target ramps up as AWS ramps down)"
             + (f", converted at {q.fx_per_usd:g} {q.currency}/USD." if q.currency != "USD" else "."),
+            *(
+                [
+                    "AI coding agents: each service's weeks are cut by its catalog rating: high "
+                    f"{1 - AGENTIC_FACTORS['high']:.0%} (Lambda, API Gateway, Step Functions, CloudFormation), medium "
+                    f"{1 - AGENTIC_FACTORS['medium']:.0%}, low {1 - AGENTIC_FACTORS['low']:.0%}, none for data "
+                    f"moves, hardware and managed-service redesign. Saved {agentic_saved:,.0f} engineer-weeks before "
+                    "the delivery factor; agents still need engineers to review and test their changes."
+                ]
+                if q.ai_agents
+                else []
+            ),
+            *(
+                [f"Left out of the score and estimate at your request: {', '.join(q.exclude_services)}."]
+                if q.exclude_services
+                else []
+            ),
             *dc["assumptions"],
             "Excluded: target-cloud run cost after exit, licence changes, AWS commitments still owed after the "
             "exit (EDP, Savings Plans, RIs; shown under Timing), and data-transfer-out fees (since March 2024 AWS "
