@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-21
+
 ### Changed
 - Loading states are hard to miss: a tinted panel with a large spinner, what it is waiting for, a
   seconds counter and a thicker moving bar (OU list, AWS sign-in, Check access). With reduced motion

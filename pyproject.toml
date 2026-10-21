@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aws-regulatory-risk-review-framework"
-version = "0.7.0"
+version = "0.7.1"
 description = "Web console that scores how hard it is to exit AWS for an Organizational Unit, weighted by spend, with a migration cost and time estimate."
 readme = "README.md"
 license = {text = "Apache-2.0"}
