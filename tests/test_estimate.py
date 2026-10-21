@@ -1,7 +1,15 @@
 import pytest
 
 from exitrisk.demo import build_demo_scan
-from exitrisk.estimate import Questionnaire, count_range, duration_range, money_range, size_multiplier
+from exitrisk.estimate import (
+    Questionnaire,
+    count_range,
+    duration_range,
+    effort_range,
+    money_range,
+    share_range,
+    size_multiplier,
+)
 from exitrisk.scoring import build_report
 
 
@@ -61,10 +69,19 @@ def test_ranges_are_rounded_outward_and_never_a_single_figure():
     assert money_range(74e3, 151e3, "ZAR") == "ZAR 70k to ZAR 160k"
     assert duration_range(31.4, 55.0) == "2.5 to 5 years"
     assert duration_range(7.2, 13.1) == "6 to 15 months"
+    assert duration_range(5.9, 10.4) == "5 to 11 months"  # not "3 to 12": quarters are too coarse here
+    # The share agrees with the rounded money range beside it: $12m to $30m of $30.9m a year.
+    assert money_range(12.1e6, 27.4e6) == "$12m to $30m" and share_range(12.1e6, 27.4e6, 30.9e6) == "35 to 100%"
     assert count_range(343, 687) == "300 to 700"
+    assert effort_range(14, 30) == "14 to 30 person-months"
+    assert effort_range(450, 1000) == "35 to 90 person-years"  # 37.5 to 83 years, widened to round numbers
     est = build_report(build_demo_scan(), questionnaire=Questionnaire(confirmed=True))["estimate"]
     r = est["ranges"]
-    assert r["cost"].count(" to ") == 1 and r["duration"].count(" to ") == 1 and r["effort"].endswith("person-months")
+    assert (
+        r["cost"].count(" to ") == 1
+        and r["duration"].count(" to ") == 1
+        and r["effort"].endswith(("person-months", "person-years"))
+    )
     lo, hi = (float(x.strip("$m")) * 1e6 for x in r["cost"].split(" to "))
     assert lo <= est["cost"]["low"] and hi >= est["cost"]["high"]
 

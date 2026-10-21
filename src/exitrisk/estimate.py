@@ -166,7 +166,11 @@ def money_range(lo: float, hi: float, currency: str = "USD") -> str:
 
 
 def duration_range(lo_months: float, hi_months: float) -> str:
-    """'9 to 15 months' (quarters) or '2.5 to 5 years' (half-years)."""
+    """'5 to 11 months' (months), '9 to 15 months' (quarters) or '2.5 to 5 years' (half-years)."""
+    if hi_months < 12:
+        # Quarters would turn 5.9 to 10.4 months into "3 to 12": too wide to plan with.
+        a = max(math.floor(lo_months), 1)
+        return f"{a} to {max(math.ceil(hi_months), a + 1)} months"
     if hi_months < 24:
         a = max(math.floor(lo_months / 3) * 3, 1)
         b = max(math.ceil(hi_months / 3) * 3, a + 1)
@@ -181,6 +185,19 @@ def count_range(lo: float, hi: float) -> str:
     a, b = _rough(lo, hi)
     fmt = lambda x: f"{x:,.0f}" if x >= 10 else f"{x:g}"  # noqa: E731
     return f"{fmt(a)} to {fmt(b)}"
+
+
+def share_range(lo: float, hi: float, base: float) -> str:
+    """'35 to 100%': [lo, hi] as a share of base, taken from the rounded money range so the two agree."""
+    a, b = _rough(lo, hi)
+    return count_range(100 * a / base, 100 * b / base) + "%"
+
+
+def effort_range(lo_months: float, hi_months: float) -> str:
+    """'300 to 700 person-months', or person-years once the low end is two years or more (easier to grasp)."""
+    if lo_months >= 24:
+        return count_range(lo_months / 12, hi_months / 12) + " person-years"
+    return count_range(lo_months, hi_months) + " person-months"
 
 
 def size_multiplier(monthly_spend: float, count: int | None = None, typical: int | None = None) -> float:
@@ -423,12 +440,8 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
                 calendar_weeks * DURATION_RANGE[0] / WEEKS_PER_MONTH,
                 calendar_weeks * DURATION_RANGE[1] / WEEKS_PER_MONTH,
             ),
-            "effort": count_range(total / WEEKS_PER_MONTH * COST_RANGE[0], total / WEEKS_PER_MONTH * COST_RANGE[1])
-            + " person-months",
-            "pct_of_annual_spend": (
-                count_range(100 * total_cost * COST_RANGE[0] / annual_fx, 100 * total_cost * COST_RANGE[1] / annual_fx)
-                + "%"
-            )
+            "effort": effort_range(total / WEEKS_PER_MONTH * COST_RANGE[0], total / WEEKS_PER_MONTH * COST_RANGE[1]),
+            "pct_of_annual_spend": share_range(total_cost * COST_RANGE[0], total_cost * COST_RANGE[1], annual_fx)
             if annual_fx > 0
             else None,
         },

@@ -199,7 +199,8 @@ refresh every 4 to 6 years) is not in the one-off cost.
 
 **The report quotes ranges, never single figures.** Cost, effort and duration are shown as the
 range above, widened outward to round numbers (e.g. "$7m to $16m", "2.5 to 5 years", "300 to 700
-person-months"). The model's single figures are planning midpoints and appear only in the JSON
+person-months"; effort switches to person-years once the low end is two years or more, e.g. "35 to 90
+person-years"). The model's single figures are planning midpoints and appear only in the JSON
 output; an early-stage estimate quoted to the nearest $100k would claim precision it does not have.
 
 The calendar duration is reported as the **exit window**: how long it would take to leave AWS.

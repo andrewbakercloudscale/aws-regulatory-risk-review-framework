@@ -14,10 +14,20 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   and a measured bar (it works with Reduce motion on, where the animated bar stood still). Close and
   Start a scan now sit next to Check access, above the results.
 - Wording: "250 accounts in 20 regions" instead of "account(s) in region(s)".
+- Key figure tiles are colour coded: blue for facts, orange for risks, purple for estimates. Warmer
+  page background so cards stand out. The console has a favicon.
+- Change in monthly spend chart writes each product type's change in dollars and percent at the bar
+  end; the service under each type also shows its percent.
+- Team size reads "team of 128 full-time people" (it was "team capacity 128.0 FTE"), and engineering
+  effort over two years is given in person-years ("35 to 90 person-years").
 
 ### Fixed
 - Issues (and any other jump to a section) now lands with the section title visible below the
   sticky top bar, at every screen width.
+- Finance figures agree with each other: the "% of annual spend" range is worked out from the rounded
+  cost range shown beside it, short programmes show whole months ("5 to 11 months", not "3 to 12"),
+  and a per-year rate capped at 999% reads "over +999%". New consistency tests check that spend by
+  service, account, tier and product type, the trend, the estimate and the summary text all add up.
 
 ## [0.7.2] - 2026-10-21
 

@@ -262,9 +262,18 @@
     $("#metaList").innerHTML = items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
   }
 
+  // Tiles are tinted by what they say: lock-in and risk (warm), cost and time to act (violet), plain facts (blue).
+  const TILE_TONE = [
+    [/high\/critical|bespoke|rapid exit|correlated|critical accounts|failover|commitments|edp/i, "risk"],
+    [/cost|window|effort|time to|finishes|deadline|notice|people|uplift|infrastructure/i, "est"],
+  ];
   function tile(label, value, sub, provisional) {
-    return `<div class="tile${provisional ? " is-provisional" : ""}"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(value)}${provisional ? ' <span class="prov-tag" title="Uses default answers: answer the questions under Exit model">Provisional</span>' : ""}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
+    const tone = TILE_TONE.find(([re]) => re.test(label))?.[1] || "fact";
+    return `<div class="tile tone-${tone}${provisional ? " is-provisional" : ""}"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(String(value).replace(/person-/g, "person\u2011"))}${provisional ? ' <span class="prov-tag" title="Uses default answers: answer the questions under Exit model">Provisional</span>' : ""}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
   }
+
+  // "team of 128 full-time people": capacity is headcount working in parallel, not years.
+  const teamSize = (fte) => `team of ${num(fte, Number.isInteger(fte) ? 0 : 1)} full-time people`;
 
   function ratingBadge(el, rating, text) {
     el.textContent = text;
@@ -298,7 +307,7 @@
         // Ranges only: a single figure would claim precision an early-stage estimate does not have.
         tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend` : "engineering and parallel running", e.provisional),
         tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, e.provisional),
-        tile("Engineering effort", e.ranges.effort, `team capacity ${num(e.team.capacity_fte, 1)} FTE`, e.provisional),
+        tile("Engineering effort", e.ranges.effort, teamSize(e.team.capacity_fte), e.provisional),
       ]),
     ].join("");
     const x = s.executive;
@@ -428,6 +437,8 @@
     const g = r.growth;
     const sgn = (v, d = 1) => v == null ? "–" : `${v > 0 ? "+" : ""}${num(v, d)}%`;
     const usd = (v) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${money(Math.abs(v))}`;
+    // The model caps annualised growth at 999% (a near-zero first month); say so rather than show a false figure.
+    const perYear = (v) => (v != null && v >= 999 ? "over +999%" : sgn(v));
     if (!g || g.months < 2 || !g.total) {
       $("#growthHead").textContent = "Growth needs at least two months of spend history. Run a scan with 12 months to see it.";
       $("#growthCap").textContent = "";
@@ -442,10 +453,31 @@
       (annual ? ` (${sgn(g.total.annualised_pct)} a year)` : "") +
       `; spend on High/Critical services <span class="${cls(g.lockin.pct)}">${sgn(g.lockin.pct)}</span>` + (annual ? ` (${sgn(g.lockin.annualised_pct)} a year)` : "") +
       `. ${g.lockin.pct != null && g.total.pct != null ? (g.lockin.pct > g.total.pct + 1 ? "Lock-in is growing faster than the estate." : g.lockin.pct < g.total.pct - 1 ? "Lock-in is growing more slowly than the estate." : "Lock-in is growing in line with the estate.") : ""}`;
-    $("#growthCap").textContent = `Monthly spend in ${month(g.last_month)} minus ${month(g.first_month)}, by product type. Red = growth, blue = decline.`;
+    $("#growthCap").textContent = `Change in monthly spend from ${month(g.first_month)} to ${month(g.last_month)}, by product type, in dollars and percent. Under each type, the service that moved most. Red = growth, blue = decline.`;
     const rows = [...g.by_category].sort((a, b) => b.change - a.change);
     // The service that moved a product type most; for Marketplace/Bedrock, the product behind it.
-    const driverText = (d) => `${d.products?.length ? d.products[0] : d.display} ${usd(d.change)}`;
+    const pctOrNew = (v) => (v == null ? "new" : sgn(v, 0));
+    const short = (t) => (t.length > 16 ? `${t.slice(0, 15)}…` : t);
+    const driverText = (d) => `${short(d.products?.length ? d.products[0] : d.display)} ${usd(d.change)} (${pctOrNew(d.change_pct)})`;
+    // Each bar's change in money and percent, written right of the bar (or of zero, for a decline) so
+    // the chart reads without hovering; the right padding fits the longest one.
+    const endText = rows.map((x) => `${usd(x.change)}  ${pctOrNew(x.pct)}`);
+    const endFont = `600 12px ${css("--font")}`;
+    const measure = document.createElement("canvas").getContext("2d");
+    measure.font = endFont;
+    const endPad = Math.ceil(Math.max(0, ...endText.map((t) => measure.measureText(t).width))) + 14;
+    measure.font = `${Chart.defaults.font.size}px ${Chart.defaults.font.family}`;
+    const labelWidth = Math.ceil(Math.max(0, ...rows.flatMap((c) => [c.category, ...(c.drivers?.length ? [driverText(c.drivers[0])] : [])]).map((t) => measure.measureText(t).width))) + 16;
+    const barEnds = { id: "barEnds", afterDatasetsDraw(ch) {
+      const ctx = ch.ctx;
+      ctx.save();
+      ctx.font = endFont;
+      ctx.fillStyle = css("--ink");
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      ch.getDatasetMeta(0).data.forEach((bar, i) => ctx.fillText(endText[i], Math.max(bar.x, bar.base) + 8, bar.y));
+      ctx.restore();
+    } };
     // Match the table beside it so the two cards line up.
     $("#chGrowth").parentElement.style.height = `${Math.max(300, 42 * rows.length + 70)}px`;
     chart("chGrowth", {
@@ -454,9 +486,12 @@
         labels: rows.map((c) => c.drivers?.length ? [c.category, driverText(c.drivers[0])] : c.category),
         datasets: [{ label: "Change in USD / month", data: rows.map((c) => c.change), backgroundColor: rows.map((c) => (c.change >= 0 ? tierColor(5) : tierColor(1))), borderRadius: 3, barPercentage: 0.75 }],
       },
+      plugins: [barEnds],
       options: {
         indexAxis: "y",
-        scales: { x: { ticks: { callback: (v) => usd(v), maxRotation: 0 }, grid: { color: css("--grid") } }, y: { grid: { display: false } } },
+        layout: { padding: { right: endPad } },
+        // Chart.js caps the label column and clips longer labels, so size it to the widest line.
+        scales: { x: { ticks: { callback: (v) => usd(v), maxRotation: 0 }, grid: { color: css("--grid") } }, y: { grid: { display: false }, afterFit: (sc) => { sc.width = Math.max(sc.width, labelWidth); } } },
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => {
           const x = rows[c.dataIndex];
           return [` ${money(x.first)} → ${money(x.last)} a month`, ` ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`,
@@ -465,8 +500,8 @@
       },
     });
     $("#growthTable").innerHTML = `<thead><tr><th>Product type</th><th class="num-cell">${esc(month(g.first_month))}</th><th class="num-cell">${esc(month(g.last_month))}</th><th class="num-cell">Change</th>${annual ? `<th class="num-cell">Per year</th>` : ""}<th class="num-cell" title="Share of this product type's spend on High or Critical services">Lock-in</th></tr></thead><tbody>` +
-      g.by_category.map((c) => `<tr><td>${esc(c.category)}${c.services?.length ? `<div class="hint">${esc(c.services.slice(0, 4).join(", "))}${c.services.length > 4 ? ` +${c.services.length - 4} more` : ""}</div>` : ""}</td><td class="num-cell">${money(c.first)}</td><td class="num-cell">${money(c.last)}</td><td class="num-cell">${sgn(c.pct)}</td>${annual ? `<td class="num-cell">${sgn(c.annualised_pct)}</td>` : ""}<td class="num-cell">${pct(c.lockin_pct)}</td></tr>`).join("") +
-      `<tr class="total"><td><strong>Total</strong></td><td class="num-cell">${money(g.total.first)}</td><td class="num-cell">${money(g.total.last)}</td><td class="num-cell"><strong>${sgn(g.total.pct)}</strong></td>${annual ? `<td class="num-cell">${sgn(g.total.annualised_pct)}</td>` : ""}<td></td></tr></tbody>`;
+      g.by_category.map((c) => `<tr><td>${esc(c.category)}${c.services?.length ? `<div class="hint">${esc(c.services.slice(0, 4).join(", "))}${c.services.length > 4 ? ` +${c.services.length - 4} more` : ""}</div>` : ""}</td><td class="num-cell">${money(c.first)}</td><td class="num-cell">${money(c.last)}</td><td class="num-cell">${sgn(c.pct)}</td>${annual ? `<td class="num-cell">${perYear(c.annualised_pct)}</td>` : ""}<td class="num-cell">${pct(c.lockin_pct)}</td></tr>`).join("") +
+      `<tr class="total"><td><strong>Total</strong></td><td class="num-cell">${money(g.total.first)}</td><td class="num-cell">${money(g.total.last)}</td><td class="num-cell"><strong>${sgn(g.total.pct)}</strong></td>${annual ? `<td class="num-cell">${perYear(g.total.annualised_pct)}</td>` : ""}<td></td></tr></tbody>`;
     $("#growthNote").textContent = annual
       ? "Per year = the first-to-last-month change annualised. Amortised spend: Savings Plans and RIs are spread over the months they cover."
       : `Only ${g.months} months of history, so no annual rate is shown: a short window makes it misleading. Scan 12 months for a reliable trend.`;
@@ -852,7 +887,7 @@
         tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend` : "", e.provisional),
         tile("Exit window", e.ranges.duration, `bound by ${e.duration.constrained_by}`, e.provisional),
         d?.set && d.status !== "unknown" ? tile("Notice period", d.label, `${d.months} months${d.short_months ? `; slow end ${num(d.short_months, 0)} months over` : ""}`, e.provisional)
-          : tile("Engineering effort", e.ranges.effort, `team capacity ${num(e.team.capacity_fte, 1)} FTE`, e.provisional),
+          : tile("Engineering effort", e.ranges.effort, teamSize(e.team.capacity_fte), e.provisional),
       ]),
     ].join("");
     $("#opTierBar").innerHTML = r.tiers.map((v) => `<i style="width:${v.pct}%;background:${tierColor(v.tier)}" title="${esc(v.label)}"></i>`).join("");
@@ -1140,7 +1175,7 @@
 
     $("#mrBuildTiles").innerHTML = [
       tile("Cost to achieve (one-off)", rg.build_cost, "engineering, plus running the region while it is built", prov),
-      tile("Time to achieve", rg.build_duration, `bound by ${s.build.constrained_by} · capacity ${num(s.build.capacity_fte, 1)} FTE`, prov),
+      tile("Time to achieve", rg.build_duration, `bound by ${s.build.constrained_by} · ${teamSize(s.build.capacity_fte)}`, prov),
       tile("Engineering effort", rg.build_effort, plural(s.build.material_accounts, "material account"), prov),
     ].join("");
     const parts = s.build.parts;

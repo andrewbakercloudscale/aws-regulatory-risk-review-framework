@@ -23,7 +23,7 @@ from typing import Annotated
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -352,7 +352,8 @@ def create_app(allow_remote: bool = False) -> FastAPI:
 
     @app.get("/favicon.ico")
     def favicon():
-        return Response(status_code=204)
+        # Browsers that ignore <link rel="icon"> still ask for /favicon.ico; give them the same SVG.
+        return FileResponse(str(WEB_DIR.joinpath("favicon.svg")), media_type="image/svg+xml")
 
     app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
     return app

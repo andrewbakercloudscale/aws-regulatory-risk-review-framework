@@ -2,8 +2,8 @@
    Colours are role tokens; dark values are their own validated steps, not an inversion. */
 :root {
   color-scheme: light;
-  --page: #f6f6f3;
-  --surface: #fcfcfb;
+  --page: #eeede8;
+  --surface: #ffffff;
   --surface-2: #f1f0ec;
   --ink: #0b0b0b;
   --ink-2: #52514e;
@@ -17,6 +17,7 @@
   --control-line: #cfcdc4; --control-line-hover: #a9a79e;
   --focus-ring: rgba(42, 120, 214, .22);
   --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%2352514e' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --tone-fact: #2a78d6; --tone-risk: #e0673a; --tone-est: #7357c9;
   --t1: #2a78d6; --t2: #86b6ef; --t3: #a9a79e; --t4: #ec835a; --t5: #d03b3b;
   --sev-critical: #d03b3b; --sev-error: #ec835a; --sev-warning: #fab219; --sev-info: #86b6ef;
   --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
@@ -31,7 +32,7 @@
     --border: rgba(255,255,255,0.10); --accent: #3987e5;
     --accent-hover: #4b95ec; --control-line: #43423e; --control-line-hover: #5d5c57; --focus-ring: rgba(57, 135, 229, .35);
     --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23c3c2b7' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-        --t1: #3987e5; --t2: #6da7ec; --t3: #77756f; --t4: #ec835a; --t5: #e66767;
+        --tone-fact: #3987e5; --tone-risk: #ec835a; --tone-est: #9a85e6; --t1: #3987e5; --t2: #6da7ec; --t3: #77756f; --t4: #ec835a; --t5: #e66767;
     --shadow: none;
   }
 }
@@ -42,7 +43,7 @@
   --border: rgba(255,255,255,0.10); --accent: #3987e5;
     --accent-hover: #4b95ec; --control-line: #43423e; --control-line-hover: #5d5c57; --focus-ring: rgba(57, 135, 229, .35);
     --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23c3c2b7' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-      --t1: #3987e5; --t2: #6da7ec; --t3: #77756f; --t4: #ec835a; --t5: #e66767;
+      --tone-fact: #3987e5; --tone-risk: #ec835a; --tone-est: #9a85e6; --t1: #3987e5; --t2: #6da7ec; --t3: #77756f; --t4: #ec835a; --t5: #e66767;
   --shadow: none;
 }
 
@@ -138,7 +139,9 @@ figure { margin: 0; }
 
 /* Hero & tiles */
 .hero-row { display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-bottom: 16px; }
-.hero { margin: 0; display: flex; flex-direction: column; justify-content: flex-start; }
+.hero { margin: 0; display: flex; flex-direction: column; justify-content: flex-start;
+  background: linear-gradient(165deg, color-mix(in srgb, var(--tone-fact) 13%, var(--surface)) 0%, var(--surface) 70%);
+  border-color: color-mix(in srgb, var(--tone-fact) 25%, var(--border)); }
 .hero-label { color: var(--ink-2); font-size: 13px; font-weight: 550; }
 .hero-value { font-size: 64px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; margin: 8px 0 10px; }
 .hero-of { font-size: 22px; color: var(--muted); font-weight: 500; margin-left: 4px; letter-spacing: 0; }
@@ -152,9 +155,15 @@ figure { margin: 0; }
 .scale-labels span:last-child { text-align: right; }
 .scale-labels { display: grid; grid-template-columns: 25fr 15fr 15fr 15fr 30fr; font-size: 10.5px; color: var(--muted); margin-top: 6px; }
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
-.tile-label { font-size: 12.5px; color: var(--ink-2); }
-.tile-value { font-size: 26px; font-weight: 680; letter-spacing: -0.02em; margin-top: 4px; }
+/* Each tile carries a tone (set by app.js): a coloured top edge, a soft wash of the same colour and a matching label. */
+.tile { --tone: var(--tone-fact); position: relative; overflow: hidden; border: 1px solid color-mix(in srgb, var(--tone) 22%, var(--border)); border-radius: var(--radius);
+  padding: 16px 18px 14px; box-shadow: var(--shadow);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--tone) 11%, var(--surface)) 0%, var(--surface) 75%); }
+.tile::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--tone); }
+.tile.tone-risk { --tone: var(--tone-risk); }
+.tile.tone-est { --tone: var(--tone-est); }
+.tile-label { font-size: 12.5px; font-weight: 600; color: color-mix(in srgb, var(--tone) 55%, var(--ink-2)); }
+.tile-value { font-size: 26px; font-weight: 680; letter-spacing: -0.02em; line-height: 1.15; margin: 6px 0 4px; }
 .tile-sub { font-size: 12px; color: var(--muted); }
 .narrative ul { margin: 0; padding-left: 18px; }
 .narrative li { margin: 4px 0; font-size: 14.5px; }

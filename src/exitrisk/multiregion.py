@@ -34,9 +34,10 @@ from .estimate import (
     REGULATED_FACTOR,
     WEEKS_PER_MONTH,
     Questionnaire,
-    count_range,
     duration_range,
+    effort_range,
     money_range,
+    share_range,
     size_multiplier,
 )
 from .filtering import AccountFilter
@@ -612,12 +613,7 @@ def build_multiregion(
         "infra_annual": mr(infra_annual_fx * COST_RANGE[0], infra_annual_fx * COST_RANGE[1]),
         "support_annual": mr(support_annual_fx * COST_RANGE[0], support_annual_fx * COST_RANGE[1]),
         "staff_annual": mr(staff_annual * STAFF_RANGE[0], staff_annual * STAFF_RANGE[1]),
-        "uplift_pct": (
-            count_range(
-                100 * run_annual * COST_RANGE[0] / sel_annual_fx, 100 * run_annual * COST_RANGE[1] / sel_annual_fx
-            )
-            + "%"
-        )
+        "uplift_pct": share_range(run_annual * COST_RANGE[0], run_annual * COST_RANGE[1], sel_annual_fx)
         if sel_annual_fx > 0 and run_annual > 0
         else None,
         "build_cost": mr(build_cost * COST_RANGE[0], build_cost * COST_RANGE[1]),
@@ -626,10 +622,9 @@ def build_multiregion(
         )
         if calendar_weeks
         else "–",
-        "build_effort": count_range(
+        "build_effort": effort_range(
             total_weeks / WEEKS_PER_MONTH * COST_RANGE[0], total_weeks / WEEKS_PER_MONTH * COST_RANGE[1]
         )
-        + " person-months"
         if total_weeks
         else "–",
         "staff": f"{math.floor(fte * STAFF_RANGE[0]):,.0f} to {math.ceil(fte * STAFF_RANGE[1]):,.0f}" if fte else "–",
