@@ -53,11 +53,26 @@ def load_scan(scan_id: str) -> dict:
         return json.load(fh)
 
 
+# Scan files run to several MB; listing them should not parse every one on each page load.
+# Summaries are kept per file and re-read only when the file changes.
+_summaries: dict[str, tuple[tuple[int, int], dict]] = {}
+
+
 def list_scans() -> list[dict]:
     settings.ensure_dirs()
     out = []
-    for path in sorted(settings.scans_dir.glob("*.json"), reverse=True):
-        if path.name.startswith(".tmp-"):
+    paths = [p for p in sorted(settings.scans_dir.glob("*.json"), reverse=True) if not p.name.startswith(".tmp-")]
+    for gone in set(_summaries) - {str(p) for p in paths}:
+        _summaries.pop(gone, None)
+    for path in paths:
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        stamp = (st.st_mtime_ns, st.st_size)
+        hit = _summaries.get(str(path))
+        if hit and hit[0] == stamp:
+            out.append(hit[1])
             continue
         try:
             with path.open(encoding="utf-8") as fh:
@@ -65,19 +80,19 @@ def list_scans() -> list[dict]:
         except (OSError, json.JSONDecodeError) as exc:
             log.warning("skipping unreadable scan file %s: %s", path.name, exc)
             continue
-        out.append(
-            {
-                "id": s["id"],
-                "created_at": s.get("created_at"),
-                "status": s.get("status"),
-                "mode": s.get("mode"),
-                "ou": (s.get("ou") or {}).get("path"),
-                "profile": (s.get("params") or {}).get("profile"),
-                "accounts": len(s.get("accounts", [])),
-                "label": s.get("label", ""),
-                "target": (s.get("params") or {}).get("target"),
-            }
-        )
+        summary = {
+            "id": s["id"],
+            "created_at": s.get("created_at"),
+            "status": s.get("status"),
+            "mode": s.get("mode"),
+            "ou": (s.get("ou") or {}).get("path"),
+            "profile": (s.get("params") or {}).get("profile"),
+            "accounts": len(s.get("accounts", [])),
+            "label": s.get("label", ""),
+            "target": (s.get("params") or {}).get("target"),
+        }
+        _summaries[str(path)] = (stamp, summary)
+        out.append(summary)
     return out
 
 

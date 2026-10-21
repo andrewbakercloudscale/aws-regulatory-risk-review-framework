@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 from dataclasses import dataclass
 
 import boto3
 
 from ..aws_session import BOTO_CONFIG
 from ..logging_config import get_logger
+from ..parallel import pmap
 
 log = get_logger("organizations")
 
@@ -58,10 +60,36 @@ def list_ou_tree(session: boto3.Session) -> dict:
     # One level at a time, siblings in parallel: a 10-OU tree takes ~3 round trips instead of ~11.
     # Few workers, because Organizations throttles hard (botocore retries what does get throttled).
     level = [tree]
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        while level:
-            level = [child for children in pool.map(expand, level) for child in children]
+    while level:
+        level = [child for children in pmap(expand, level) for child in children]
     return tree
+
+
+# The OU tree changes rarely and takes ~10 s to read in a large organisation, so the console's OU
+# picker and the scan that follows share one read. Keyed by AWS profile.
+TREE_CACHE_SECONDS = 900
+_tree_cache: dict[str, tuple[float, dict, dict]] = {}
+_tree_lock = threading.Lock()
+
+
+def cached_org_and_tree(profile: str | None) -> tuple[dict, dict] | None:
+    """(describe_org, list_ou_tree) for this profile if read in the last 15 minutes."""
+    with _tree_lock:
+        hit = _tree_cache.get(profile or "")
+    if hit and time.monotonic() - hit[0] < TREE_CACHE_SECONDS:
+        log.info("OU tree from cache (read %d s ago)", time.monotonic() - hit[0])
+        return hit[1], hit[2]
+    return None
+
+
+def remember_org_and_tree(profile: str | None, org: dict, tree: dict) -> None:
+    with _tree_lock:
+        _tree_cache[profile or ""] = (time.monotonic(), org, tree)
+
+
+def clear_tree_cache() -> None:
+    with _tree_lock:
+        _tree_cache.clear()
 
 
 def find_ou(tree: dict, ou_id: str) -> dict | None:
@@ -76,25 +104,28 @@ def find_ou(tree: dict, ou_id: str) -> dict | None:
 
 def list_accounts_under(session: boto3.Session, ou: dict) -> list[Account]:
     """Every account in ``ou`` and all of its descendant OUs."""
-    client = _client(session)
-    paginator = client.get_paginator("list_accounts_for_parent")
-    accounts: list[Account] = []
-    stack = [ou]
+    paginator = _client(session).get_paginator("list_accounts_for_parent")
+    nodes, stack = [], [ou]
     while stack:
         node = stack.pop()
-        for page in paginator.paginate(ParentId=node["id"]):
-            for a in page["Accounts"]:
-                accounts.append(
-                    Account(
-                        id=a["Id"],
-                        name=a.get("Name", a["Id"]),
-                        email=a.get("Email", ""),
-                        status=a.get("Status", a.get("State", "UNKNOWN")),
-                        ou_id=node["id"],
-                        ou_path=node["path"],
-                    )
-                )
+        nodes.append(node)
         stack.extend(node["children"])
+
+    def direct(node: dict) -> list[Account]:
+        return [
+            Account(
+                id=a["Id"],
+                name=a.get("Name", a["Id"]),
+                email=a.get("Email", ""),
+                status=a.get("Status", a.get("State", "UNKNOWN")),
+                ou_id=node["id"],
+                ou_path=node["path"],
+            )
+            for page in paginator.paginate(ParentId=node["id"])
+            for a in page["Accounts"]
+        ]
+
+    accounts = [a for found in pmap(direct, nodes) for a in found]
     log.info("found %d accounts under %s", len(accounts), ou["path"])
     return accounts
 
@@ -111,8 +142,6 @@ def fetch_account_tags(session: boto3.Session, account_ids: list[str]) -> dict[s
                 tags.setdefault(t["Key"].strip(), t["Value"].strip())
         return account_id, tags
 
-    # Organizations throttles hard: few workers, botocore retries the rest.
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        out = dict(pool.map(one, account_ids))
+    out = dict(pmap(one, account_ids))
     log.info("read tags for %d accounts (%d tagged)", len(out), sum(1 for t in out.values() if t))
     return out

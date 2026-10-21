@@ -23,6 +23,7 @@ from .collectors import cost, inventory, organizations
 from .config import settings
 from .issues import Issue, describe_exception, is_fatal_auth_error
 from .logging_config import get_logger, run_id_var
+from .parallel import background
 
 log = get_logger("scanner")
 
@@ -132,6 +133,7 @@ def _run_safely(job: ScanJob) -> None:
         job.update("failed", 100, msg)
         store.save_scan(_document(job, job.data, failed=True))
     finally:
+        job.data = {}  # saved to disk by now; a large organisation's scan holds tens of MB
         run_id_var.reset(token)
 
 
@@ -185,8 +187,12 @@ def run_scan(job: ScanJob) -> dict:
     # 2. Organization and accounts.
     job.update("organizations", 15, "Reading the organization's OU tree")
     try:
-        data["org"] = organizations.describe_org(session)
-        tree = organizations.list_ou_tree(session)
+        if hit := organizations.cached_org_and_tree(p.profile):  # the console's OU picker just read it
+            data["org"], tree = hit
+        else:
+            data["org"] = organizations.describe_org(session)
+            tree = organizations.list_ou_tree(session)
+            organizations.remember_org_and_tree(p.profile, data["org"], tree)
         ous = [organizations.find_ou(tree, i) for i in p.ous] if p.ous else [tree]
         missing = [i for i, ou in zip(p.ous, ous, strict=False) if ou is None]
         if missing:
@@ -251,33 +257,12 @@ def run_scan(job: ScanJob) -> dict:
         return doc
     job.update("organizations", 22, f"{len(accounts)} account(s) in {data['ou']['path']}")
 
-    # 2b. Account tags: business criticality and channel. Optional, so a refusal is a warning.
+    # 2b. Account tags: business criticality and channel. Organizations, not Cost Explorer, so they
+    # are read alongside the cost queries below and collected at the end.
+    tags_read = None
     if data["ou"]["id"] != "-":
-        job.update("organizations", 23, "Reading account tags (criticality, channel)")
-        try:
-            tags = organizations.fetch_account_tags(session, [a["id"] for a in data["accounts"]])
-            for a in data["accounts"]:
-                a["tags"] = tags.get(a["id"], {})
-        except Exception as exc:  # optional data: never fail a scan for it
-            if not isinstance(exc, (ClientError, BotoCoreError)):
-                log.exception("account tags failed with an unexpected error")
-            code, msg, hint = describe_exception(exc)
-            job.add_issue(
-                Issue(
-                    "warning",
-                    "organizations",
-                    f"account tags unavailable: {msg}",
-                    " ".join(
-                        x
-                        for x in (
-                            hint,
-                            "Grant organizations:ListTagsForResource, or name the critical accounts in the console.",
-                        )
-                        if x
-                    ),
-                    error_code=code,
-                )
-            )
+        ids = [a["id"] for a in data["accounts"]]
+        tags_read = background(lambda: organizations.fetch_account_tags(session, ids))
     job.update("organizations", 25, f"{len(accounts)} account(s) in {data['ou']['path']}")
 
     # 3. Spend per account per service. Without this there is no score, so a failure is fatal.
@@ -368,6 +353,34 @@ def run_scan(job: ScanJob) -> dict:
                 error_code=code,
             )
         )
+
+    # Account tags, read in the background since step 2b. Optional, so a refusal is a warning.
+    if tags_read:
+        job.update("organizations", 60, "Reading account tags (criticality, channel)")
+        try:
+            tags = tags_read.result()
+            for a in data["accounts"]:
+                a["tags"] = tags.get(a["id"], {})
+        except Exception as exc:  # optional data: never fail a scan for it
+            if not isinstance(exc, (ClientError, BotoCoreError)):
+                log.exception("account tags failed with an unexpected error")
+            code, msg, hint = describe_exception(exc)
+            job.add_issue(
+                Issue(
+                    "warning",
+                    "organizations",
+                    f"account tags unavailable: {msg}",
+                    " ".join(
+                        x
+                        for x in (
+                            hint,
+                            "Grant organizations:ListTagsForResource, or name the critical accounts in the console.",
+                        )
+                        if x
+                    ),
+                    error_code=code,
+                )
+            )
 
     # 4. Optional deep inventory through a role in each member account.
     if p.inventory:

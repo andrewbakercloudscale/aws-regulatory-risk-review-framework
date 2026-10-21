@@ -48,9 +48,6 @@ WEB_DIR = resources.files("exitrisk").joinpath("web")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
 
 
-OU_CACHE_SECONDS = 900
-
-
 class OUQuery(BaseModel):
     profile: str | None = None
     refresh: bool = False  # bypass the cache (the ↻ button)
@@ -217,18 +214,16 @@ def create_app(allow_remote: bool = False) -> FastAPI:
             "defaults": Questionnaire().model_dump(),
         }
 
-    ou_cache: dict[str, tuple[float, dict]] = {}  # profile -> (when, OU tree); OUs rarely change
-
     @app.post("/api/org")
     def org(q: OUQuery):
         """Read the OU tree. With aws-cli-zsp this call is where Touch ID is first requested."""
         try:
-            hit = ou_cache.get(q.profile or "")
-            if hit and not q.refresh and time.monotonic() - hit[0] < OU_CACHE_SECONDS:
-                return hit[1]
+            hit = None if q.refresh else organizations.cached_org_and_tree(q.profile)
+            if hit:
+                return {"org": hit[0], "tree": hit[1]}
             session = make_session(q.profile)
             out = {"tree": organizations.list_ou_tree(session), "org": organizations.describe_org(session)}
-            ou_cache[q.profile or ""] = (time.monotonic(), out)
+            organizations.remember_org_and_tree(q.profile, out["org"], out["tree"])
             return out
         except Exception as exc:
             code, msg, hint = describe_exception(exc)

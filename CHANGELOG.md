@@ -12,6 +12,12 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   restarts safely, and `/api/health` and `/api/scans` list the scans still running.
 
 ### Changed
+- Faster scans in large organisations: Cost Explorer queries by region, storage service and
+  reservation type run four at a time; account tags are read alongside the cost queries; accounts
+  under the chosen OUs are listed four OUs at a time; the scan reuses the OU tree the console just
+  read (15 minutes) instead of reading it again.
+- Lower memory: a finished scan's data is released once saved, the scan list reads each file only
+  when it changes, and repeated account and service names in cost lines share one copy.
 - AWS sign-in, Check access and loading OUs in New scan show a moving progress bar and say what they are waiting for while
   accounts, roles and the access checks load.
 

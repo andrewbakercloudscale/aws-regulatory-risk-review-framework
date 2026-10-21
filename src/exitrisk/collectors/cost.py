@@ -9,6 +9,7 @@ is the fairest measure of how much each workload actually costs to run.
 from __future__ import annotations
 
 import re
+import sys
 from datetime import date
 
 import boto3
@@ -16,6 +17,7 @@ from botocore.exceptions import ClientError
 
 from ..aws_session import BOTO_CONFIG
 from ..logging_config import get_logger
+from ..parallel import pmap
 
 log = get_logger("cost")
 
@@ -69,7 +71,13 @@ def _query(client, start: str, end: str, account_ids: list[str], billing_entity:
             for g in period.get("Groups", []):
                 account_id, service = g["Keys"]
                 amount = float(g["Metrics"]["AmortizedCost"]["Amount"])
-                row = {"month": month, "account_id": account_id, "service": service, "amount": amount}
+                # Thousands of rows repeat a few hundred names: share one copy of each.
+                row = {
+                    "month": month,
+                    "account_id": sys.intern(account_id),
+                    "service": sys.intern(service),
+                    "amount": amount,
+                }
                 if billing_entity == "AWS Marketplace":
                     # One catalog entry for all third-party software; keep the product so the report can name it.
                     billed_as = BEDROCK_SERVICE if service.endswith(_BEDROCK_SUFFIX) else MARKETPLACE_SERVICE
@@ -124,19 +132,20 @@ def fetch_region_costs(session: boto3.Session, account_ids: list[str], months: i
             {"Not": {"Dimensions": {"Key": "RECORD_TYPE", "Values": _EXCLUDED_RECORD_TYPES}}},
         ]
         regions = _grouped(client, start, end, {"And": base}, ["REGION"])
-        for (region,), total in sorted(regions.items(), key=lambda kv: -kv[1]):
-            if total <= 0:
-                continue
+        used = [r for (r,), total in sorted(regions.items(), key=lambda kv: -kv[1]) if total > 0]
+
+        def by_region(region: str, base=base) -> dict[tuple, float]:
             filt = {"And": [*base, {"Dimensions": {"Key": "REGION", "Values": [region]}}]}
-            for (account_id, service), amount in _grouped(
-                client, start, end, filt, ["LINKED_ACCOUNT", "SERVICE"]
-            ).items():
+            return _grouped(client, start, end, filt, ["LINKED_ACCOUNT", "SERVICE"])
+
+        for region, spend in zip(used, pmap(by_region, used), strict=True):
+            for (account_id, service), amount in spend.items():
                 if amount / months >= _MIN_REGION_MONTHLY:
                     rows.append(
                         {
-                            "account_id": account_id,
-                            "service": service,
-                            "region": region or "NoRegion",
+                            "account_id": sys.intern(account_id),
+                            "service": sys.intern(service),
+                            "region": sys.intern(region or "NoRegion"),
                             "monthly": round(amount / months, 4),
                         }
                     )
@@ -181,51 +190,61 @@ def fetch_storage(session: boto3.Session, account_ids: list[str], services: set[
     """
     client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
     start, end = month_window(1)
-    rows: list[dict] = []
-    for service in (s for s in STORAGE_SERVICES if s in services):
-        for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER):
-            filt = {
-                "And": [
-                    {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER]}},
-                    {"Dimensions": {"Key": "SERVICE", "Values": [service]}},
-                ]
+    queries = [
+        (service, account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER])
+        for service in STORAGE_SERVICES
+        if service in services
+        for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER)
+    ]
+
+    def one(query: tuple[str, list[str]]) -> list[dict]:
+        service, chunk = query
+        rows: list[dict] = []
+        filt = {
+            "And": [
+                {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": chunk}},
+                {"Dimensions": {"Key": "SERVICE", "Values": [service]}},
+            ]
+        }
+        token = None
+        while True:
+            kwargs = {
+                "TimePeriod": {"Start": start, "End": end},
+                "Granularity": "MONTHLY",
+                "Metrics": ["UsageQuantity"],
+                "GroupBy": [
+                    {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
+                    {"Type": "DIMENSION", "Key": "USAGE_TYPE"},
+                ],
+                "Filter": filt,
             }
-            token = None
-            while True:
-                kwargs = {
-                    "TimePeriod": {"Start": start, "End": end},
-                    "Granularity": "MONTHLY",
-                    "Metrics": ["UsageQuantity"],
-                    "GroupBy": [
-                        {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
-                        {"Type": "DIMENSION", "Key": "USAGE_TYPE"},
-                    ],
-                    "Filter": filt,
-                }
-                if token:
-                    kwargs["NextPageToken"] = token
-                resp = client.get_cost_and_usage(**kwargs)
-                for period in resp["ResultsByTime"]:
-                    for g in period.get("Groups", []):
-                        usage = g["Metrics"]["UsageQuantity"]
-                        gb = float(usage["Amount"])
-                        account_id, usage_type = g["Keys"]
-                        if usage.get("Unit") not in ("GB-Mo", "GB-Month") or gb < 1:
-                            continue
-                        if any(m in usage_type for m in _NOT_HELD):
-                            continue
-                        rows.append(
-                            {
-                                "account_id": account_id,
-                                "service": service,
-                                "usage_type": usage_type,
-                                "kind": storage_kind(service, usage_type),
-                                "gb": round(gb, 1),
-                            }
-                        )
-                token = resp.get("NextPageToken")
-                if not token:
-                    break
+            if token:
+                kwargs["NextPageToken"] = token
+            resp = client.get_cost_and_usage(**kwargs)
+            for period in resp["ResultsByTime"]:
+                for g in period.get("Groups", []):
+                    usage = g["Metrics"]["UsageQuantity"]
+                    gb = float(usage["Amount"])
+                    account_id, usage_type = g["Keys"]
+                    if usage.get("Unit") not in ("GB-Mo", "GB-Month") or gb < 1:
+                        continue
+                    if any(m in usage_type for m in _NOT_HELD):
+                        continue
+                    rows.append(
+                        {
+                            "account_id": account_id,
+                            "service": service,
+                            "usage_type": usage_type,
+                            "kind": storage_kind(service, usage_type),
+                            "gb": round(gb, 1),
+                        }
+                    )
+            token = resp.get("NextPageToken")
+            if not token:
+                break
+        return rows
+
+    rows = [r for found in pmap(one, queries) for r in found]
     log.info("cost explorer storage: %d rows, %d account(s), month %s", len(rows), len(account_ids), start[:7])
     return rows
 
@@ -342,8 +361,8 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
         if not token:
             break
 
-    seen: set[str] = set()
-    for service in RESERVATION_SERVICES:
+    def reservations(service: str) -> list[dict]:
+        groups: list[dict] = []
         token = None
         while True:
             kwargs = {
@@ -357,35 +376,38 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
             except ClientError as exc:
                 if exc.response.get("Error", {}).get("Code") in _SKIPPABLE:
                     log.info("no reservation data for %s: %s", service, exc)
-                    break
+                    return groups
                 raise
-            for period_out in resp.get("UtilizationsByTime", []):
-                for g in period_out.get("Groups", []):
-                    rid = g.get("Value") or _attrs(g.get("Attributes")).get("subscriptionid", "")
-                    if rid in seen:
-                        continue
-                    seen.add(rid)
-                    a = _attrs(g.get("Attributes"))
-                    keys_seen.update(a)
-                    u = g.get("Utilization") or {}
-                    out.append(
-                        {
-                            "kind": "reservation",
-                            "id": rid,
-                            "type": "Reserved " + (a.get("instancetype") or "capacity"),
-                            "service": service,
-                            "account_id": a.get("accountid", ""),
-                            "region": a.get("region", ""),
-                            "term": (term := _term(a)),
-                            "payment": a.get("subscriptiontype", "") or a.get("paymentoption", ""),
-                            "end": _end(a, term),
-                            "monthly": round(float(u.get("TotalAmortizedFee", 0) or 0), 2),
-                            "utilization_pct": _pct(u.get("UtilizationPercentage")),
-                        }
-                    )
+            groups += [g for p in resp.get("UtilizationsByTime", []) for g in p.get("Groups", [])]
             token = resp.get("NextPageToken")
             if not token:
-                break
+                return groups
+
+    seen: set[str] = set()
+    for service, groups in zip(RESERVATION_SERVICES, pmap(reservations, RESERVATION_SERVICES), strict=True):
+        for g in groups:
+            rid = g.get("Value") or _attrs(g.get("Attributes")).get("subscriptionid", "")
+            if rid in seen:
+                continue
+            seen.add(rid)
+            a = _attrs(g.get("Attributes"))
+            keys_seen.update(a)
+            u = g.get("Utilization") or {}
+            out.append(
+                {
+                    "kind": "reservation",
+                    "id": rid,
+                    "type": "Reserved " + (a.get("instancetype") or "capacity"),
+                    "service": service,
+                    "account_id": a.get("accountid", ""),
+                    "region": a.get("region", ""),
+                    "term": (term := _term(a)),
+                    "payment": a.get("subscriptiontype", "") or a.get("paymentoption", ""),
+                    "end": _end(a, term),
+                    "monthly": round(float(u.get("TotalAmortizedFee", 0) or 0), 2),
+                    "utilization_pct": _pct(u.get("UtilizationPercentage")),
+                }
+            )
     undated = [c for c in out if not c["end"]]
     if undated:
         # Timing cannot place these; the attribute names show what AWS sent instead.
