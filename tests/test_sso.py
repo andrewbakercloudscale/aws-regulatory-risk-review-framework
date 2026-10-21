@@ -125,3 +125,19 @@ def test_sso_api(monkeypatch):
     assert c.get("/api/sso/login/nope").status_code == 404
     r = c.post("/api/sso/profile", json={"session": "corp", "account_id": "12", "role": "x"}, headers=H)
     assert r.status_code == 422
+
+
+def test_logout_ends_token_and_removes_cache(monkeypatch, tmp_path):
+    _signed_in()
+    portal = _client("sso")
+    stub = Stubber(portal)
+    stub.add_response("logout", {}, {"accessToken": "tok"})
+    stub.activate()
+    monkeypatch.setattr(sso, "_portal", lambda region: portal)
+    app = TestClient(create_app(), base_url="http://127.0.0.1")
+    assert app.post("/api/sso/logout", json={"session": "corp"}, headers=H).status_code == 200
+    stub.assert_no_pending_responses()
+    assert not sso._cache_file("corp").exists() and not sso.list_sessions()[0]["signed_in"]
+    # Signing out twice, or after the token expired, is fine; an unknown portal is not.
+    assert app.post("/api/sso/logout", json={"session": "corp"}, headers=H).status_code == 200
+    assert app.post("/api/sso/logout", json={"session": "nope"}, headers=H).status_code == 400

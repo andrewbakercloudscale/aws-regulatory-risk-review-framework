@@ -730,12 +730,17 @@
       <p class="small">Tab didn't open? <a id="ssoLink" target="_blank" rel="noopener noreferrer">Open the AWS approval page</a>.</p>
     </div>
     <div id="ssoUse" class="subpanel" hidden>
-      <p class="small muted">Pick the account and role to scan with. For an organisation-wide view use the <strong>management account</strong>; any read-only role that can call Organizations and Cost Explorer works.</p>
-      <label>Account<select id="ssoAccount"></select></label>
-      <label>Role<select id="ssoRole"></select></label>
+      <p class="small muted">This only picks the credentials. The scan covers the OUs you choose next, the whole organisation by default. Sign in through the <strong>management account</strong> so the scan can see every account.</p>
+      <p id="ssoVia" class="small" hidden></p>
+      <div id="ssoPick">
+        <label>Sign in through account<select id="ssoAccount"></select></label>
+        <label>Role<select id="ssoRole"></select></label>
+        <p class="hint">Only the roles IAM Identity Center gives you in this account; any read-only role that can call Organizations and Cost Explorer works.</p>
+      </div>
     </div>
     <p id="ssoError" class="error-text" role="alert"></p>
     <div class="dialog-actions">
+      <button type="button" id="btnSsoLogout" class="btn push-left" hidden>Sign out</button>
       <button value="cancel" class="btn ghost" formnovalidate>Close</button>
       <button type="button" id="btnSsoUse" class="btn primary" hidden>Next: check access</button>
     </div>

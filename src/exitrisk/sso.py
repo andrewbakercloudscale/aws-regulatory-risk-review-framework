@@ -286,6 +286,18 @@ def _write_token(session_name: str, start_url: str, region: str, reg: dict, tok:
     os.replace(tmp, path)
 
 
+def logout(session_name: str) -> None:
+    """Sign out like ``aws sso logout``: end the token at AWS (best effort) and delete the cached copy."""
+    path = _cache_file(session_name)
+    token = load_token(session_name)
+    if token:
+        try:
+            _portal(token["region"]).logout(accessToken=token["accessToken"])
+        except Exception as exc:  # the local token is removed either way
+            log.info("SSO logout call for %s failed: %s", session_name, exc)
+    path.unlink(missing_ok=True)
+
+
 # ---------------------------------------------------------------- accounts and profiles
 
 

@@ -1837,6 +1837,7 @@
     const s = currentSso();
     $("#ssoUse").hidden = true;
     $("#btnSsoUse").hidden = true;
+    $("#btnSsoLogout").hidden = true;
     $("#btnSsoLogin").disabled = !s;
     if (!s) { $("#ssoStatus").textContent = ""; return; }
     try { localStorage.setItem(LS_SSO, s.name); } catch { /* ignore */ }
@@ -1844,11 +1845,14 @@
       ? `Signed in · token valid until ${new Date(s.expires_at).toLocaleString()} · region ${s.region}`
       : `Not signed in · region ${s.region}`;
     $("#btnSsoLogin").textContent = s.signed_in ? "Sign in again" : "Sign in";
+    $("#btnSsoLogout").hidden = !s.signed_in;
     if (s.signed_in) await loadSsoAccounts(s);
   }
 
   async function loadSsoAccounts(s) {
     $("#ssoUse").hidden = false;
+    $("#ssoVia").hidden = true;
+    $("#ssoPick").hidden = false;
     $("#ssoAccount").innerHTML = `<option>Loading accounts…</option>`;
     $("#ssoRole").innerHTML = "";
     $("#ssoAccount").disabled = $("#ssoRole").disabled = true;
@@ -1862,6 +1866,8 @@
       if (linked && accounts.some((a) => a.id === linked.account_id)) $("#ssoAccount").value = linked.account_id;
       $("#ssoStatus").textContent += ` · ${accounts.length} accounts${mgmt ? "" : " · management account not visible"}`;
       $("#ssoAccount").disabled = false;
+      // With the management account found, show one line instead of a 300-account list.
+      $("#ssoPick").hidden = !!mgmt && $("#ssoAccount").value === mgmt;
       await loadSsoRoles(linked?.role);
     } catch (e) { $("#ssoError").textContent = `${e.message}${e.hint ? ". " + e.hint : ""}`; busy("#ssoBusy", null); }
   }
@@ -1878,8 +1884,31 @@
       const ro = prefer && roles.includes(prefer) ? prefer : roles.find((r) => /read|audit|view/i.test(r));
       if (ro) $("#ssoRole").value = ro;
       $("#btnSsoUse").hidden = !roles.length;
+      showSsoVia();
     } catch (e) { $("#ssoRole").innerHTML = ""; $("#ssoError").textContent = e.message; }
     finally { $("#ssoRole").disabled = false; busy("#ssoBusy", null); }
+  }
+
+  // "Through the management account … as …" with a Change link that opens the account and role lists.
+  function showSsoVia() {
+    const via = $("#ssoVia"), acct = $("#ssoAccount").selectedOptions[0];
+    via.hidden = !$("#ssoPick").hidden || !acct || !$("#ssoRole").value;
+    if (via.hidden) return;
+    const name = acct.textContent.split(" · ")[0];
+    via.innerHTML = `Signing in through the management account <strong>${esc(name)}</strong> (${esc(acct.value)}) as <strong>${esc($("#ssoRole").value)}</strong>. <a href="#" id="lnkSsoChange">Change</a>`;
+    $("#lnkSsoChange").addEventListener("click", (ev) => { ev.preventDefault(); $("#ssoPick").hidden = false; via.hidden = true; });
+  }
+
+  async function ssoLogout() {
+    const s = currentSso();
+    if (!s) return;
+    $("#ssoError").textContent = "";
+    try {
+      await api("/api/sso/logout", { method: "POST", body: { session: s.name } });
+      toast(`Signed out of ${s.name}`);
+      await refreshSsoBadge();
+      await showSsoState();
+    } catch (e) { $("#ssoError").textContent = e.message; }
   }
 
   async function ssoLogin() {
@@ -2247,6 +2276,7 @@
     $("#btnSsoAddToggle").addEventListener("click", () => { $("#ssoAdd").hidden = !$("#ssoAdd").hidden; });
     $("#btnSsoAdd").addEventListener("click", ssoAddPortal);
     $("#btnSsoUse").addEventListener("click", ssoUse);
+    $("#btnSsoLogout").addEventListener("click", ssoLogout);
     $("#ssoDialog").addEventListener("close", () => clearInterval(sso.loginTimer));
     refreshSsoBadge();
     // An SSO sign-in lasts hours: check again every few minutes so the button flashes once it expires.

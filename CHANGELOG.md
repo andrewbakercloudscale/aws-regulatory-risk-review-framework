@@ -6,6 +6,19 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- **Sign out** in the AWS sign-in dialog, like `aws sso logout`: ends the token at AWS and removes
+  the cached copy on this machine.
+
+### Changed
+
+- AWS sign-in dialog: it says the account and role are only the credentials, and that the scan
+  covers the OUs chosen next (the whole organisation by default). With the management account found
+  it shows one line ("Signing in through the management account … as …") with a Change link
+  instead of a list of every account. The Role list notes it shows only the roles IAM Identity
+  Center gives you in that account.
+
 ## [0.11.3] - 2026-10-21
 
 ### Added

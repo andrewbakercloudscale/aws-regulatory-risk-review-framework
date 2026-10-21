@@ -210,6 +210,12 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
     def sso_login(req: SSOLoginRequest):
         return sso_call(sso.start_login, req.session).snapshot()
 
+    @app.post("/api/sso/logout")
+    def sso_logout(req: SSOLoginRequest):
+        sso_call(sso._session_config, req.session)  # 400 for an unknown portal
+        sso_call(sso.logout, req.session)
+        return {"signed_out": req.session}
+
     @app.get("/api/sso/login/{login_id}")
     def sso_login_status(login_id: str):
         login = sso.get_login(login_id)
