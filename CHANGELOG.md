@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-10-21
+
 ### Added
 
 - **To raise confidence** under the confidence rating: one step per reason it is not High, with a
