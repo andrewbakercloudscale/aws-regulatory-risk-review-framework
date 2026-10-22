@@ -25,7 +25,10 @@ from importlib import resources
 
 from .collectors.cost import parse_port
 from .estimate import Questionnaire
+from .logging_config import get_logger
 from .multiregion import GLOBAL_REGIONS, load_region_data
+
+log = get_logger("resilience")
 
 # Tag keys are compared lowercased with spaces, dashes and underscores removed.
 CRITICALITY_KEYS = ("criticality", "businesscriticality", "tier", "servicetier", "workloadtier", "critical")
@@ -220,8 +223,10 @@ def direct_connect_prices() -> dict:
     return json.loads(resources.files("exitrisk").joinpath("data", "direct_connect.json").read_text(encoding="utf-8"))
 
 
-def _links_today(dx: dict | None, rows: dict[str, dict]) -> dict:
+def _links_today(dx: dict | None, rows: dict[str, dict], unavailable: str | None = None) -> dict:
     """Direct Connect ports billed last month, from Cost Explorer port-hours."""
+    if dx is None and unavailable:  # the scan asked and AWS refused: say why, not "run a new scan"
+        return {"available": False, "reason": f"Direct Connect links could not be read: {unavailable}"}
     if dx is None:
         return {"available": False, "reason": "This scan predates the Direct Connect check; run a new scan."}
     names = direct_connect_prices()["locations"]
@@ -282,13 +287,27 @@ def _migration_links(move_gb: dict[str, float], home: str, regions: dict, circui
     Data out is priced from the region that holds it to that country, at AWS list price.
     """
     prices = direct_connect_prices()["regions"]
-    home = home if home in prices else "us-east-1"
+    assumed = []  # every price the list did not have, said out loud rather than silently substituted
     country = regions.get(home, {}).get("country", "")
+    if home not in prices:
+        assumed.append(
+            f"No Direct Connect prices are published for {_region_name(home, regions)}; ports are priced as "
+            "US East (N. Virginia)."
+        )
+        log.warning("no Direct Connect prices for %s; using us-east-1", home)
+        home = "us-east-1"
     port_hour = prices[home]["port_hour_usd"]["10G"]
     move_tb = _tb(sum(move_gb.values()))
     transfer = 0.0
     for region, gb in move_gb.items():
+        if region not in prices and gb:
+            assumed.append(f"Data out of {_region_name(region, regions)} is priced at {home} rates.")
         rates = (prices.get(region) or prices[home])["dto_per_gb_usd"]
+        if country not in rates and gb:
+            assumed.append(
+                f"No data-out price from {_region_name(region, regions)} to {country or 'this country'}; "
+                "the highest listed rate is used."
+            )
         transfer += gb * rates.get(country, max(rates.values(), default=0.0))
     transfer_cost = round(transfer)
     options = []
@@ -323,6 +342,7 @@ def _migration_links(move_gb: dict[str, float], home: str, regions: dict, circui
         "extra_months": LINK_EXTRA_MONTHS,
         "price_date": direct_connect_prices().get("publication_date", "")[:10],
         "options": options,
+        "assumed": sorted(set(assumed)),
         # Sustained internet capacity to finish inside AWS's free data-transfer-out window.
         "credit_gbps": round(move_tb * 1024 * 8 / (EXIT_CREDIT_DAYS * 86400) / LINK_EFFICIENCY, 1),
     }
@@ -334,8 +354,17 @@ def _region_name(code: str, regions: dict) -> str:
 
 
 def _data(
-    storage: list[dict] | None, dx: dict | None, rows: dict[str, dict], q: Questionnaire, regions: dict, home: str
+    storage: list[dict] | None,
+    dx: dict | None,
+    rows: dict[str, dict],
+    q: Questionnaire,
+    regions: dict,
+    home: str,
+    unavailable: dict | None = None,
 ) -> dict:
+    unavailable = unavailable or {}
+    if storage is None and unavailable.get("storage"):
+        return {"available": False, "reason": f"Data stored could not be read: {unavailable['storage']}"}
     if storage is None:
         return {"available": False, "reason": "This scan predates data sizing; run a new scan."}
     by_kind: dict[str, float] = defaultdict(float)
@@ -396,7 +425,7 @@ def _data(
         ),
         key=lambda x: -x["tb"],
     )
-    today = _links_today(dx, rows)
+    today = _links_today(dx, rows, unavailable.get("direct_connect"))
     if today.get("ports"):
         home = today["ports"][0]["region"]  # the new links go where the current ones are
     dynamo_tb = _tb(sum(dynamo_live.values()))
@@ -574,7 +603,7 @@ def build_resilience(scan: dict, accounts: list[dict], q: Questionnaire) -> dict
             "channels": sorted({a["channel"] for a in rows.values() if a["channel"]}),
         },
         "owners": _owners(rows),
-        "data": _data(scan.get("storage"), scan.get("direct_connect"), rows, q, regions, home),
+        "data": _data(scan.get("storage"), scan.get("direct_connect"), rows, q, regions, home, scan.get("unavailable")),
         "concentration": concentration,
         "stressed_exit": _stressed(population, basis),
     }

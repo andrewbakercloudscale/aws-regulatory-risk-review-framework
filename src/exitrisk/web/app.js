@@ -1038,6 +1038,7 @@
       carrier ? `Carrier circuit and cross-connect at ${money(m.circuit_monthly)} per link a month (your answer under Exit model).` : `Not included: your carrier's circuit and the cross-connect at the Direct Connect location. Enter them under Exit model to add them.`,
       `Order early: a new dedicated connection needs a cross-connect at the Direct Connect location and a carrier circuit to your site, which often take weeks to months to deliver.`,
       ...(m.flat_rate_hour_usd && m.dto_per_gb_usd > 0 ? [`AWS's price list also has flat-rate ${m.link_gbps} Gbps ports with no per-GB charge, from $${m.flat_rate_hour_usd.toFixed(2)} an hour in this region. For a one-off copy of this size, ask AWS whether one costs less than paying per GB.`] : []),
+      ...(m.assumed || []),
     ];
     $("#resLinksPoints").innerHTML = points.map((x) => `<li>${esc(x)}</li>`).join("");
   }

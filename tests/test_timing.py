@@ -89,3 +89,23 @@ def test_written_off_ranges_read_from_zero():
 
     assert owed_range(0, 187_000) == "up to $200k"
     assert owed_range(301_000, 420_000) == "$300k to $450k"
+
+
+def test_deadline_judged_on_the_range_shown():
+    # 12.3 to 21 months shows as "12 to 21 months": a 12-month deadline is at risk, not missed.
+    est = {"duration": {"low_months": 12.3, "high_months": 21}, "ranges": {"duration": "12 to 21 months"}}
+    t = build_timing({}, est, Questionnaire(exit_deadline_months=12, confirmed=True), today=TODAY)
+    assert t["deadline"]["status"] == "at_risk"
+
+
+def test_edp_shortfall_is_net_of_commitments_still_billed():
+    q = Questionnaire(edp_end="2029-09", edp_annual_commit=1_200_000, confirmed=True)
+    alone = build_timing({"commitments": []}, EST, q, today=TODAY)["edp"]["shortfall"]
+    # A Savings Plan billing $40k a month to 2029 already pays $40k of the $100k a month commitment.
+    both = build_timing({"commitments": [_c(36, 40_000)]}, EST, q, today=TODAY)["edp"]["shortfall"]
+    assert both[1] == pytest.approx(alone[1] * 0.6, rel=0.03)
+
+
+def test_refused_commitments_say_why():
+    t = build_timing({"unavailable": {"commitments": "access denied"}}, EST, Questionnaire(), today=TODAY)
+    assert "access denied" in t["commitments"]["reason"] and "predates" not in t["commitments"]["reason"]

@@ -349,3 +349,38 @@ def test_commitments_written_off_is_a_key_figure():
     f = next(f for f in x["exit_facts"] if f["label"] == "Commitments written off")
     assert "$" in f["value"] and "Savings Plans and reservations" in f["note"]
     assert any("write-off" in t for t in x["findings"])
+
+
+def test_headline_follows_the_rounded_rating():
+    from exitrisk.scoring import _headline
+
+    s = {"score_by_spend": 54.6, "rating_by_spend": rating(54.6)}
+    assert s["rating_by_spend"] == "High" and "re-engineering programme" in _headline(s, {"empty": True}, False)
+    s = {"score_by_spend": 39.6, "rating_by_spend": rating(39.6)}
+    assert "needs significant re-engineering" in _headline(s, {"empty": True}, False)
+
+
+def test_confidence_drops_for_partial_scan_and_partial_deep_scan():
+    scan = build_demo_scan()
+    q = Questionnaire(confirmed=True)
+    scan["mode"] = "live"
+    r = build_report(scan, questionnaire=q)
+    keys = {x["key"] for x in r["summary"]["executive"]["confidence_steps"]}
+    assert "partial_deep" in keys and r["summary"]["deep_scan_pct"] < 90
+    scan["status"] = "partial"
+    r = build_report(scan, questionnaire=q)
+    assert r["summary"]["coverage"][0].startswith("Partial scan")
+    assert r["summary"]["executive"]["confidence"] != "High"
+
+
+def test_leaving_a_service_out_is_not_an_access_gap():
+    scan = build_demo_scan()
+    scan["mode"] = "live"
+    r = build_report(scan, questionnaire=Questionnaire(confirmed=True, exclude_services=["AWS Lambda"]))
+    assert r["summary"]["coverage"] and r["summary"]["coverage_gaps"] == 0
+    assert "coverage" not in {x["key"] for x in r["summary"]["executive"]["confidence_steps"]}
+
+
+def test_narrative_holds_back_cost_on_default_answers():
+    r = build_report(build_demo_scan())
+    assert not any("would take roughly" in line for line in r["summary"]["narrative"])

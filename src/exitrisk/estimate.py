@@ -167,19 +167,25 @@ def money_range(lo: float, hi: float, currency: str = "USD") -> str:
     return f"{sym}{_short(a)} to {sym}{_short(b)}"
 
 
-def duration_range(lo_months: float, hi_months: float) -> str:
-    """'5 to 11 months' (months), '9 to 15 months' (quarters) or '2.5 to 5 years' (half-years)."""
+def duration_bounds(lo_months: float, hi_months: float) -> tuple[float, float]:
+    """The range as shown, in months, rounded outward: whole months below a year, quarters below two
+    years, half-years above. Anything compared with the shown range (a deadline) uses these bounds."""
     if hi_months < 12:
         # Quarters would turn 5.9 to 10.4 months into "3 to 12": too wide to plan with.
         a = max(math.floor(lo_months), 1)
-        return f"{a} to {max(math.ceil(hi_months), a + 1)} months"
+        return a, max(math.ceil(hi_months), a + 1)
     if hi_months < 24:
         a = max(math.floor(lo_months / 3) * 3, 1)
-        b = max(math.ceil(hi_months / 3) * 3, a + 1)
+        return a, max(math.ceil(hi_months / 3) * 3, a + 1)
+    return max(math.floor(lo_months / 6) * 6, 6), math.ceil(hi_months / 6) * 6
+
+
+def duration_range(lo_months: float, hi_months: float) -> str:
+    """'5 to 11 months' (months), '9 to 15 months' (quarters) or '2.5 to 5 years' (half-years)."""
+    a, b = duration_bounds(lo_months, hi_months)
+    if hi_months < 24:
         return f"{a} to {b} months"
-    a = max(math.floor(lo_months / 6) / 2, 0.5)
-    b = math.ceil(hi_months / 6) / 2
-    return f"{a:g} to {b:g} years"
+    return f"{a / 12:g} to {b / 12:g} years"
 
 
 def count_range(lo: float, hi: float) -> str:
@@ -398,7 +404,8 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "Service effort: catalog engineer-weeks per workload × √(monthly spend / "
             f"{REFERENCE_MONTHLY_SPEND:,.0f} USD), clamped to {SIZE_MULT_MIN} to {SIZE_MULT_MAX}×; "
             "resource counts from the deep scan raise it where higher.",
-            f"Services under {q.materiality:,.0f} USD/month are scored but not estimated (immaterial).",
+            f"Services under {q.materiality:,.0f} USD/month in an account are scored but not estimated "
+            "(immaterial); the cut-off applies per service per account.",
             f"{ACCOUNT_OVERHEAD_WEEKS:g} engineer-week per material account for network, IAM and decommissioning.",
             f"Target landing zone: {lz_base:.0f} weeks ({LANDING_ZONE_MIN_WEEKS:g} + 12 × √(spend / "
             f"{LANDING_ZONE_REFERENCE_SPEND:,.0f} USD), max {LANDING_ZONE_MAX_WEEKS:g}) + "
@@ -429,9 +436,10 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             ),
             *dc["assumptions"],
             "Excluded: target-cloud run cost after exit, licence changes, AWS commitments still owed after the "
-            "exit (EDP, Savings Plans, RIs; shown under Timing), and data-transfer-out fees (since March 2024 AWS "
-            "credits egress for customers leaving AWS, on request to AWS Support and subject to approval, for a "
-            "move completed within about 60 days; budget egress for any data moved outside that window).",
+            "exit (EDP, Savings Plans, RIs; shown under Timing), and the cost of copying the data out: Direct "
+            "Connect ports and data-out fees are sized under Resilience, Links for the migration. Since March 2024 "
+            "AWS credits internet egress (not Direct Connect) for customers leaving AWS, on request to AWS Support "
+            "and subject to approval, for a move completed within about 60 days.",
             "Figures are quoted as ranges, widened to round numbers: −25% / +50% on cost and effort, "
             "−20% / +40% on duration (early-stage estimation cone). The model's single figures are "
             "planning midpoints, not forecasts.",

@@ -215,9 +215,12 @@ The asymmetric ranges reflect that early estimates of migrations are far more of
   Database, Babelfish, Serverless v2 scaling) and commercial engines (Oracle, SQL Server licensing) are
   visible in the deep scan's engine breakdown.
 - **Not in the estimate:** target-cloud run cost after exit; licence changes; early termination of AWS
-  commitments (EDP, Savings Plans, RIs; let them run off); data-transfer-out fees (since March 2024 AWS
-  credits egress for customers leaving AWS, on request to AWS Support and subject to approval; the move
-  must complete within about 60 days, so a multi-year exit pays egress outside that window); organisational change.
+  commitments (EDP, Savings Plans, RIs; let them run off); the cost of copying the data out (Direct
+  Connect ports and data-out fees, sized under Resilience and shown beside the one-off cost; since March
+  2024 AWS credits internet egress, not Direct Connect, for customers leaving AWS, on request to AWS Support
+  and subject to approval, for a move completed within about 60 days); organisational change.
+- **Materiality is per account.** A service under the materiality cut-off in an account is scored but
+  adds no effort for that account, even if it runs in many accounts.
 - **Catalog tiers are expert judgement.** They are published, versioned and open to challenge through
   pull requests; quote the catalog version with any score.
 - **Indicative only.** The estimate is an order-of-magnitude figure to support an executive decision and
@@ -254,7 +257,9 @@ and still end before the fastest exit.
 
 **Enterprise discount (EDP or PPA).** No AWS API exposes it, so its end month and annual commitment are
 typed under Exit model. The shortfall is the commitment from the exit finishing to the agreement's end:
-spend stops when the exit finishes. Real agreements often allow the shortfall to roll forward or be
+spend stops when the exit finishes. Savings Plan and reservation fees keep being billed after the exit
+and count towards the commitment, so the shortfall is only the part of each month they do not cover;
+the same dollars are never counted twice. Real agreements often allow the shortfall to roll forward or be
 renegotiated; treat the figure as the opening position for that discussion.
 
 ## Resilience (report section 6)

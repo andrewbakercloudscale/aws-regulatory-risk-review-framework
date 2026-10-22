@@ -33,6 +33,7 @@ from .estimate import (
     TYPICAL_COUNTS,
     Questionnaire,
     build_estimate,
+    money_range,
     service_effort,
 )
 from .filtering import AccountFilter
@@ -40,6 +41,10 @@ from .issues import Issue
 from .resilience import build_resilience
 from .timing import MATERIAL_STRANDED, build_timing, owed_range
 
+# Confidence stays High only when the deep scan reached accounts with this share of spend, and
+# services missing from the catalog are under this share of spend.
+DEEP_SCAN_FULL_PCT = 90.0
+UNCLASSIFIED_MAX_PCT = 2.0
 RATINGS = [(25, "Low"), (40, "Moderate"), (55, "Elevated"), (70, "High"), (101, "Critical")]
 
 WEIGHTINGS = {
@@ -167,6 +172,7 @@ class _Spend:
     offered: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     unclassified: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     negative_lines: int = 0
+    negative_amount: float = 0.0
 
 
 def _aggregate(costs: list[dict], in_scope: dict, catalog: Catalog, leave_out: frozenset[str] = frozenset()) -> _Spend:
@@ -182,6 +188,7 @@ def _aggregate(costs: list[dict], in_scope: dict, catalog: Catalog, leave_out: f
             continue  # Cost Explorer lists free-tier services at exactly zero
         if r["amount"] < 0:
             sp.negative_lines += 1
+            sp.negative_amount += r["amount"]
             continue
         sp.offered[info.service] += r["amount"]
         if info.service in leave_out:
@@ -246,8 +253,9 @@ def _spend_issues(sp: _Spend, n_months: int) -> list[dict]:
             Issue(
                 "info",
                 "cost",
-                f"{_plural(sp.negative_lines, 'negative cost line')} (credits/refunds not caught "
-                "by the record-type filter) were ignored",
+                f"{_plural(sp.negative_lines, 'negative cost line')} ({_money(-sp.negative_amount / n_months)}/month: "
+                "discounts or credits the record-type filter did not catch) were ignored, so spend is shown "
+                "before them",
             ).to_dict()
         )
     return out
@@ -478,6 +486,7 @@ def build_report(
         "high_risk_monthly": round(sum(t["monthly_spend"] for t in tiers if t["tier"] >= 4), 2),
         "services": len(services_out),
         "unclassified_services": len(sp.unclassified),
+        "unclassified_monthly": round(sum(sp.unclassified.values()) / n_months, 2),
         "excluded_billing_monthly": round(sp.excluded / n_months, 2),
         "excluded_services": _left_out(sp, n_months, catalog),
         "excluded_services_monthly": round(sum(sp.user_excluded.values()) / n_months, 2),
@@ -506,7 +515,15 @@ def build_report(
     if estimate["empty"]:  # nothing to move: no "$0–$0" ranges for a caller to show by mistake
         estimate["ranges"] = dict.fromkeys(estimate["ranges"])
     estimate["provisional"] = not questionnaire.confirmed
-    summary["coverage"] = _coverage_notes(scan, summary, list(all_accounts.values()), account_filter, issues)
+    summary["coverage"], summary["coverage_gaps"] = _coverage_notes(
+        scan, summary, list(all_accounts.values()), account_filter, issues
+    )
+    # Deep-scan coverage: the share of in-scope spend in accounts the inventory reached.
+    summary["deep_scan_pct"] = (
+        round(100 * sum(a["monthly_spend"] for a in accounts_out if a["id"] in inventory) / total_monthly, 1)
+        if inventory and total_monthly > 0
+        else 0.0
+    )
     summary["narrative"] = _narrative(summary, accounts_out, estimate, questionnaire)
     timing = build_timing(scan, estimate, questionnaire)
     summary["executive"] = _executive_summary(
@@ -553,9 +570,18 @@ def build_report(
     }
 
 
-def _coverage_notes(scan: dict, summary: dict, all_accounts: list, account_filter, issues: list) -> list[str]:
-    """Plain warnings for the top of the report when it covers less than the reader would assume."""
+def _coverage_notes(
+    scan: dict, summary: dict, all_accounts: list, account_filter, issues: list
+) -> tuple[list[str], int]:
+    """Plain warnings for the top of the report when it covers less than the reader would assume, and
+    how many of them are gaps in what the scan could see (services left out on request are not)."""
     notes = []
+    if scan.get("status") == "partial":
+        n = sum(1 for i in issues if i.get("severity") in ("error", "critical"))
+        notes.append(
+            f"Partial scan: {_plural(n, 'error')} while scanning, so some data is missing (see Issues). "
+            "Fix the cause and run a new scan."
+        )
     if scan.get("mode", "live") == "live" and (scan.get("ou") or {}).get("id") == "-":
         org_issue = next((i for i in issues if i.get("category") == "organizations"), None)
         if org_issue:
@@ -566,6 +592,7 @@ def _coverage_notes(scan: dict, summary: dict, all_accounts: list, account_filte
             f"No account matches the filter ({account_filter.to_dict()['description']}). "
             f"The scan holds {_plural(len(all_accounts), 'account')}: {names}. Clear or change the filter."
         )
+    gaps = len(notes)
     if summary["excluded_services"]:
         left = _join(s["display"] for s in summary["excluded_services"][:6])
         more = len(summary["excluded_services"]) - 6
@@ -574,7 +601,7 @@ def _coverage_notes(scan: dict, summary: dict, all_accounts: list, account_filte
             + (f" and {more} more" if more > 0 else "")
             + f", {_money(summary['excluded_services_monthly'])}/month."
         )
-    return notes
+    return notes, gaps
 
 
 def _money(v: float, cur: str = "USD") -> str:
@@ -642,6 +669,13 @@ def _executive_summary(
     context = _context(summary)
     findings = _findings(summary, accounts) + _timing_findings(timing or {}) + _resilience_findings(resilience or {})
     exit_facts, exit_line = _exit(est, q, defaults)
+    links = (((resilience or {}).get("data") or {}).get("migration_links") or {}).get("options") or []
+    if exit_facts and links:  # not in the one-off cost: say what copying the data adds beside it
+        totals = sorted(x["total_cost"] for x in links)
+        if totals[-1] >= MATERIAL_STRANDED:
+            exit_facts[1]["note"] += (
+                f"; copying the data out adds {money_range(totals[0], totals[-1])} (Links for the migration)"
+            )
     if exit_facts and (written_off := _written_off(timing or {})):
         exit_facts.insert(2, {**written_off, "provisional": defaults})
     actions = _actions(summary, accounts, defaults, deep_scan, resilience or {}, timing or {})
@@ -666,10 +700,11 @@ def _executive_summary(
 
 def _headline(s: dict, est: dict, defaults: bool) -> str:
     """Rating, what kind of exit it is, and what it would take: one sentence."""
-    by_spend, empty = s["score_by_spend"], est.get("empty")
-    if by_spend >= 55:
+    # From the rating label, not raw thresholds: 54.6 shows as "High · 55", so it must read as High.
+    label, empty = s["rating_by_spend"], est.get("empty")
+    if label in ("High", "Critical"):
         kind = "leaving AWS would be a re-engineering programme, not a migration"
-    elif by_spend >= 40:
+    elif label == "Elevated":
         kind = "an exit is feasible but needs significant re-engineering"
     elif ((est.get("cost") or {}).get("pct_of_annual_spend") or 0) >= 50:
         kind = "most workloads are portable, but the size of the estate makes an exit a large programme"
@@ -974,6 +1009,11 @@ def _actions(
 _CONFIDENCE_FIX = {
     "demo": ("Scan your own organisation.", "scan"),
     "coverage": ("Fix the access gaps in the note at the top, then scan again.", "scan"),
+    "partial_deep": (
+        "Deploy the ExitRiskReadOnly role to the accounts the deep scan could not reach (Issues lists them), "
+        "then run a new deep scan.",
+        "deep",
+    ),
     "defaults": ("Answer the delivery questions under Exit model (about ten minutes).", "model"),
     "deep": (
         "Deploy the read-only ExitRiskReadOnly role to every member account (one CloudFormation StackSet, "
@@ -990,7 +1030,7 @@ def _confidence(s: dict, scan: dict, defaults: bool, deep_scan: bool) -> tuple[s
     if scan.get("mode") == "demo":
         found.append(("demo", "Synthetic demo data."))
         level = 1
-    if s["coverage"]:
+    if s.get("coverage_gaps"):
         found.append(("coverage", "Partial coverage of the estate (see the note at the top)."))
         level = min(level, 2)
     if defaults:
@@ -999,10 +1039,20 @@ def _confidence(s: dict, scan: dict, defaults: bool, deep_scan: bool) -> tuple[s
     if not deep_scan:
         found.append(("deep", "Spend data only; no resource counts."))
         level = min(level, 2)
+    elif (s.get("deep_scan_pct") or 0) < DEEP_SCAN_FULL_PCT:
+        found.append(("partial_deep", f"The deep scan reached accounts with {s['deep_scan_pct']:.0f}% of spend."))
+        level = min(level, 2)
     if s["unclassified_services"]:
+        share = 100 * s.get("unclassified_monthly", 0) / s["monthly_spend"] if s["monthly_spend"] else 0
         found.append(
-            ("catalog", f"{_plural(s['unclassified_services'], 'service')} not in the catalog, scored as Moderate.")
+            (
+                "catalog",
+                f"{_plural(s['unclassified_services'], 'service')} not in the catalog ({share:.1f}% of spend), "
+                "scored as tier 3.",
+            )
         )
+        if share >= UNCLASSIFIED_MAX_PCT:
+            level = min(level, 2)
     if not found:
         return "High", ["Full scan, answered questionnaire, every service classified."], []
     steps = [{"key": k, "reason": r, "fix": _CONFIDENCE_FIX[k][0], "action": _CONFIDENCE_FIX[k][1]} for k, r in found]
@@ -1050,6 +1100,13 @@ def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire)
             f"{len(top)} accounts ({_join([a['name'] for a in top])}) carry {share:.0f}% of the "
             "spend at risk; they set the pace of any exit."
         )
+    if est.get("empty"):
+        return lines
+    if not q.confirmed:  # as in the headline: default answers describe a made-up organisation
+        lines.append(
+            "Cost and time are not yet estimated for this organisation: answer the delivery questions under Exit model."
+        )
+        return lines
     lines.append(
         f"A full exit to {TARGET_PHRASES[q.target]} would take roughly {est['ranges']['duration']} and "
         f"{est['ranges']['effort']}, costing roughly {est['ranges']['cost']} in {_cost_parts(est)}."

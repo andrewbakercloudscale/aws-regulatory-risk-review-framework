@@ -18,7 +18,7 @@ import math
 from collections import defaultdict
 from datetime import date
 
-from .estimate import Questionnaire, _round_step, _short, money_range
+from .estimate import Questionnaire, _round_step, _short, duration_bounds, money_range
 
 DAYS_PER_MONTH = 30.44
 # A commitment counts as "running past the exit" when it ends after the fastest exit would finish.
@@ -107,8 +107,12 @@ def _by_month(active: list[dict], today: date) -> list[dict]:
     return rows
 
 
-def _commitments(rows: list[dict] | None, today: date, exit_end: tuple[date, date] | None) -> dict:
+def _commitments(
+    rows: list[dict] | None, today: date, exit_end: tuple[date, date] | None, unavailable: str | None = None
+) -> dict:
     if rows is None:
+        if unavailable:  # the scan asked and AWS refused: say why, not "run a new scan"
+            return {"available": False, "reason": f"Savings Plans and reservations could not be read: {unavailable}"}
         return {"available": False, "reason": "This scan predates commitment tracking; run a new scan."}
     active = []
     # Billed this month but with no end date from AWS: counted and shown, never silently dropped.
@@ -183,7 +187,29 @@ def _commitments(rows: list[dict] | None, today: date, exit_end: tuple[date, dat
     return out
 
 
-def _edp(q: Questionnaire, today: date, exit_end: tuple[date, date] | None) -> dict:
+def _billed(rows: list[dict] | None, today: date) -> list[tuple[date, float]]:
+    """(end, monthly) of each commitment still running: what keeps being billed after an exit."""
+    out = []
+    for c in rows or []:
+        end = _date(c.get("end", ""))
+        if end and end > today and c.get("monthly", 0) > 0:
+            out.append((end, c["monthly"]))
+    return out
+
+
+def _edp_shortfall(commit_monthly: float, start: date, end: date, billed: list[tuple[date, float]]) -> float:
+    """What an EDP still demands from ``start`` to ``end`` once workloads have left AWS. Savings Plan and
+    reservation fees keep being billed after the exit and count towards the commitment, so each stretch
+    owes only the part they do not cover; counting both in full would charge the same dollars twice."""
+    cuts = sorted({start, end, *(e for e, _ in billed if start < e < end)})
+    owed = 0.0
+    for a, b in zip(cuts, cuts[1:], strict=False):
+        running = sum(m for e, m in billed if e > a)
+        owed += max(0.0, commit_monthly - running) * _months(a, b)
+    return owed
+
+
+def _edp(q: Questionnaire, today: date, exit_end: tuple[date, date] | None, billed=()) -> dict:
     if not (q.edp_end and q.edp_annual_commit > 0):
         return {"set": False}
     y, m = map(int, q.edp_end.split("-"))
@@ -196,9 +222,10 @@ def _edp(q: Questionnaire, today: date, exit_end: tuple[date, date] | None) -> d
         "remaining": round(q.edp_annual_commit / 12 * _months(today, end)),
     }
     if exit_end:
-        # If spend stops when the exit finishes, the rest of the commitment is a shortfall to pay.
-        lo = q.edp_annual_commit / 12 * _months(exit_end[1], end)
-        hi = q.edp_annual_commit / 12 * _months(exit_end[0], end)
+        # If spend stops when the exit finishes, the rest of the commitment is a shortfall to pay,
+        # less the commitment fees still billed (already counted as written off).
+        lo = _edp_shortfall(q.edp_annual_commit / 12, exit_end[1], end, list(billed)) if exit_end[1] < end else 0.0
+        hi = _edp_shortfall(q.edp_annual_commit / 12, exit_end[0], end, list(billed)) if exit_end[0] < end else 0.0
         out["shortfall"] = [round(lo), round(hi)]
         out["shortfall_range"] = owed_range(lo, hi) if hi >= MATERIAL_STRANDED else None
         out["ends_before_exit"] = end <= exit_end[0]
@@ -210,6 +237,8 @@ def _deadline(q: Questionnaire, lo: float | None, hi: float | None) -> dict:
         return {"set": False}
     if lo is None:
         return {"set": True, "months": q.exit_deadline_months, "status": "unknown"}
+    # Judge against the range the reader sees ("12 to 21 months"), or 12.3 months would "not fit" 12.
+    lo, hi = duration_bounds(lo, hi)
     d = q.exit_deadline_months
     status = "fits" if hi <= d else "at_risk" if lo <= d else "misses"
     return {
@@ -232,6 +261,8 @@ def build_timing(scan: dict, est: dict, q: Questionnaire, today: date | None = N
         "exit_end": [d.isoformat() for d in exit_end] if exit_end else None,
         "provisional": not q.confirmed,
         "deadline": _deadline(q, lo, hi),
-        "commitments": _commitments(scan.get("commitments"), today, exit_end),
-        "edp": _edp(q, today, exit_end),
+        "commitments": _commitments(
+            scan.get("commitments"), today, exit_end, (scan.get("unavailable") or {}).get("commitments")
+        ),
+        "edp": _edp(q, today, exit_end, _billed(scan.get("commitments"), today)),
     }
