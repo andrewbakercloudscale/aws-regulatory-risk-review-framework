@@ -19,6 +19,7 @@ from .aws_session import BOTO_CONFIG, make_session, member_session
 from .collectors.cost import month_window
 from .issues import describe_exception
 from .logging_config import get_logger
+from .parallel import pmap
 
 log = get_logger("preflight")
 
@@ -131,23 +132,26 @@ DEPENDENCY_PROBES = [
 
 
 def probe_actions(session, account_id: str, probes: list) -> tuple[list[str], list[str]]:
-    """Make each probe call; return (denied actions, other failures as "action: code")."""
-    denied: list[str] = []
-    other: list[str] = []
-    for action, client_name, method, kwargs in probes:
-        kwargs = {k: v.format(account=account_id) if isinstance(v, str) else v for k, v in kwargs.items()}
-        try:
-            getattr(session.client(client_name, region_name=PROBE_REGION, config=BOTO_CONFIG), method)(**kwargs)
-        except ClientError as exc:
-            code = exc.response.get("Error", {}).get("Code", "")
-            if code in DENIED:
-                denied.append(action)
-            elif code in ("ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId"):
-                other.append(f"{action}: {code}")
-        except Exception as exc:  # network or client trouble: say so rather than report a false "allowed"
-            log.warning("access probe %s failed", action, exc_info=not isinstance(exc, BotoCoreError))
-            other.append(f"{action}: {type(exc).__name__}")
-    return denied, other
+    """Make each probe call, several at once; return (denied actions, other failures as "action: code")."""
+    results = pmap(lambda probe: _probe(session, account_id, *probe), probes, workers=8)
+    return [a for kind, a in results if kind == "denied"], [a for kind, a in results if kind == "other"]
+
+
+def _probe(session, account_id: str, action: str, client_name: str, method: str, kwargs: dict) -> tuple[str, str]:
+    """("ok" | "denied" | "other", text) for one call."""
+    kwargs = {k: v.format(account=account_id) if isinstance(v, str) else v for k, v in kwargs.items()}
+    try:
+        getattr(session.client(client_name, region_name=PROBE_REGION, config=BOTO_CONFIG), method)(**kwargs)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in DENIED:
+            return "denied", action
+        if code in ("ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId"):
+            return "other", f"{action}: {code}"
+    except Exception as exc:  # network or client trouble: say so rather than report a false "allowed"
+        log.warning("access probe %s failed", action, exc_info=not isinstance(exc, BotoCoreError))
+        return "other", f"{action}: {type(exc).__name__}"
+    return "ok", action
 
 
 class _Checks(list):
@@ -164,9 +168,13 @@ class _Checks(list):
 
 
 def run_checks(
-    profile: str | None, role_name: str | None = None, on_check: Callable[[dict], None] | None = None
+    profile: str | None,
+    role_name: str | None = None,
+    on_check: Callable[[dict], None] | None = None,
+    on_progress: Callable[[dict], None] | None = None,
 ) -> dict:
-    """Run every check in STEPS order; on_check gets each result (as a dict) the moment it is known."""
+    """Run every check in STEPS order; on_check gets each result (as a dict) the moment it is known,
+    on_progress {id, done, total} while a long check works through the accounts."""
     checks = _Checks(on_check)
     ctx: dict = {"profile": profile, "role_name": role_name}
 
@@ -322,7 +330,7 @@ def run_checks(
         )
     )
 
-    _member_checks(checks, session, profile, role_name, member_id, ctx)
+    _member_checks(checks, session, profile, role_name, member_id, ctx, on_progress)
     return _result(checks, ctx)
 
 
@@ -331,14 +339,21 @@ INV_LABEL = "Count resources in a member account"
 DEP_LABEL = "Read integrations in a member account"
 
 
-def _member_checks(checks, session, profile, role_name, member_id, ctx) -> None:
+ASSIGN_LABEL = "Permission set in every account"
+
+
+def _member_checks(checks, session, profile, role_name, member_id, ctx, on_progress=None) -> None:
     """Reach one member account the way a deep scan does, then make every call the scan makes there."""
     pair = None if role_name else sso.profile_permission_set(profile)
     ctx["member_access"] = role_name or (f"permission set {pair[1]}" if pair else None)
 
-    def skip_rest(why: str) -> None:
+    def skip_rest(why: str, assignments: str | None = None) -> None:
         for cid, label in (("inventory_reads", INV_LABEL), ("dependency_reads", DEP_LABEL)):
             checks.append(Check(cid, label, "skip", why))
+        if assignments is not None:
+            checks.append(Check("assignments", ASSIGN_LABEL, "skip", assignments))
+        else:
+            _assignment_check(checks, pair, ctx, on_progress)
 
     if not role_name and not pair:
         checks.append(
@@ -349,48 +364,28 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx) -> None:
                 "No member role given; the quick (billing-only) scan does not need one.",
             )
         )
-        return skip_rest("Needs deep scan access.")
-    if not member_id and not pair:
-        checks.append(Check("deep_scan", DEEP_LABEL, "skip", "No member account found to test against."))
-        return skip_rest("Needs a member account.")
+        return skip_rest("Needs deep scan access.", "Only for a deep scan with your own sign-in.")
     try:
         if pair:
-            # The scan reaches each account with this permission set, so count where it is assigned.
-            assigned, reachable = sso.accounts_with_role(pair[0], pair[1])
-            ctx["permission_set_accounts"] = len(assigned)
-            members = [a for a in assigned if a != ctx.get("account_id")]
-            if not members:
+            member_id = _member_with_role(pair, member_id, ctx.get("account_id"))
+            if not member_id:
                 checks.append(
                     Check(
                         "deep_scan",
                         DEEP_LABEL,
                         "warn",
-                        f"Permission set {pair[1]} is not assigned to you in any member account.",
+                        f"Permission set {pair[1]} is not assigned to you in the member accounts tried.",
                         f"Assign {pair[1]} in the member accounts to deep-scan, or give a member role to assume.",
                         f"IAM Identity Center assignment of {pair[1]} in member accounts",
                     )
                 )
                 return skip_rest("Needs deep scan access.")
-            member_id = member_id if member_id in members else members[0]
-            gap = len(reachable) - len(assigned)
-            assigned_note = (
-                f" Assigned in {len(assigned)} of the {len(reachable)} accounts your sign-in reaches; "
-                f"the other {gap} will not be deep-scanned."
-                if gap
-                else f" Assigned in all {len(assigned)} accounts your sign-in reaches."
-            )
+        elif not member_id:
+            checks.append(Check("deep_scan", DEEP_LABEL, "skip", "No member account found to test against."))
+            return skip_rest("Needs a member account.", f"Using role {role_name}, not a permission set.")
         member = member_session(session, profile, member_id, role_name, "preflight")
         how = f"Assumed {role_name}" if role_name else f"Signed in with permission set {pair[1]}"
-        checks.append(
-            Check(
-                "deep_scan",
-                DEEP_LABEL,
-                "warn" if pair and gap else "ok",
-                f"{how} in member account {member_id}.{assigned_note if pair else ''}",
-                f"Assign {pair[1]} in the remaining accounts, or give a member role to assume." if pair and gap else "",
-                f"IAM Identity Center assignment of {pair[1]} in {gap} more account(s)" if pair and gap else "",
-            )
-        )
+        checks.append(Check("deep_scan", DEEP_LABEL, "ok", f"{how} in member account {member_id}."))
     except Exception as exc:
         checks.append(
             _fail(
@@ -404,7 +399,7 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx) -> None:
                 else "Sign in again with AWS sign-in (SSO) at the top.",
             )
         )
-        return skip_rest("Needs deep scan access.")
+        return skip_rest("Needs deep scan access.", "Needs deep scan access." if role_name else None)
 
     for cid, label, probes, what in (
         ("inventory_reads", INV_LABEL, INVENTORY_PROBES, "Inventory"),
@@ -421,6 +416,57 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx) -> None:
             detail, fix = f"All {n} read-only calls allowed in {member_id}.", ""
         status = "warn" if denied or other else "ok"
         checks.append(Check(cid, label, status, detail, fix, ", ".join(denied)))
+    if role_name:
+        checks.append(
+            Check(
+                "assignments",
+                ASSIGN_LABEL,
+                "skip",
+                f"Using role {role_name}; the scan reports any account where it cannot be assumed.",
+            )
+        )
+    else:
+        _assignment_check(checks, pair, ctx, on_progress)
+
+
+def _member_with_role(pair: tuple[str, str], preferred: str | None, own: str | None) -> str | None:
+    """A member account where the permission set is assigned: the preferred one, else the first of a few."""
+    candidates = [preferred] if preferred else []
+    candidates += [a for a in sso.portal_account_ids(pair[0]) if a not in (preferred, own)][:10]
+    return next((a for a in candidates if a and pair[1] in sso.list_roles(pair[0], a)), None)
+
+
+def _assignment_check(checks, pair, ctx, on_progress) -> None:
+    """Count the accounts where the permission set is assigned: the scan reaches each one with it."""
+    if not pair:
+        checks.append(Check("assignments", ASSIGN_LABEL, "skip", "Only for a deep scan with your own sign-in."))
+        return
+    try:
+        assigned, reachable = sso.accounts_with_role(
+            pair[0],
+            pair[1],
+            (lambda done, total: on_progress({"id": "assignments", "done": done, "total": total}))
+            if on_progress
+            else None,
+        )
+    except Exception as exc:
+        checks.append(_fail("assignments", ASSIGN_LABEL, exc, "", "Sign in again and re-check."))
+        return
+    ctx["permission_set_accounts"] = len(assigned)
+    gap = len(reachable) - len(assigned)
+    checks.append(
+        Check(
+            "assignments",
+            ASSIGN_LABEL,
+            "warn" if gap else "ok",
+            f"{pair[1]} is assigned in {len(assigned)} of the {len(reachable)} accounts your sign-in reaches; "
+            f"the other {gap} will not be deep-scanned."
+            if gap
+            else f"{pair[1]} is assigned in all {len(assigned)} accounts your sign-in reaches.",
+            f"Assign {pair[1]} in the remaining accounts, or give a member role to assume." if gap else "",
+            f"IAM Identity Center assignment of {pair[1]} in {gap} more account(s)" if gap else "",
+        )
+    )
 
 
 _LATER = [
@@ -433,9 +479,10 @@ _LATER = [
     ("deep_scan", DEEP_LABEL),
     ("inventory_reads", INV_LABEL),
     ("dependency_reads", DEP_LABEL),
+    ("assignments", ASSIGN_LABEL),
 ]
 # Checks a quick scan can do without: a failure there is a warning, not "Not ready".
-OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads"}
+OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads", "assignments"}
 # Every run reports exactly these checks, in this order (skipped ones included).
 STEPS = [("identity", "Sign in to AWS"), *_LATER]
 

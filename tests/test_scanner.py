@@ -42,7 +42,7 @@ def test_organizations_unavailable_falls_back_to_single_account(monkeypatch):
     monkeypatch.setattr(
         scanner.cost,
         "fetch_costs",
-        lambda s, ids, m: (
+        lambda s, ids, m, *_: (
             [{"month": "2026-09", "account_id": ids[0], "service": "AWS Lambda", "amount": 10.0}],
             {"start": "2026-09-01", "end": "2026-10-01", "months": 1},
         ),
@@ -61,12 +61,14 @@ def test_member_account_fallback_names_management_account(monkeypatch):
         scanner.organizations, "describe_org", lambda s: {"id": "o-1", "management_account_id": "111111111111"}
     )
 
-    def denied(_s):
+    def denied(_s, *_):
         raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "denied"}}, "ListRoots")
 
     monkeypatch.setattr(scanner.organizations, "list_ou_tree", denied)
     monkeypatch.setattr(
-        scanner.cost, "fetch_costs", lambda s, ids, m: ([], {"start": "2026-09-01", "end": "2026-10-01", "months": 1})
+        scanner.cost,
+        "fetch_costs",
+        lambda s, ids, m, *_: ([], {"start": "2026-09-01", "end": "2026-10-01", "months": 1}),
     )
     doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
     org_issue = next(i for i in doc["issues"] if i["category"] == "organizations")
@@ -87,16 +89,18 @@ def test_several_ous_scan_each_account_once(monkeypatch):
     monkeypatch.setattr(
         scanner.organizations, "describe_org", lambda s: {"id": "o-1", "management_account_id": "111111111111"}
     )
-    monkeypatch.setattr(scanner.organizations, "list_ou_tree", lambda s: tree)
+    monkeypatch.setattr(scanner.organizations, "list_ou_tree", lambda s, *_: tree)
     monkeypatch.setattr(
         scanner.organizations,
         "list_accounts_under",
-        lambda s, ou: [
+        lambda s, ou, *_: [
             scanner.organizations.Account(i, f"acct-{i}", "", "ACTIVE", ou["id"], ou["path"]) for i in members[ou["id"]]
         ],
     )
     monkeypatch.setattr(
-        scanner.cost, "fetch_costs", lambda s, ids, m: ([], {"start": "2026-09-01", "end": "2026-10-01", "months": 1})
+        scanner.cost,
+        "fetch_costs",
+        lambda s, ids, m, *_: ([], {"start": "2026-09-01", "end": "2026-10-01", "months": 1}),
     )
     params = ScanParams(ou_ids=["ou-a", "ou-a-kid", "ou-b"])
     doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=params))
@@ -122,14 +126,16 @@ def test_scan_reads_the_ou_tree_fresh_not_from_the_picker_cache(monkeypatch):
     monkeypatch.setattr(
         scanner.organizations, "describe_org", lambda s: {"id": "o-1", "management_account_id": "111111111111"}
     )
-    monkeypatch.setattr(scanner.organizations, "list_ou_tree", lambda s: fresh)
+    monkeypatch.setattr(scanner.organizations, "list_ou_tree", lambda s, *_: fresh)
     monkeypatch.setattr(
         scanner.organizations,
         "list_accounts_under",
-        lambda s, ou: [scanner.organizations.Account("1", "acct-1", "", "ACTIVE", ou["id"], ou["path"])],
+        lambda s, ou, *_: [scanner.organizations.Account("1", "acct-1", "", "ACTIVE", ou["id"], ou["path"])],
     )
     monkeypatch.setattr(
-        scanner.cost, "fetch_costs", lambda s, ids, m: ([], {"start": "2026-09-01", "end": "2026-10-01", "months": 1})
+        scanner.cost,
+        "fetch_costs",
+        lambda s, ids, m, *_: ([], {"start": "2026-09-01", "end": "2026-10-01", "months": 1}),
     )
     doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(ou_ids=["ou-new"])))
     assert doc["ou"]["id"] == "ou-new"  # an OU created after the picker's read is found
@@ -148,7 +154,7 @@ def _single_account(monkeypatch):
     monkeypatch.setattr(
         scanner.cost,
         "fetch_costs",
-        lambda s, ids, m: (
+        lambda s, ids, m, *_: (
             [{"month": "2026-09", "account_id": ids[0], "service": "AWS Lambda", "amount": 10.0}],
             {"start": "2026-09-01", "end": "2026-10-01", "months": 1},
         ),
@@ -158,7 +164,7 @@ def _single_account(monkeypatch):
 def test_spend_by_region_is_saved(monkeypatch):
     _single_account(monkeypatch)
     rows = [{"account_id": "123456789012", "service": "AWS Lambda", "region": "eu-west-1", "monthly": 10.0}]
-    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: rows)
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m, *_: rows)
     doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
     assert doc["region_costs"] == rows
     assert store.load_scan(doc["id"])["region_costs"] == rows
@@ -188,7 +194,7 @@ def test_spend_by_region_failure_is_an_issue_not_a_failed_scan(monkeypatch, capl
 
 def test_storage_failure_is_an_issue_not_a_failed_scan(monkeypatch):
     _single_account(monkeypatch)
-    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: [])
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m, *_: [])
 
     def boom(*_a):
         raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "denied"}}, "GetCostAndUsage")
@@ -209,24 +215,26 @@ def _org(monkeypatch):
         scanner.organizations, "describe_org", lambda s: {"id": "o-1", "management_account_id": "111111111111"}
     )
     monkeypatch.setattr(
-        scanner.organizations, "list_ou_tree", lambda s: {"id": "r-1", "name": "Root", "path": "Root", "children": []}
+        scanner.organizations,
+        "list_ou_tree",
+        lambda s, *_: {"id": "r-1", "name": "Root", "path": "Root", "children": []},
     )
     monkeypatch.setattr(
         scanner.organizations,
         "list_accounts_under",
-        lambda s, ou: [
+        lambda s, ou, *_: [
             Account(i, f"acct-{i[-1]}", "", "ACTIVE", "r-1", "Root") for i in ("222222222222", "333333333333")
         ],
     )
     monkeypatch.setattr(
         scanner.cost,
         "fetch_costs",
-        lambda s, ids, m: (
+        lambda s, ids, m, *_: (
             [{"month": "2026-09", "account_id": i, "service": "AWS Lambda", "amount": 10.0} for i in ids],
             {"start": "2026-09-01", "end": "2026-10-01", "months": 1},
         ),
     )
-    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: [])
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m, *_: [])
     monkeypatch.setattr(scanner.cost, "fetch_storage", lambda s, ids, services: [])
     monkeypatch.setattr(scanner.cost, "fetch_commitments", lambda s: [])
 
@@ -256,7 +264,7 @@ def test_account_tags_refused_is_a_warning(monkeypatch):
 
 def test_commitments_failure_is_an_issue_not_a_failed_scan(monkeypatch):
     _single_account(monkeypatch)
-    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m: [])
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m, *_: [])
 
     def boom(*_a):
         raise ClientError(

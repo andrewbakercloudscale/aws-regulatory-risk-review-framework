@@ -100,7 +100,7 @@ def test_management_account_with_full_access_is_ready(monkeypatch):
     assert r["ready"] and r["permission_set"] == "CTO-Read"
     assert r["verdict"].startswith("Ready: a scan will cover")
     assert [c["id"] for c in r["checks"]] == [cid for cid, _ in preflight.STEPS]
-    assert [c["status"] for c in r["checks"]] == ["ok"] * 7 + ["skip"] * 3
+    assert [c["status"] for c in r["checks"]] == ["ok"] * 7 + ["skip"] * 4
     cost = next(c for c in r["checks"] if c["id"] == "cost")
     assert "40 accounts in 1 region " in cost["detail"]  # one call proves the multi-region data too
 
@@ -119,7 +119,7 @@ def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):
     assert status == {
         "identity": "ok", "organization": "warn", "ou_tree": "fail", "accounts": "skip", "account_tags": "skip",
         "cost": "warn", "commitments": "ok", "deep_scan": "skip", "inventory_reads": "skip",
-        "dependency_reads": "skip",
+        "dependency_reads": "skip", "assignments": "skip",
     }  # fmt: skip
     org = next(c for c in r["checks"] if c["id"] == "organization")
     assert "111111111111" in org["fix"]
@@ -180,40 +180,58 @@ def test_every_member_account_call_is_checked_and_refusals_named(monkeypatch):
     assert "  - ec2:DescribeInstances" in text and "  - sns:ListSubscriptions" in text
 
 
+def _sso(monkeypatch, roles, assigned, reachable):
+    """An Identity Center profile: ``roles`` per account, and what the bulk count reports."""
+    monkeypatch.setattr(preflight.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read"))
+    monkeypatch.setattr(preflight.sso, "portal_account_ids", lambda s: list(reachable))
+    monkeypatch.setattr(preflight.sso, "list_roles", lambda s, a: roles.get(a, []))
+    seen = []
+
+    def count(s, r, progress=None):
+        for i in range(len(reachable)):
+            if progress:
+                progress(i + 1, len(reachable))
+            seen.append(i + 1)
+        return list(assigned), list(reachable)
+
+    monkeypatch.setattr(preflight.sso, "accounts_with_role", count)
+    return seen
+
+
 def test_sso_profile_deep_scans_with_its_own_permission_set(monkeypatch):
     _deep(monkeypatch, set())
-    monkeypatch.setattr(preflight.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read"))
-    monkeypatch.setattr(preflight.sso, "accounts_with_role", lambda s, r: (["111111111111", "222222222222"],) * 2)
-    r = preflight.run_checks("p")
+    accts = ["111111111111", "222222222222"]
+    _sso(monkeypatch, {"222222222222": ["CTO-Read"]}, accts, accts)
+    progress = []
+    r = preflight.run_checks("p", on_progress=progress.append)
     checks = {c["id"]: c for c in r["checks"]}
-    assert checks["deep_scan"]["status"] == "ok"
-    assert (
-        "permission set CTO-Read" in checks["deep_scan"]["detail"] and "all 2 accounts" in checks["deep_scan"]["detail"]
-    )
+    assert checks["deep_scan"]["status"] == "ok" and "permission set CTO-Read" in checks["deep_scan"]["detail"]
     assert checks["inventory_reads"]["status"] == checks["dependency_reads"]["status"] == "ok"
+    assert checks["assignments"]["status"] == "ok" and "all 2 accounts" in checks["assignments"]["detail"]
+    assert progress == [{"id": "assignments", "done": 1, "total": 2}, {"id": "assignments", "done": 2, "total": 2}]
     assert r["verdict"].startswith("Ready: a scan will cover")
 
 
 def test_permission_set_not_assigned_in_member_is_a_warning(monkeypatch):
     _deep(monkeypatch, set())
-    monkeypatch.setattr(preflight.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read"))
-    monkeypatch.setattr(preflight.sso, "accounts_with_role", lambda s, r: (["111111111111"], ["111111111111", "2"]))
+    _sso(monkeypatch, {"222222222222": ["Other"]}, ["111111111111"], ["111111111111", "222222222222"])
     r = preflight.run_checks("p")
     checks = {c["id"]: c for c in r["checks"]}
     assert checks["deep_scan"]["status"] == "warn" and "not assigned" in checks["deep_scan"]["detail"]
     assert checks["inventory_reads"]["status"] == "skip"
+    assert checks["assignments"]["status"] == "warn"  # still counted: shows how far the gap goes
 
 
 def test_permission_set_missing_in_some_accounts_is_counted(monkeypatch):
     _deep(monkeypatch, set())
-    monkeypatch.setattr(preflight.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read"))
-    monkeypatch.setattr(
-        preflight.sso, "accounts_with_role", lambda s, r: (["333333333333"], ["333333333333", "444444444444"])
-    )
+    # Not in the org's first member account, so another account the portal shows is used.
+    _sso(monkeypatch, {"333333333333": ["CTO-Read"]}, ["333333333333"], ["333333333333", "444444444444"])
     r = preflight.run_checks("p")
-    deep = next(c for c in r["checks"] if c["id"] == "deep_scan")
-    assert deep["status"] == "warn" and "member account 333333333333" in deep["detail"]
-    assert "1 of the 2 accounts" in deep["detail"] and "CTO-Read in 1 more account" in r["admin_request"]
+    checks = {c["id"]: c for c in r["checks"]}
+    assert checks["deep_scan"]["status"] == "ok" and "member account 333333333333" in checks["deep_scan"]["detail"]
+    a = checks["assignments"]
+    assert a["status"] == "warn" and "1 of the 2 accounts" in a["detail"]
+    assert "CTO-Read in 1 more account" in r["admin_request"]
 
 
 def test_refused_tags_and_commitments_are_warnings(monkeypatch):
@@ -257,7 +275,7 @@ def test_access_check_endpoint(monkeypatch):
 def test_access_check_streams_each_check(monkeypatch):
     """?stream=1 sends the step list, then each check as it finishes, then the full result."""
 
-    def fake(profile, role, on_check=None):
+    def fake(profile, role, on_check=None, on_progress=None):
         for cid, label in preflight.STEPS:
             on_check({"id": cid, "label": label, "status": "ok"})
         return {"ready": True, "profile": profile}

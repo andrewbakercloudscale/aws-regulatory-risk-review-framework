@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Callable
 from datetime import date
 
 import boto3
@@ -114,7 +115,9 @@ def _grouped(client, start: str, end: str, filt: dict, group_by: list[str]) -> d
             return out
 
 
-def fetch_region_costs(session: boto3.Session, account_ids: list[str], months: int) -> list[dict]:
+def fetch_region_costs(
+    session: boto3.Session, account_ids: list[str], months: int, progress: Callable[[int, int], None] | None = None
+) -> list[dict]:
     """Average monthly spend per account, service and region, for the multi-region estimate.
 
     Cost Explorer groups by at most two dimensions, so this asks which regions carry spend,
@@ -149,6 +152,8 @@ def fetch_region_costs(session: boto3.Session, account_ids: list[str], months: i
                             "monthly": round(amount / months, 4),
                         }
                     )
+        if progress:
+            progress(min(i + _MAX_ACCOUNTS_PER_FILTER, len(account_ids)), len(account_ids))
     log.info("cost explorer by region: %d rows, %d account(s)", len(rows), len(account_ids))
     return rows
 
@@ -330,7 +335,9 @@ def fetch_direct_connect(session: boto3.Session, account_ids: list[str] | None =
     return {"month": start[:7], "hours": hours, "rows": rows}
 
 
-def fetch_costs(session: boto3.Session, account_ids: list[str], months: int) -> tuple[list[dict], dict]:
+def fetch_costs(
+    session: boto3.Session, account_ids: list[str], months: int, progress: Callable[[int, int], None] | None = None
+) -> tuple[list[dict], dict]:
     """Return (rows, period). Each Cost Explorer request costs US$0.01; a typical scan makes a handful."""
     client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
     start, end = month_window(months)
@@ -339,6 +346,8 @@ def fetch_costs(session: boto3.Session, account_ids: list[str], months: int) -> 
         chunk = account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER]
         rows += _query(client, start, end, chunk, "AWS")
         rows += _query(client, start, end, chunk, "AWS Marketplace")
+        if progress:
+            progress(i + len(chunk), len(account_ids))
     merged: dict[tuple, float] = {}
     for r in rows:
         key = (r["month"], r["account_id"], r["service"], r.get("product"))

@@ -889,6 +889,9 @@
       (untagged ? ` ${plural(untagged, "account")} (${money(o.untagged_monthly)} a month) have none and are left out of this table.` : "");
   }
 
+  // Distinct hues for the most common lock-in services (not the green-to-red risk scale).
+  const LOCKIN_COLORS = ["#2f6fdf", "#e07b00", "#8a4fd8", "#0f9b8e", "#d63f8c", "#7a8a00", "#a0522d", "#0096c7"];
+
   function renderAccountTable(r, maxC) {
     // Display filter only: scores, charts and totals still count every account.
     const min = RATING_TIER[$("#fMinRating").value] || 0;
@@ -900,13 +903,21 @@
     const multiOu = new Set(all.map((a) => a.ou_path)).size > 1;
     // Likewise the owner: when one person owns every account, the owners card says it once.
     const perOwner = !r.resilience?.owners?.single_owner;
+    // Colour the most common lock-in services so repeats stand out down the column.
+    const freq = {};
+    all.forEach((a) => a.top_lockin.forEach((s) => { freq[s.service] = (freq[s.service] || 0) + 1; }));
+    const common = Object.entries(freq).filter(([, n]) => n > 1).sort((x, y) => y[1] - x[1]).slice(0, LOCKIN_COLORS.length);
+    const hue = Object.fromEntries(common.map(([svc], i) => [svc, LOCKIN_COLORS[i]]));
+    const lockChip = (svc, n) => `<span class="chip${hue[svc] ? " lc" : ""}"${hue[svc] ? ` style="--lc:${hue[svc]}" title="Main lock-in in ${plural(freq[svc], "account")}"` : ""}>${esc(svc)}${n ? ` <b>${n}</b>` : ""}</span>`;
+    $("#lockinLegend").hidden = !common.length;
+    $("#lockinLegend").innerHTML = common.length ? `<span class="muted small">Most common lock-in:</span> ${common.map(([svc, n]) => lockChip(svc, n)).join("")}` : "";
     const rows = shown.map((a, i) => `<tr>
       <td class="num-cell muted">${i + 1}</td>
       <td class="acct"><strong>${esc(a.name)}</strong>${a.critical ? ` <span class="chip crit" title="${a.critical_source === "tag" ? "Criticality tag on the account" : "Matches a critical name in section 6"}">Critical</span>` : ""}<div class="hint">${esc(a.id)}${a.channel ? ` · ${esc(a.channel)}` : ""}${multiOu ? ` · ${esc(a.ou_path)}` : ""}${perOwner && a.owner ? ` · Owner: ${esc(a.owner)}` : ""}</div></td>
       <td class="num-cell">${money(a.monthly_spend)}</td>
       <td class="risk">${a.score == null ? EMPTY : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span><div class="hint">${pct(a.high_risk_pct)} High/Crit spend</div>`}</td>
       <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.spend_at_risk / maxC).toFixed(1)}%"></i></div><span class="num-cell">${money(a.spend_at_risk)}</span></div></td>
-      <td><div class="chips">${a.top_lockin.map((s) => `<span class="chip">${esc(s.service)}</span>`).join("") || '<span class="hint">none</span>'}</div></td>
+      <td><div class="chips">${a.top_lockin.map((s) => lockChip(s.service)).join("") || '<span class="hint">none</span>'}</div></td>
       <td class="num-cell">${num(a.effort_weeks / 4.33, 1)}${a.portability == null ? "" : `<div class="hint" title="Technical portability, 0-100: 100 is easy to move">portability ${Math.round(a.portability)}</div>`}</td>
     </tr>`).join("");
     $("#accountTable").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Account</th><th class="num-cell">Per month</th><th title="Exit-risk rating and score (0-100); beneath, the share of the account's spend on High or Critical services">Risk</th><th title="Spend x risk / 100: monthly spend that is hard to move. The ranking sorts by this.">Spend at risk / month</th><th>Main lock-in</th><th class="num-cell" title="Estimated engineering effort to move this account">Person-months</th></tr></thead><tbody>${rows}</tbody>`;
@@ -2093,7 +2104,8 @@
     $("#aChecks").innerHTML = "";
     $("#aVerdict").hidden = true;
     $("#aAdmin").hidden = true;
-    $("#btnAccessScan").hidden = true;
+    $("#btnAccessScan").hidden = false;
+    $("#btnAccessScan").disabled = true;
     $("#aSwitch").hidden = true;
     $("#aError").textContent = "";
     try { await fillProfiles($("#aProfile"), typeof profile === "string" ? profile : null); }
@@ -2114,7 +2126,9 @@
     $("#aChecks").innerHTML = "";
     $("#aVerdict").hidden = true;
     $("#btnAccessRun").classList.add("primary");
-    $("#btnAccessScan").hidden = true;
+    // Stays in view, disabled, so it is clear a scan can start once the checks pass.
+    $("#btnAccessScan").hidden = false;
+    $("#btnAccessScan").disabled = true;
     $("#aSwitch").hidden = true;
     $("#aAdmin").hidden = true;
     busy("#aBusy", "Starting the checks…");
@@ -2123,24 +2137,27 @@
     // and the bar shows how many of the steps are done.
     let steps = [];
     const done = {};
+    const prog = {}; // step id -> {done, total} while a step works through the accounts
     const drawSteps = () => {
       const current = steps.find((st) => !done[st.id]);
       const n = steps.filter((st) => done[st.id]).length;
       $("#aChecks").innerHTML = steps.map((st) => done[st.id] ? checkRow(done[st.id])
-        : st === current ? `<li class="pending"><span class="ic"><span class="spin" aria-hidden="true"></span></span><strong>${esc(st.label)}</strong><span class="d">Checking…</span></li>`
+        : st === current ? `<li class="pending"><span class="ic"><span class="spin" aria-hidden="true"></span></span><strong>${esc(st.label)}</strong><span class="d">${prog[st.id] ? `${num(prog[st.id].done)} of ${num(prog[st.id].total)} accounts checked` : "Checking…"}</span>${prog[st.id] ? `<span class="meter" aria-hidden="true"><i style="width:${(100 * prog[st.id].done / prog[st.id].total).toFixed(1)}%"></i></span>` : ""}</li>`
         : `<li class="wait"><span class="ic" aria-hidden="true">·</span><strong>${esc(st.label)}</strong></li>`).join("");
       if (current) {
         $("#aBusy .busy-text").textContent = `Step ${n + 1} of ${steps.length}: ${current.label}` +
           (current.id === "identity" ? " (approve Touch ID if prompted)" : "") +
-          (current.id === "deep_scan" ? " (checks your permission set in every account; about a minute per 300)" : "");
+          (prog[current.id] ? `: ${num(prog[current.id].done)} of ${num(prog[current.id].total)} accounts` : "");
       }
-      busyProgress("#aBusy", steps.length ? (n + 0.5) / steps.length : 0);
+      const frac = current && prog[current.id] ? prog[current.id].done / prog[current.id].total : 0.5;
+      busyProgress("#aBusy", steps.length ? (n + frac) / steps.length : 0);
     };
     try {
       let r = null;
       await apiStream("/api/access-check?stream=1", { profile: $("#aProfile").value || null, role_name: $("#aRole").value || null }, (msg) => {
         if (msg.steps) steps = msg.steps;
         if (msg.check) done[msg.check.id] = msg.check;
+        if (msg.progress) prog[msg.progress.id] = msg.progress;
         if (msg.result) r = msg.result;
         if (msg.error) throw new Error(msg.error);
         if (!msg.result) drawSteps();
@@ -2154,9 +2171,9 @@
       const needsAdmin = r.checks.some((c) => c.status !== "ok" && c.status !== "skip" && c.needs) || !r.ready;
       $("#aAdmin").hidden = !needsAdmin || r.checks[0].status !== "ok";
       $("#aAdminText").value = r.admin_request;
-      $("#btnAccessScan").hidden = !(r.ready || r.partial);
+      $("#btnAccessScan").disabled = !(r.ready || r.partial);
       // Once a scan can start, that is the next step: Check access steps back to a plain button.
-      $("#btnAccessRun").classList.toggle("primary", $("#btnAccessScan").hidden);
+      $("#btnAccessRun").classList.toggle("primary", $("#btnAccessScan").disabled);
       if (r.management_account_id) state.mgmtAccount = r.management_account_id;
       if (r.ready) {
         try { localStorage.setItem(LS_ORG_PROFILE, $("#aProfile").value); } catch { /* ignore */ }

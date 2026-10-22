@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import boto3
@@ -37,10 +38,18 @@ def describe_org(session: boto3.Session) -> dict:
     return {"id": org["Id"], "management_account_id": org["MasterAccountId"]}
 
 
-def list_ou_tree(session: boto3.Session) -> dict:
+# The tree walk is a few small calls per OU; 8 at once measured ~20% faster than 4 without throttling.
+TREE_WORKERS = 8
+
+
+def list_ou_tree(
+    session: boto3.Session, accounts_out: dict | None = None, progress: Callable[[int, int], None] | None = None
+) -> dict:
     """Return the full OU tree as nested dicts: {id, name, path, accounts, children: [...]}.
 
     ``accounts`` counts the accounts directly in that node, so the picker can show how big each OU is.
+    ``accounts_out`` (node id -> raw account dicts) keeps the lists read on the way, so a scan need not
+    list them again; ``progress(OUs read, accounts found)`` is called after each level.
     """
     client = _client(session)
     root = client.list_roots()["Roots"][0]
@@ -49,7 +58,10 @@ def list_ou_tree(session: boto3.Session) -> dict:
     accounts = client.get_paginator("list_accounts_for_parent")
 
     def expand(node: dict) -> list[dict]:
-        node["accounts"] = sum(len(p["Accounts"]) for p in accounts.paginate(ParentId=node["id"]))
+        found = [a for p in accounts.paginate(ParentId=node["id"]) for a in p["Accounts"]]
+        node["accounts"] = len(found)
+        if accounts_out is not None:
+            accounts_out[node["id"]] = found
         for page in paginator.paginate(ParentId=node["id"]):
             for ou in page["OrganizationalUnits"]:
                 child = {"id": ou["Id"], "name": ou["Name"], "path": f"{node['path']} / {ou['Name']}", "children": []}
@@ -59,9 +71,14 @@ def list_ou_tree(session: boto3.Session) -> dict:
 
     # One level at a time, siblings in parallel: a 10-OU tree takes ~3 round trips instead of ~11.
     # Few workers, because Organizations throttles hard (botocore retries what does get throttled).
-    level = [tree]
+    level, nodes, n_accounts = [tree], 0, 0
     while level:
-        level = [child for children in pmap(expand, level) for child in children]
+        expanded = level
+        level = [child for children in pmap(expand, level, workers=TREE_WORKERS) for child in children]
+        nodes += len(expanded)
+        n_accounts += sum(n["accounts"] for n in expanded)
+        if progress:
+            progress(nodes, n_accounts)
     return tree
 
 
@@ -102,8 +119,9 @@ def find_ou(tree: dict, ou_id: str) -> dict | None:
     return None
 
 
-def list_accounts_under(session: boto3.Session, ou: dict) -> list[Account]:
-    """Every account in ``ou`` and all of its descendant OUs."""
+def list_accounts_under(session: boto3.Session, ou: dict, known: dict | None = None) -> list[Account]:
+    """Every account in ``ou`` and all of its descendant OUs. ``known`` is ``accounts_out`` from
+    list_ou_tree: nodes found there are not listed again."""
     paginator = _client(session).get_paginator("list_accounts_for_parent")
     nodes, stack = [], [ou]
     while stack:
@@ -121,8 +139,11 @@ def list_accounts_under(session: boto3.Session, ou: dict) -> list[Account]:
                 ou_id=node["id"],
                 ou_path=node["path"],
             )
-            for page in paginator.paginate(ParentId=node["id"])
-            for a in page["Accounts"]
+            for a in (
+                known[node["id"]]
+                if known and node["id"] in known
+                else [a for page in paginator.paginate(ParentId=node["id"]) for a in page["Accounts"]]
+            )
         ]
 
     accounts = [a for found in pmap(direct, nodes) for a in found]

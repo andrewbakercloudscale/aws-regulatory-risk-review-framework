@@ -13,12 +13,22 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 - Check access now tests every permission a scan uses: OU listing, account tags, Savings Plans and
   reservation utilisation, and every inventory and dependency call inside a member account. Each refused
   action is named, shown in the console and added to the administrator request. With an Identity Center
-  profile it also counts the accounts where your permission set is assigned.
+  profile it also counts the accounts where your permission set is assigned, with a live
+  "x of y accounts checked" counter and progress bar.
+- Live account counters in scan progress: OUs and accounts found while reading the OU tree, accounts
+  read from Cost Explorer, and "x of y accounts scanned" during a deep scan.
+- Account ranking colours the most common lock-in services, with a legend counting the accounts each
+  appears in.
+- A deep scan with your own sign-in adds a heads-up to the issues list: throttling or an expired sign-in
+  can skip accounts (each skipped account is listed).
 
 ### Changed
 
 - Optional checks (tags, commitments, deep scan) that fail are warnings, so a quick scan is still
   reported as ready.
+- Check access keeps "Start a scan" in view, disabled, until the checks pass; passed checks read green.
+- Faster: the scan reuses the account lists read while walking the OU tree (one pass, 8 at once), and
+  member probes run in parallel. Sign-in portal calls are paced with adaptive retries, not dropped.
 
 ## [0.12.0] - 2026-10-22
 

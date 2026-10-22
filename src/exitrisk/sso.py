@@ -22,6 +22,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -338,12 +339,43 @@ def list_accounts(session_name: str) -> dict:
     return {"accounts": accounts, "management_account_id": mgmt}
 
 
-def accounts_with_role(session_name: str, role: str) -> tuple[list[str], list[str]]:
-    """(account ids where ``role`` is assigned to the analyst, all account ids the portal shows them)."""
+# Bulk portal reads (one ListAccountRoles per account): the portal allows roughly 8 calls a second,
+# so more threads only earn 429s. Adaptive retries pace the calls instead of failing them.
+PORTAL_BULK = Config(
+    signature_version=botocore.UNSIGNED, retries={"max_attempts": 10, "mode": "adaptive"}, max_pool_connections=16
+)
+PORTAL_WORKERS = 12
+
+
+def portal_account_ids(session_name: str) -> list[str]:
     token, region = _token_or_fail(session_name)
     pages = _portal(region).get_paginator("list_accounts").paginate(accessToken=token)
-    ids = sorted(a["accountId"] for p in pages for a in p["accountList"])
-    have = pmap(lambda a: role in list_roles(session_name, a), ids, workers=8)
+    return sorted(a["accountId"] for p in pages for a in p["accountList"])
+
+
+def accounts_with_role(
+    session_name: str, role: str, progress: Callable[[int, int], None] | None = None
+) -> tuple[list[str], list[str]]:
+    """(account ids where ``role`` is assigned to the analyst, all account ids the portal shows them).
+
+    ``progress(done, total)`` is called as each account is checked.
+    """
+    token, region = _token_or_fail(session_name)
+    ids = portal_account_ids(session_name)
+    client = boto3.client("sso", region_name=region, config=PORTAL_BULK)
+    lock, done = threading.Lock(), [0]
+
+    def has_role(account_id: str) -> bool:
+        pages = client.get_paginator("list_account_roles").paginate(accessToken=token, accountId=account_id)
+        found = any(r["roleName"] == role for p in pages for r in p["roleList"])
+        with lock:
+            done[0] += 1
+            n = done[0]
+        if progress:
+            progress(n, len(ids))
+        return found
+
+    have = pmap(has_role, ids, workers=PORTAL_WORKERS)
     return [a for a, ok in zip(ids, have, strict=True) if ok], ids
 
 
@@ -364,7 +396,9 @@ def _find_management(session_name: str, accounts: list[dict]) -> str | None:
 
 def role_session(session_name: str, account_id: str, role: str) -> boto3.Session:
     token, region = _token_or_fail(session_name)
-    c = _portal(region).get_role_credentials(roleName=role, accountId=account_id, accessToken=token)["roleCredentials"]
+    # Paced retries: a deep scan asks for credentials once per account, enough to trip the portal's limit.
+    portal = boto3.client("sso", region_name=region, config=PORTAL_BULK)
+    c = portal.get_role_credentials(roleName=role, accountId=account_id, accessToken=token)["roleCredentials"]
     return boto3.Session(
         aws_access_key_id=c["accessKeyId"],
         aws_secret_access_key=c["secretAccessKey"],

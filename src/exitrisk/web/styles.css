@@ -188,6 +188,9 @@ table.mono td { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
 .chip.inuse { border-color: var(--accent); }
+.chip.lc { background: color-mix(in srgb, var(--lc) 16%, var(--surface)); border-color: color-mix(in srgb, var(--lc) 55%, transparent); color: color-mix(in srgb, var(--lc) 70%, var(--ink)); font-weight: 500; }
+.lockin-legend { align-items: center; margin: 0 0 8px; }
+.lockin-legend b { font-weight: 700; }
 
 /* Estimate */
 .grid-est { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
@@ -388,6 +391,9 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .checks .wait { color: var(--muted); }
 .checks .pending .ic .spin { width: 14px; height: 14px; border-width: 2px; margin: 2px 0 0; }
 .checks .d { grid-column: 2; color: var(--ink-2); word-break: break-word; }
+.checks .ok .d { color: var(--good); }
+.checks .meter { grid-column: 2; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-top: 4px; }
+.checks .meter i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
 .checks .f { grid-column: 2; color: var(--ink); }
 .checks .n { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; color: var(--muted); }
 .checks .n code { font-size: 11px; padding: 1px 5px; border-radius: 4px; background: var(--soft, rgba(127,127,127,.12)); color: var(--ink); }

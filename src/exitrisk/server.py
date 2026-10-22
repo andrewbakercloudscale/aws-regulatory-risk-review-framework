@@ -295,7 +295,10 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
                 q.put(
                     {
                         "result": preflight.run_checks(
-                            req.profile, req.role_name or None, on_check=lambda c: q.put({"check": c})
+                            req.profile,
+                            req.role_name or None,
+                            on_check=lambda c: q.put({"check": c}),
+                            on_progress=lambda pr: q.put({"progress": pr}),
                         )
                     }
                 )
@@ -310,7 +313,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             while True:
                 item = q.get()
                 yield json.dumps(item) + "\n"
-                if "check" not in item:
+                if "check" not in item and "progress" not in item:
                     return
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")

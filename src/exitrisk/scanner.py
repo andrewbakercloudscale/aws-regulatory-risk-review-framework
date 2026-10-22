@@ -275,7 +275,14 @@ def run_scan(job: ScanJob) -> dict:
         # Always read fresh: a scan is evidence, so an OU moved minutes ago must count. The picker's
         # cached copy is refreshed with what the scan saw.
         data["org"] = organizations.describe_org(session)
-        tree = organizations.list_ou_tree(session)
+        known: dict = {}
+        tree = organizations.list_ou_tree(
+            session,
+            known,
+            lambda n_ous, n_accts: job.update(
+                "organizations", 15, f"Reading the organization's OU tree: {n_ous} OUs, {n_accts} accounts found"
+            ),
+        )
         organizations.remember_org_and_tree(p.profile, data["org"], tree)
         ous = [organizations.find_ou(tree, i) for i in p.ous] if p.ous else [tree]
         missing = [i for i, ou in zip(p.ous, ous, strict=False) if ou is None]
@@ -286,7 +293,7 @@ def run_scan(job: ScanJob) -> dict:
         # Nested picks (an OU and one of its children) overlap: keep each account once.
         seen: dict[str, organizations.Account] = {}
         for ou in ous:
-            for a in organizations.list_accounts_under(session, ou):
+            for a in organizations.list_accounts_under(session, ou, known):
                 seen.setdefault(a.id, a)
         accounts = list(seen.values())
         if data["identity"]["account_id"] != data["org"]["management_account_id"]:
@@ -356,7 +363,14 @@ def run_scan(job: ScanJob) -> dict:
     # 3. Spend per account per service. Without this there is no score, so a failure is fatal.
     job.update("cost", 30, f"Querying Cost Explorer for the last {p.months} complete month(s)")
     try:
-        data["costs"], data["period"] = cost.fetch_costs(session, [a.id for a in accounts], p.months)
+        data["costs"], data["period"] = cost.fetch_costs(
+            session,
+            [a.id for a in accounts],
+            p.months,
+            lambda done, total: job.update(
+                "cost", 30 + 20 * done // total, f"Querying Cost Explorer: {done} of {total} accounts read"
+            ),
+        )
     except (ClientError, BotoCoreError) as exc:
         code, msg, hint = describe_exception(exc)
         job.add_issue(Issue("critical", "cost", f"Cost Explorer query failed: {msg}", hint, error_code=code))
@@ -385,7 +399,16 @@ def run_scan(job: ScanJob) -> dict:
         "region_costs",
         "spend by region",
         "Until then the multi-region view assumes all spend runs in one region.",
-        lambda: cost.fetch_region_costs(session, ids, p.months),
+        lambda: cost.fetch_region_costs(
+            session,
+            ids,
+            p.months,
+            lambda done, total: job.update(
+                "cost",
+                52 + 3 * done // total,
+                f"Querying Cost Explorer for spend by region: {done} of {total} accounts",
+            ),
+        ),
     )
     job.update("cost", 55, f"{len(data.get('region_costs') or [])} region cost line(s) collected")
 
@@ -463,6 +486,16 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
 
     pair = None if p.role_name else sso.profile_permission_set(p.profile)
     access = p.role_name or (f"permission set {pair[1]}" if pair else "your sign-in")
+    if pair:
+        job.add_issue(
+            Issue(
+                "info",
+                "inventory",
+                f"Heads up: this deep scan uses your own sign-in ({access}). It can skip accounts if AWS throttles "
+                "the sign-in portal or your sign-in expires mid-scan; each skipped account is listed as its own issue.",
+                "Sign in just before a long deep scan, or give a member role to assume (ExitRiskReadOnly).",
+            )
+        )
 
     def one(account):
         try:
@@ -526,6 +559,6 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
             job.update(
                 "inventory",
                 60 + int(38 * done / max(len(active), 1)),
-                f"Inventory {done}/{len(active)}: {account.name}",
+                f"{done} of {len(active)} accounts scanned: {account.name}",
             )
     return results
