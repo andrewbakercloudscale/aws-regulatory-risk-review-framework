@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-22
+
 ### Added
 
 - Exit difficulty measured apart from spend. Section 1 adds **Where the work is**: technical

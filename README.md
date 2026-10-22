@@ -168,6 +168,12 @@ exitrisk catalog                                                        # list s
 
 ![Executive summary](docs/images/executive-summary.png)
 
+Where the work is: technical portability, exit effort and the five dimensions, measured apart from spend.
+
+![Where the work is](docs/images/where-the-work-is.png)
+
+![Critical-account readiness and integrations](docs/images/critical-readiness.png)
+
 **Risk profile**: Spend by tier and its trend, and which product types are growing.
 
 ![Risk profile](docs/images/risk-profile.png)

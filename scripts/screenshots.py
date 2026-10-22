@@ -128,6 +128,8 @@ def main() -> int:
         # The sticky top bar would otherwise overlap element screenshots.
         page.add_style_tag(content=".topbar { position: static !important; }")
         shoot(page, "#sec-summary", "executive-summary.png")
+        shoot(page, "#workBlock", "where-the-work-is.png")
+        shoot(page, "#workDetail", "critical-readiness.png")
         shoot(page, "#sec-profile", "risk-profile.png")
         shoot(page, "#sec-accounts", "accounts.png")
         shoot(page, "#sec-services", "services.png")
@@ -182,13 +184,19 @@ def main() -> int:
         page.wait_for_selector("#scanDialog[open]")
         page.wait_for_selector("#sOu input[value='ou-demo-prod']")
         page.check("#sOu input[value='ou-demo-prod']")
-        page.check("#sInventory")
+        page.select_option("#sDepth", "dependency")
         page.fill("input[name=role_name]", "ExitRiskReadOnly")
         # Tall enough to show the whole dialog, from the top.
         page.set_viewport_size({"width": 1360, "height": 1900})
         page.eval_on_selector("#scanDialog .fd-body", "el => el.scrollTo(0, 0)")
+        # Show the whole form, scan depth included, rather than the part that fits the dialog's height.
+        tall = page.add_style_tag(
+            content="#scanDialog { max-height: none !important; } "
+            "#scanDialog .fd-body { max-height: none !important; overflow: visible !important; }"
+        )
         page.wait_for_timeout(200)
         shoot(page, "#scanDialog", "new-scan-dialog.png")
+        tall.evaluate("el => el.remove()")
         page.set_viewport_size({"width": 1360, "height": 900})
         page.keyboard.press("Escape")
 
