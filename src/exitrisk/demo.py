@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from . import store
 from .collectors.cost import month_window
+from .collectors.dependencies import EDGE_SOURCES as DEPENDENCY_KINDS
 from .issues import Issue
 
 # (name, ou, {service: monthly USD}, inventory totals)
@@ -326,6 +327,48 @@ def _tail(rng: random.Random) -> list[tuple]:
     return out
 
 
+def _deep_counts(services: dict, inv: dict) -> dict:
+    """Fill in what a deep scan would also count, sized from the account's spend on each service."""
+    spend = {k.partition("|")[0]: (v[0] if isinstance(v, tuple) else v) for k, v in services.items()}
+    out = dict(inv)
+    derived = {
+        "ec2_instances": ("Amazon Elastic Compute Cloud - Compute", 350),
+        "s3_buckets": ("Amazon Simple Storage Service", 150),
+        "ecs_services": ("Amazon Elastic Container Service", 400),
+        "sns_topics": ("Amazon Simple Notification Service", 60),
+        "eventbridge_rules": ("Amazon EventBridge", 40),
+        "api_gateway_http": ("Amazon API Gateway", 900),
+    }
+    for key, (svc, per) in derived.items():
+        if key not in out and spend.get(svc):
+            out[key] = max(1, round(spend[svc] / per))
+    if out.get("lambda_functions"):
+        n = out["lambda_functions"]
+        old, custom = round(n * 0.12), round(n * 0.03)
+        out["lambda_runtimes"] = {"python3.12": n - old - custom - round(n * 0.25), "nodejs20.x": round(n * 0.25)}
+        out["lambda_runtimes"].update({"python3.8": old, "provided.al2023": custom})
+    return out
+
+
+def _edges(t: dict) -> dict:
+    """Integrations a dependency scan would find, in proportion to what the account runs."""
+    fns = t.get("lambda_functions", 0)
+    edges = {
+        "sqs>lambda": round(0.6 * t.get("sqs_queues", 0)) if fns else 0,
+        "kinesis>lambda": t.get("kinesis_streams", 0) if fns else 0,
+        "dynamodb>lambda": round(0.3 * t.get("dynamodb_tables", 0)) if fns else 0,
+        "eventbridge>lambda": round(0.7 * t.get("eventbridge_rules", 0)) if fns else 0,
+        "eventbridge>stepfunctions": round(0.2 * t.get("eventbridge_rules", 0)) if t.get("step_functions") else 0,
+        "sns>sqs": t.get("sns_topics", 0) if t.get("sqs_queues") else 0,
+        "sns>email": round(0.3 * t.get("sns_topics", 0)),
+        "apigateway>lambda": (8 * t.get("api_gateway_rest", 0) + 5 * t.get("api_gateway_http", 0)) if fns else 0,
+        "apigateway>http": 3 * t.get("api_gateway_http", 0) if not fns else 0,
+        "stepfunctions>lambda": 4 * t.get("step_functions", 0),
+        "stepfunctions>dynamodb": 2 * t.get("step_functions", 0) if t.get("dynamodb_tables") else 0,
+    }
+    return {k: v for k, v in edges.items() if v}
+
+
 def _seasonality(month_index: int, rng: random.Random) -> float:
     # gentle growth with noise, as in most estates
     return (0.9 + 0.035 * month_index) * rng.uniform(0.95, 1.05)
@@ -537,10 +580,13 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
                     }
                 )
         if inv:
+            totals = _deep_counts(services, inv)
             inventory[aid] = {
                 "regions_scanned": ["eu-west-1", "eu-west-2", "us-east-1"],
-                "totals": inv,
+                "totals": totals,
                 "by_region": {},
+                "dependencies": _edges(totals),
+                "dependency_kinds": sorted(DEPENDENCY_KINDS),
             }
 
     by_name = {a["name"]: a["id"] for a in accounts}
@@ -558,7 +604,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
         Issue(
             "warning",
             "inventory",
-            "eventbridge_rules in ap-southeast-2: Rate exceeded",
+            "Amazon EventBridge (events) in ap-southeast-2: Rate exceeded",
             "AWS throttled the request after retries. Re-run, or lower EXITRISK_MAX_WORKERS.",
             account_id=by_name["data-platform-prod"],
             region="ap-southeast-2",
@@ -591,6 +637,8 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
             "months": months,
             "role_name": "ExitRiskReadOnly",
             "inventory": True,
+            "dependencies": True,
+            "inventory_scope": "all",
             "regions": None,
             "label": "Demo",
         },

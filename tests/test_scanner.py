@@ -287,7 +287,7 @@ def test_one_account_inventory_bug_does_not_fail_the_scan(monkeypatch, caplog):
     monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
     monkeypatch.setattr(scanner, "assume_role_session", lambda s, a, r, j: object())
 
-    def inv(_s, account_id, _regions):
+    def inv(_s, account_id, _regions, dependencies=False):
         if account_id == "222222222222":
             raise KeyError("Reservations")
         return {"resources": {}}, []

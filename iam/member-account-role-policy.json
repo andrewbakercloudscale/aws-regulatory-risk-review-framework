@@ -20,7 +20,21 @@
         "cloudformation:ListStacks",
         "eks:ListClusters",
         "ecs:ListClusters",
-        "rds:DescribeDBInstances"
+        "rds:DescribeDBInstances",
+        "ec2:DescribeInstances",
+        "s3:ListAllMyBuckets",
+        "ecs:ListServices"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ExitRiskDependencyScan",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListEventSourceMappings",
+        "events:ListTargetsByRule",
+        "sns:ListSubscriptions",
+        "states:DescribeStateMachine"
       ],
       "Resource": "*"
     }

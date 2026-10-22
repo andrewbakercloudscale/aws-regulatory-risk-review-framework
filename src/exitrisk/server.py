@@ -83,6 +83,8 @@ class ScanRequest(BaseModel):
     months: int = Field(12, ge=1, le=12)
     role_name: str | None = Field(None, max_length=64, pattern=r"^[\w+=,.@-]*$")
     inventory: bool = False
+    dependencies: bool = False
+    inventory_scope: str = Field("all", pattern="^(all|material)$")
     regions: list[REGION] | None = Field(None, max_length=40)
     label: str = Field("", max_length=120)
     target: str = Field("azure", pattern=TARGET_PATTERN)

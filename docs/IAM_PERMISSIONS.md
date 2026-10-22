@@ -56,8 +56,16 @@ stacks, RDS engines…) which sharpen the effort estimate. The scanner assumes a
 - Management-side permission: `sts:AssumeRole` on `arn:aws:iam::*:role/ExitRiskReadOnly`
   (included in the management policy above as `OptionalDeepScanAssumeMemberRole`; delete that statement
   if you will never deep-scan).
-- Member role: **list-only** actions, [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json).
-  The role cannot read data, objects, items, secrets or configuration, only enumerate and count.
+- Member role: **list and describe** actions, [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json).
+  The role cannot read data, objects, items or secrets. A few actions return configuration
+  (`ec2:DescribeInstances`, `lambda:ListFunctions`, `states:DescribeStateMachine`); the scanner keeps only
+  counts (instances, functions per runtime, integrations such as "SQS to Lambda: 12") and never stores
+  names, ARNs, definitions or environment variables.
+- The second statement, `ExitRiskDependencyScan`, is used only by a **Dependency scan**
+  (`--dependencies`, or Scan depth in the console). It counts the integrations between services: Lambda event
+  source mappings, EventBridge rule targets, SNS subscriptions, API Gateway integrations and Step Functions task
+  states. Leave it out if you only run inventory scans; a dependency scan without it reports a warning and
+  carries on.
 - Trust: the scanner account (optionally one principal), and only sessions named `exitrisk-*`.
 
 Deploy the role to every account in an OU with CloudFormation **StackSets** (service-managed

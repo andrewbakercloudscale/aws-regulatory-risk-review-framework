@@ -28,6 +28,34 @@ from .parallel import background
 log = get_logger("scanner")
 
 
+INVENTORY_SCOPES = ("all", "material")
+# A "material" deep scan covers the largest accounts holding this share of spend, plus any account
+# spending at least MATERIAL_LOCKIN_MONTHLY a month on High or Critical (tier 4 to 5) services.
+MATERIAL_SPEND_SHARE = 0.95
+MATERIAL_LOCKIN_MONTHLY = 100.0
+
+
+def material_accounts(costs: list[dict], months: int) -> set[str]:
+    """Account ids worth a deep scan when the user asks for a selective one."""
+    from .catalog import load_catalog
+
+    catalog = load_catalog()
+    spend: dict[str, float] = {}
+    lockin: dict[str, float] = {}
+    for r in costs:
+        spend[r["account_id"]] = spend.get(r["account_id"], 0.0) + r["amount"]
+        if catalog.lookup(r["service"]).tier >= 4:
+            lockin[r["account_id"]] = lockin.get(r["account_id"], 0.0) + r["amount"]
+    total, running, out = sum(spend.values()), 0.0, set()
+    for aid, amt in sorted(spend.items(), key=lambda kv: -kv[1]):
+        if running >= total * MATERIAL_SPEND_SHARE:
+            break
+        out.add(aid)
+        running += amt
+    out |= {aid for aid, amt in lockin.items() if amt / max(months, 1) >= MATERIAL_LOCKIN_MONTHLY}
+    return out
+
+
 @dataclass
 class ScanParams:
     profile: str | None = None
@@ -36,6 +64,11 @@ class ScanParams:
     months: int = 12
     role_name: str | None = None
     inventory: bool = False
+    # Dependency scan: also count the integrations between services (implies the inventory).
+    dependencies: bool = False
+    # "all" accounts, or only the "material" ones: those holding most of the spend or any spend on
+    # High/Critical services. Deep scans cost time and API calls; selective ones go where it counts.
+    inventory_scope: str = "all"
     regions: list[str] | None = None
     label: str = ""
     target: str = "azure"  # exit target asked at scan time; seeds the estimate questionnaire
@@ -45,6 +78,10 @@ class ScanParams:
         return list(dict.fromkeys([*(self.ou_ids or []), *([self.ou_id] if self.ou_id else [])]))
 
     def validate(self) -> None:
+        if self.dependencies:
+            self.inventory = True
+        if self.inventory_scope not in INVENTORY_SCOPES:
+            raise ValueError(f"inventory_scope must be one of {', '.join(INVENTORY_SCOPES)}")
         if not 1 <= self.months <= 12:
             raise ValueError("months must be between 1 and 12")
         if self.inventory and not self.role_name:
@@ -209,11 +246,13 @@ def run_scan(job: ScanJob) -> dict:
     data: dict = {"created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     job.data = data  # kept on the job so a failed scan still saves what it collected
     log.info(
-        "scan starting: profile=%s ou=%s months=%d inventory=%s",
+        "scan starting: profile=%s ou=%s months=%d inventory=%s dependencies=%s scope=%s",
         p.profile,
         ",".join(p.ous) or "root",
         p.months,
         p.inventory,
+        p.dependencies,
+        p.inventory_scope,
     )
 
     # 1. Identity. With aws-cli-zsp this is where the Touch ID prompt appears.
@@ -439,7 +478,7 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
                 ],
             )
         try:
-            inv, issues = inventory.inventory_account(sess, account.id, p.regions)
+            inv, issues = inventory.inventory_account(sess, account.id, p.regions, dependencies=p.dependencies)
         except Exception as exc:  # one account's odd answer must not lose the other accounts
             if not isinstance(exc, (ClientError, BotoCoreError)):
                 log.exception("inventory of %s failed with an unexpected error", account.id)
@@ -457,6 +496,12 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
         return account, inv, issues
 
     active = [a for a in accounts if a.status in ("ACTIVE", "UNKNOWN")]
+    if p.inventory_scope == "material":
+        keep = material_accounts(job.data.get("costs") or [], p.months)
+        log.info(
+            "selective deep scan: %d of %d account(s) are material", len(keep & {a.id for a in active}), len(active)
+        )
+        active = [a for a in active if a.id in keep]
     with ThreadPoolExecutor(max_workers=settings.max_workers) as pool:
         for fut in as_completed([pool.submit(one, a) for a in active]):
             account, inv, issues = fut.result()

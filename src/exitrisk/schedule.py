@@ -29,7 +29,18 @@ CHECK_EVERY_S = 600
 # A scan claimed but never finished (the process died) is given up after this long.
 STALE_RUN = timedelta(hours=12)
 # Settings a scheduled scan repeats; anything else in a scan's params is left behind.
-PARAM_KEYS = ("profile", "ou_id", "ou_ids", "months", "role_name", "inventory", "regions", "target")
+PARAM_KEYS = (
+    "profile",
+    "ou_id",
+    "ou_ids",
+    "months",
+    "role_name",
+    "inventory",
+    "dependencies",
+    "inventory_scope",
+    "regions",
+    "target",
+)
 
 
 class ScheduleRequest(BaseModel):

@@ -389,6 +389,8 @@ def _data(
         return {"available": True, "empty": True, "total_tb": 0.0}
     # Copies (snapshots, backups) are rebuilt at the target; live data and archives must move.
     move_tb = _tb(by_kind["live"] + by_kind["archive"])
+    for aid, k in by_account.items():  # per account, for critical-account readiness
+        rows[aid]["data_tb"] = _tb(k["live"] + k["archive"])
     accounts = sorted(
         (
             {

@@ -129,7 +129,9 @@ def _scan(args) -> int:
         ou_ids=[o.strip() for o in args.ou.split(",") if o.strip()] if args.ou else None,
         months=args.months,
         role_name=args.role,
-        inventory=args.inventory,
+        inventory=args.inventory or args.dependencies,
+        dependencies=args.dependencies,
+        inventory_scope=args.inventory_scope,
         regions=args.regions.split(",") if args.regions else None,
         label=args.label or "",
         target=args.target,
@@ -367,6 +369,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ou", help="OU id(s), comma-separated (ou-xxxx-yyyyyyyy,...); default: the organization root")
     p.add_argument("--months", type=int, default=3)
     p.add_argument("--inventory", action="store_true", help="also inventory resources in member accounts")
+    p.add_argument(
+        "--dependencies",
+        action="store_true",
+        help="also count the integrations between services (dependency scan; implies --inventory)",
+    )
+    p.add_argument(
+        "--inventory-scope",
+        choices=["all", "material"],
+        default="all",
+        help="deep-scan every account, or only material ones (most of the spend, or High/Critical services)",
+    )
     p.add_argument("--role", help="role name to assume in member accounts for --inventory")
     p.add_argument("--regions", help="comma-separated regions for --inventory (default: all enabled)")
     p.add_argument("--label")

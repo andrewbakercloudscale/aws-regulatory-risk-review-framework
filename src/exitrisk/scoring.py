@@ -22,15 +22,15 @@ from __future__ import annotations
 import copy
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 from . import __version__
 from .catalog import AGENTIC_FACTORS, Catalog, load_catalog
+from .dimensions import build_dimensions, hard_part
 from .estimate import (
     TARGET_LABELS,
     TARGET_PHRASES,
-    TYPICAL_COUNTS,
     Questionnaire,
     build_estimate,
     money_range,
@@ -39,6 +39,7 @@ from .estimate import (
 from .filtering import AccountFilter
 from .issues import Issue
 from .resilience import build_resilience
+from .resource_effort import DAYS_PER_WEEK, integration_days, resource_days
 from .timing import MATERIAL_STRANDED, build_timing, owed_range
 
 # Confidence stays High only when the deep scan reached accounts with this share of spend, and
@@ -261,6 +262,58 @@ def _spend_issues(sp: _Spend, n_months: int) -> list[dict]:
     return out
 
 
+def _service_row(services: dict[str, dict], info, catalog: Catalog) -> dict:
+    return services.setdefault(
+        info.service,
+        {
+            "service": info.service,
+            "display": info.display,
+            "category": info.category,
+            "tier": info.tier,
+            "tier_label": catalog.tier_label(info.tier),
+            "classified": info.classified,
+            "agentic": info.agentic,
+            "monthly_spend": 0.0,
+            "accounts": 0,
+            "effort_weeks": 0.0,
+            "resources": 0,
+        },
+    )
+
+
+class _Effort:
+    """One account's unadjusted engineer-weeks, by tier, by basis and by service."""
+
+    def __init__(self, ai_agents: bool):
+        self.ai_agents = ai_agents
+        self.by_tier = {t: 0.0 for t in range(1, 6)}
+        self.basis = {"resources": 0.0, "spend": 0.0, "integrations": 0.0}
+        self.by_service: dict[str, float] = {}
+        self.agentic_saved = 0.0
+
+    def add(self, info, weeks: float, kind: str) -> None:
+        factor = AGENTIC_FACTORS["medium" if kind == "integrations" else info.agentic]
+        if self.ai_agents:
+            self.agentic_saved += weeks * (1 - factor)
+            weeks *= factor
+        self.by_tier[info.tier] += weeks
+        self.basis[kind] += weeks
+        self.by_service[info.service] = self.by_service.get(info.service, 0.0) + weeks
+
+
+def _portability(effort_by_tier: dict, catalog: Catalog) -> float | None:
+    """Technical portability, 0-100: the effort-weighted inverse of the tier score.
+
+    100 - (sum of effort x tier score) / effort. It answers "how much of the work moves on
+    low-redesign patterns" and, unlike the exit-risk score, spend plays no part in it.
+    """
+    total = sum(effort_by_tier.values())
+    if total <= 0:
+        return None
+    hard = sum(w * catalog.tier_score(int(t)) for t, w in effort_by_tier.items())
+    return round(100 - hard / total, 1)
+
+
 def _accounts(
     in_scope: dict,
     sp: _Spend,
@@ -269,6 +322,7 @@ def _accounts(
     q: Questionnaire,
     weight_fn,
     inventory: dict,
+    excluded: frozenset[str] = frozenset(),
 ) -> tuple[list[dict], dict[str, dict]]:
     """One row per in-scope account, ranked by spend at risk, and the per-service totals across them."""
     monthly_of = {aid: sum(sp.per_account.get(aid, {}).values()) / n_months for aid in in_scope}
@@ -281,39 +335,41 @@ def _accounts(
         score = _weighted_score(svc_totals, catalog)
         weight = weight_fn(monthly) / total_weight if total_weight else 0.0
         tier_spend = {t: 0.0 for t in range(1, 6)}
-        effort_by_tier = {t: 0.0 for t in range(1, 6)}
-        agentic_saved = 0.0
-        inv_totals = (inventory.get(aid) or {}).get("totals", {})
+        eff = _Effort(q.ai_agents)
+        inv = inventory.get(aid) or {}
+        inv_totals = inv.get("totals", {})
+        material = monthly >= q.materiality
+        # Deep-scanned material accounts: services the inventory counted are sized from their resources,
+        # whatever they cost. Everything else stays sized from spend, above the materiality cut-off.
+        counted = resource_days(inv_totals) if inv and material else {}
+        counted = {k: v for k, v in counted.items() if k not in excluded}
         top = []
+        seen = set()
         for svc, amt in svc_totals.items():
             info = catalog.lookup(svc)
             m = amt / n_months
             tier_spend[info.tier] += m
-            if m >= q.materiality:
-                probe = TYPICAL_COUNTS.get(info.service)
-                count = inv_totals.get(probe[0]) if probe else None
-                weeks = service_effort(info.effort_weeks, m, count, probe[1] if probe else None)
-                if q.ai_agents:
-                    agentic_saved += weeks * (1 - AGENTIC_FACTORS[info.agentic])
-                    weeks *= AGENTIC_FACTORS[info.agentic]
-                effort_by_tier[info.tier] += weeks
+            if info.service in counted and info.service not in seen:
+                eff.add(info, counted[info.service]["days"] / DAYS_PER_WEEK, "resources")
+            elif info.service not in counted and m >= q.materiality:
+                eff.add(info, service_effort(info.effort_weeks, m), "spend")
+            seen.add(info.service)
             top.append((m, info))
-            agg = services.setdefault(
-                info.service,
-                {
-                    "service": info.service,
-                    "display": info.display,
-                    "category": info.category,
-                    "tier": info.tier,
-                    "tier_label": catalog.tier_label(info.tier),
-                    "classified": info.classified,
-                    "agentic": info.agentic,
-                    "monthly_spend": 0.0,
-                    "accounts": 0,
-                },
-            )
-            agg["monthly_spend"] += m
-            agg["accounts"] += 1
+            _service_row(services, info, catalog)["monthly_spend"] += m
+            services[info.service]["accounts"] += 1
+        for name, row in counted.items():  # counted but not billed in the period: still work to move
+            if name not in seen:
+                eff.add(catalog.lookup(name), row["days"] / DAYS_PER_WEEK, "resources")
+        edges = inv.get("dependencies") if material else None
+        integrations = integration_days(edges or {}, catalog)
+        for row in integrations:
+            info = catalog.lookup(row["service"])
+            tiered = replace(info, tier=row["tier"])  # the integration is as hard as its harder end
+            eff.add(tiered, row["days"] / DAYS_PER_WEEK, "integrations")
+        for name, weeks in eff.by_service.items():
+            _service_row(services, catalog.lookup(name), catalog)["effort_weeks"] += weeks
+        for name, row in counted.items():
+            services[name]["resources"] += row["resources"]
         top.sort(key=lambda x: -x[0])
         rows.append(
             {
@@ -335,10 +391,22 @@ def _accounts(
                 "top_lockin": [
                     {"service": i.display, "tier": i.tier, "monthly_spend": round(m, 2)} for m, i in top if i.tier >= 4
                 ][:3],
-                "effort_by_tier": {t: round(v, 2) for t, v in effort_by_tier.items()},
-                "effort_weeks": round(sum(effort_by_tier.values()), 1),
-                "agentic_saved_weeks": round(agentic_saved, 2),
+                "effort_by_tier": {t: round(v, 2) for t, v in eff.by_tier.items()},
+                "effort_weeks": round(sum(eff.by_tier.values()), 1),
+                "effort_basis": {k: round(v, 2) for k, v in eff.basis.items()},
+                "portability": _portability(eff.by_tier, catalog),
+                "agentic_saved_weeks": round(eff.agentic_saved, 2),
                 "inventory": inv_totals,
+                "deep_scanned": bool(inv),
+                "dependency_scanned": "dependencies" in inv,
+                "integrations": sum(r["count"] for r in integrations),
+                "integrations_hard": sum(r["count"] for r in integrations if r["tier"] >= 4),
+                # Critical (tier 5) services with work to do here: what makes an account hard to move.
+                "blockers": sorted(
+                    catalog.lookup(n).display
+                    for n, w in eff.by_service.items()
+                    if w > 0 and catalog.lookup(n).tier >= 5
+                ),
             }
         )
     # Rank by criticality (spend x risk): large and hard to move first.
@@ -398,6 +466,7 @@ def _services(services: dict[str, dict], sp: _Spend, months: list[str], n_months
     first_m, last_m = (months[0], months[-1]) if len(months) >= 2 else (None, None)
     for s in out:
         s["monthly_spend"] = round(s["monthly_spend"], 2)
+        s["effort_weeks"] = round(s["effort_weeks"], 1)
         s["pct"] = round(100 * s["monthly_spend"] / total_monthly, 2) if total_monthly else 0.0
         if first_m:
             by_month = sp.svc_trend.get(s["service"], {})
@@ -463,7 +532,14 @@ def build_report(
     total_monthly = sum(sum(s.values()) for s in sp.per_account.values()) / n_months
     inventory = scan.get("inventory") or {}
     accounts_out, services_agg = _accounts(
-        in_scope, sp, n_months, catalog, questionnaire, WEIGHTINGS[weighting][1], inventory
+        in_scope,
+        sp,
+        n_months,
+        catalog,
+        questionnaire,
+        WEIGHTINGS[weighting][1],
+        inventory,
+        frozenset(questionnaire.exclude_services),
     )
     scores = _scores_by_weighting(accounts_out, total_monthly)
     ou_score = scores[weighting]
@@ -524,6 +600,16 @@ def build_report(
         if inventory and total_monthly > 0
         else 0.0
     )
+    dims = build_dimensions(summary, accounts_out, estimate, resilience, inventory, catalog)
+    summary.update(
+        scan_depth=dims["scan_depth"],
+        scan_depth_label=dims["scan_depth_label"],
+        measures=dims["measures"],
+        dimensions=dims["dimensions"],
+        integrations=dims["integrations"],
+        critical_readiness=dims["critical_readiness"],
+    )
+    summary["hard_part"] = hard_part(summary, tiers, dims, _money)
     summary["narrative"] = _narrative(summary, accounts_out, estimate, questionnaire)
     timing = build_timing(scan, estimate, questionnaire)
     summary["executive"] = _executive_summary(
@@ -782,6 +868,8 @@ def _findings(s: dict, accounts: list[dict]) -> list[dict]:
             ),
         },
     ]
+    if work := _work_finding(s):
+        findings.insert(1, work)
     top, share = _pace_setters(accounts)
     if top:
         findings.append(
@@ -792,6 +880,29 @@ def _findings(s: dict, accounts: list[dict]) -> list[dict]:
         )
     growth = _growth_finding(s.get("growth") or {})
     return findings + ([growth] if growth else [])
+
+
+def _work_finding(s: dict) -> dict | None:
+    """Where the work is, independent of spend: technical portability, integrations, critical readiness."""
+    p = ((s.get("measures") or {}).get("portability") or {}).get("score")
+    if p is None:
+        return None
+    ints = s.get("integrations") or {}
+    hard = [r for r in s.get("critical_readiness") or [] if r["status"] == "Hard to move"]
+    crit = len(s.get("critical_readiness") or [])
+    work = next((d["detail"] for d in s.get("dimensions", []) if d["key"] == "portability"), "")
+    return {
+        "lead": f"Technical portability {p:.0f}/100 ({s['measures']['portability']['rating']} difficulty)",
+        "text": f"(weighted by engineering effort, not spend): {work}"
+        + (f"; {ints['total']:,} AWS-specific integrations to rebuild" if ints.get("measured") else "")
+        + (
+            f"; {len(hard)} of {_plural(crit, 'critical account')} hard to move "
+            f"({_join([r['name'] for r in hard[:3]])})"
+            if hard
+            else ""
+        )
+        + ".",
+    }
 
 
 def _growth_finding(g: dict) -> dict | None:
@@ -1021,6 +1132,11 @@ _CONFIDENCE_FIX = {
         "deep",
     ),
     "catalog": ("Add the missing services to the service catalog (Appendix A lists them).", None),
+    "dependencies": (
+        "Add the dependency-scan actions to the member role (IAM_PERMISSIONS.md), then run a new scan with "
+        "Dependency scan selected.",
+        "deep",
+    ),
 }
 
 
@@ -1042,6 +1158,9 @@ def _confidence(s: dict, scan: dict, defaults: bool, deep_scan: bool) -> tuple[s
     elif (s.get("deep_scan_pct") or 0) < DEEP_SCAN_FULL_PCT:
         found.append(("partial_deep", f"The deep scan reached accounts with {s['deep_scan_pct']:.0f}% of spend."))
         level = min(level, 2)
+    if deep_scan and s.get("scan_depth") == "inventory":
+        found.append(("dependencies", "Resources counted, but not the integrations between them."))
+        level = min(level, 2)
     if s["unclassified_services"]:
         share = 100 * s.get("unclassified_monthly", 0) / s["monthly_spend"] if s["monthly_spend"] else 0
         found.append(
@@ -1054,7 +1173,7 @@ def _confidence(s: dict, scan: dict, defaults: bool, deep_scan: bool) -> tuple[s
         if share >= UNCLASSIFIED_MAX_PCT:
             level = min(level, 2)
     if not found:
-        return "High", ["Full scan, answered questionnaire, every service classified."], []
+        return "High", ["Dependency scan, answered questionnaire, every service classified."], []
     steps = [{"key": k, "reason": r, "fix": _CONFIDENCE_FIX[k][0], "action": _CONFIDENCE_FIX[k][1]} for k, r in found]
     return {1: "Low", 2: "Medium", 3: "High"}[level], [r for _, r in found], steps
 
@@ -1091,6 +1210,8 @@ def _narrative(summary: dict, accounts: list[dict], est: dict, q: Questionnaire)
                 else "; none is High or Critical."
             )
         )
+    if summary.get("hard_part"):
+        lines.append(summary["hard_part"])
     if summary["top_lockin_services"]:
         names = _join([s["display"] for s in summary["top_lockin_services"][:3]])
         lines.append(f"The largest lock-in exposures are {names}.")

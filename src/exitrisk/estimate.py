@@ -17,6 +17,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from .catalog import AGENTIC_FACTORS
+from .resource_effort import assumptions as resource_assumptions
 
 CICD_FACTORS = {"standard": 0.85, "partial": 1.0, "manual": 1.3}
 IAC_FACTORS = {"terraform_current": 0.8, "terraform_drift": 1.1, "cloudformation": 1.25, "none": 1.5}
@@ -76,23 +77,6 @@ WEEKS_PER_MONTH = 4.33
 # Early-stage estimation cone: the report quotes ranges, never a single figure.
 COST_RANGE = (0.75, 1.5)
 DURATION_RANGE = (0.8, 1.4)
-
-# Resource counts that evidence a "typical workload" of a service, for the deep scan.
-TYPICAL_COUNTS = {
-    "AWS Lambda": ("lambda_functions", 25),
-    "Amazon DynamoDB": ("dynamodb_tables", 10),
-    "AWS Step Functions": ("step_functions", 10),
-    "Amazon Kinesis": ("kinesis_streams", 5),
-    "Amazon Simple Queue Service": ("sqs_queues", 20),
-    "Amazon Simple Notification Service": ("sns_topics", 20),
-    "Amazon EventBridge": ("eventbridge_rules", 20),
-    "Amazon Cognito": ("cognito_user_pools", 1),
-    "AWS Glue": ("glue_jobs", 10),
-    "Amazon Redshift": ("redshift_clusters", 1),
-    "AWS CloudFormation": ("cloudformation_stacks", 30),
-    "Amazon Elastic Kubernetes Service": ("eks_clusters", 1),
-    "Amazon Elastic Container Service": ("ecs_clusters", 2),
-}
 
 
 class Questionnaire(BaseModel):
@@ -401,9 +385,11 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
         datacenter=dc if q.target == "datacenter" else None,
         waves=waves,
         assumptions=[
-            "Service effort: catalog engineer-weeks per workload × √(monthly spend / "
-            f"{REFERENCE_MONTHLY_SPEND:,.0f} USD), clamped to {SIZE_MULT_MIN} to {SIZE_MULT_MAX}×; "
-            "resource counts from the deep scan raise it where higher.",
+            "Service effort, where an account was not deep-scanned: catalog engineer-weeks per workload × "
+            f"√(monthly spend / {REFERENCE_MONTHLY_SPEND:,.0f} USD), clamped to {SIZE_MULT_MIN} to "
+            f"{SIZE_MULT_MAX}×. In material deep-scanned accounts effort comes from resource counts instead "
+            "(below), so a cheap but complex service weighs more than a large portable one.",
+            *resource_assumptions(),
             f"Services under {q.materiality:,.0f} USD/month in an account are scored but not estimated "
             "(immaterial); the cut-off applies per service per account.",
             f"{ACCOUNT_OVERHEAD_WEEKS:g} engineer-week per material account for network, IAM and decommissioning.",

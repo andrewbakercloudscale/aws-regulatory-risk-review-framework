@@ -53,6 +53,17 @@ Resources:
                   - eks:ListClusters
                   - ecs:ListClusters
                   - rds:DescribeDBInstances
+                  - ec2:DescribeInstances
+                  - s3:ListAllMyBuckets
+                  - ecs:ListServices
+                Resource: "*"
+              # Dependency scan: counts the integrations between services; nothing is stored but counts.
+              - Effect: Allow
+                Action:
+                  - lambda:ListEventSourceMappings
+                  - events:ListTargetsByRule
+                  - sns:ListSubscriptions
+                  - states:DescribeStateMachine
                 Resource: "*"
 Outputs:
   RoleArn:
