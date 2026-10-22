@@ -14,7 +14,10 @@ database and no cloud deployment: scans are JSON files in a private directory on
  │ exitrisk (FastAPI + uvicorn)                  │                  ▼
  │  server.py   API, host/CSRF guard, headers    │   ┌──────────────────────────────┐
  │  scanner.py  scan jobs, progress, issues      │──▶│ Member accounts               │
- │  collectors/ organizations · cost · inventory │   │  ExitRiskReadOnly (list-only) │
+ │  collectors/ organizations · cost · inventory │
+ │              · dependencies (integrations)    │
+ │  resource_effort  effort from resources       │
+ │  dimensions  measures, dimensions, readiness  │   │  ExitRiskReadOnly (list-only) │
  │  scoring.py  report: scores, ranking, trend   │   └──────────────────────────────┘
  │  estimate.py questionnaire → effort/cost/time │
  │  resilience  criticality · data · stress test │

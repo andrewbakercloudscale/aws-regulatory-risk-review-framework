@@ -891,16 +891,13 @@ def _work_finding(s: dict) -> dict | None:
     hard = [r for r in s.get("critical_readiness") or [] if r["status"] == "Hard to move"]
     crit = len(s.get("critical_readiness") or [])
     work = next((d["detail"] for d in s.get("dimensions", []) if d["key"] == "portability"), "")
+    work = work.replace(" High or Critical (AWS-only)", " AWS-only")
     return {
-        "lead": f"Technical portability {p:.0f}/100 ({s['measures']['portability']['rating']} difficulty)",
-        "text": f"(weighted by engineering effort, not spend): {work}"
-        + (f"; {ints['total']:,} AWS-specific integrations to rebuild" if ints.get("measured") else "")
-        + (
-            f"; {len(hard)} of {_plural(crit, 'critical account')} hard to move "
-            f"({_join([r['name'] for r in hard[:3]])})"
-            if hard
-            else ""
-        )
+        # Half up, as the console rounds it: 40.5 reads 41 everywhere.
+        "lead": f"Technical portability {int(p + 0.5)}/100 ({s['measures']['portability']['rating']} difficulty):",
+        "text": work
+        + (f"; {ints['total']:,} integrations to rebuild" if ints.get("measured") else "")
+        + (f"; {len(hard)} of {_plural(crit, 'critical account')} hard to move" if hard else "")
         + ".",
     }
 

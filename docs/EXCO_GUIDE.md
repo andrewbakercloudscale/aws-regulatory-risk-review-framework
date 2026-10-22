@@ -24,7 +24,12 @@ Figures below are from the synthetic demo organisation (made-up numbers, 12 mont
    estate-wide problem.
 3. **Where**: "Three accounts carry 57% of the spend at risk (spend × risk): the data platform (Redshift and Glue), card
    processing (DynamoDB and Lambda) and the contact centre (Amazon Connect)."
-4. **What leaving would take**: "Roughly 2.5 to 5 years and $7m to $16m, with our current team and
+4. **Where the work is**: the spend score is exposure. Technical portability, exit effort in
+   engineer-days and the five dimensions measure difficulty: "Our production estate costs $754k a month, but the
+   hard part of leaving is not the portable compute; it is 2 critical accounts that are hard to move,
+   613 AWS-specific integrations and 2,549 TB of data." Say which scan depth the figures rest on: a
+   quick scan sizes effort from spend and cannot claim the confidence of a dependency scan.
+5. **What leaving would take**: "Roughly 2.5 to 5 years and $7m to $16m, with our current team and
    delivery maturity." The report gives ranges, never a single figure: at this stage a point
    estimate would claim precision it does not have. Cost and time appear only once the delivery questions under Exit model are
    answered; until then they are marked provisional.

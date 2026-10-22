@@ -165,7 +165,7 @@ def build_dimensions(
             "key": "portability",
             "label": "Service portability",
             "measured": portability is not None,
-            "value": f"{portability:.0f}/100" if portability is not None else "n/a",
+            "value": f"{int(portability + 0.5)}/100" if portability is not None else "n/a",
             "detail": f"{hard_pct:.0f}% of the work is on High or Critical (AWS-only) services",
             "evidence": "Service catalog tiers, weighted by engineering effort rather than spend",
         },

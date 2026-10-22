@@ -6,6 +6,35 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- Exit difficulty measured apart from spend. Section 1 adds **Where the work is**: technical
+  portability (0 to 100, weighted by engineering effort, not spend), exit effort in engineer-days and
+  the exit window; five dimensions shown on their own (service portability, dependency complexity, data
+  gravity, engineering effort, operational criticality); critical-account readiness; and the
+  AWS-specific integrations found. The spend-weighted score stays, as the measure of exposure.
+- **Dependency scan** (`--dependencies`, or Scan depth in New scan): counts the integrations between
+  services from Lambda event source mappings, EventBridge rule targets, SNS subscriptions, API Gateway
+  integrations and Step Functions task states. Stores counts only. Needs the new
+  `ExitRiskDependencyScan` statement in the member role.
+- Effort from resources: in material deep-scanned accounts, counted services are sized from their
+  resources (EC2 instances, Lambda functions by runtime, RDS by engine family, ECS services, S3 buckets
+  and more) with a repeat discount, plus integration redesign. A $20 Lambda function can now outweigh a
+  $10,000 EC2 instance.
+- Scan depth (Quick, Inventory, Dependency) on the report, and confidence capped by it.
+- Selective deep scan: `--inventory-scope material` or "Only material accounts".
+
+### Changed
+
+- Member role adds `ec2:DescribeInstances`, `s3:ListAllMyBuckets` and `ecs:ListServices` for the
+  inventory; dependency actions are a separate statement.
+- Deep-scan warnings for a permission missing in every region are reported once per account.
+
+### Fixed
+
+- EventBridge rules are paginated (the count stopped at 100).
+- An RDS reply without an engine no longer stops an account's inventory.
+
 ## [0.11.5] - 2026-10-22
 
 ### Changed

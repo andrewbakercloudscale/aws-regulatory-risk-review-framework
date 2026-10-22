@@ -385,6 +385,7 @@
     try {
       renderCover(r);
       renderSummary(r);
+      renderWork(r);
       renderProfile(r);
       renderAccounts(r);
       renderServices(r);
@@ -421,7 +422,7 @@
       ["Spend period", m.months_in_data?.length ? `${month(m.months_in_data[0])} to ${month(m.months_in_data.at(-1))} (${plural(m.months_in_data.length, "month")}, amortised)` : EMPTY],
       ["Scanned", m.scanned_at ? new Date(m.scanned_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : EMPTY],
       ["Management account", m.org?.management_account_id || m.identity?.account_id || EMPTY],
-      ["Resource inventory", m.inventory ? "Included (deep scan)" : "Not run (spend only)"],
+      ["Scan depth", r.summary.scan_depth_label || (m.inventory ? "Inventory scan (resource counts)" : "Quick scan (billing only)")],
       ["Exit target assumed", m.target_label],
     ];
     const notes = r.summary.coverage || [];
@@ -446,6 +447,57 @@
   function ratingBadge(el, rating, text) {
     el.textContent = text;
     el.style.setProperty("--dot", RATING_TIER[rating] ? tierColor(RATING_TIER[rating]) : css("--muted"));
+  }
+
+  const DEPTH_HINT = {
+    quick: "Spend and account data from the management account. Effort is sized from spend, so confidence stays lower.",
+    inventory: "Also counts resources (instances, functions, tables, queues...) in each member account and sizes effort from them. Needs a role in every member account.",
+    dependency: "Also counts the integrations between services (event sources, rule targets, subscriptions, API and workflow integrations). Highest confidence; needs the dependency-scan actions in the member role.",
+  };
+  const STATUS_TIER = { Ready: 1, "Needs work": 3, "Hard to move": 5 };
+  // Portability runs the other way to risk: 100 is easy to move (green), 0 is hard (red).
+  const portTier = (p) => (p == null ? null : p >= 80 ? 1 : p >= 60 ? 2 : p >= 40 ? 3 : p >= 20 ? 4 : 5);
+  const pill = (tier, text, color) => tier || color ? `<span class="tier-pill" style="--dot:${color || tierColor(tier)}">${esc(text)}</span>` : esc(text);
+
+  // Exit difficulty on its own terms: three measures, five dimensions, critical readiness, integrations.
+  function renderWork(r) {
+    const s = r.summary, m = s.measures, e = r.estimate;
+    $("#workBlock").hidden = $("#workDetail").hidden = !m || m.portability.score == null;
+    if (!m || m.portability.score == null) return;
+    const depth = s.scan_depth || "quick";
+    ratingBadge($("#depthBadge"), { quick: "Critical", inventory: "High", dependency: "Low" }[depth], s.scan_depth_label || depth);
+    const b = m.basis_pct || {};
+    const basis = [b.resources ? `${pct(b.resources)} from counted resources` : "", b.integrations ? `${pct(b.integrations)} integrations` : "", b.spend ? `${pct(b.spend)} from spend` : ""].filter(Boolean).join(", ");
+    $("#measureTiles").innerHTML = [
+      tile("Technical portability", `${Math.round(m.portability.score)}/100`, `${m.portability.rating} exit difficulty · weighted by effort, not spend`),
+      tile("Exit effort", m.effort.range, basis ? `sized ${basis}` : "", m.provisional),
+      tile("Exit window", m.duration || EMPTY, e.duration ? `bound by ${e.duration.constrained_by}` : "", m.provisional),
+    ].join("");
+    $("#measureTiles").firstElementChild.style.setProperty("--tone", tierColor(portTier(m.portability.score)));
+    $("#dimCards").innerHTML = (s.dimensions || []).map((d, i) => `<div class="dim${d.measured ? "" : " unmeasured"}">
+      <div class="dim-num">${i + 1}</div>
+      <div class="dim-label">${esc(d.label)}</div>
+      <div class="dim-value">${d.measured ? esc(d.value) : "Not measured"}</div>
+      <div class="dim-detail">${esc(d.detail)}</div>
+      <div class="dim-ev">${esc(d.evidence)}</div>
+    </div>`).join("");
+    const port = (s.dimensions || []).find((d) => d.key === "portability");
+    if (port) $("#dimCards").firstElementChild.style.setProperty("--tone", tierColor(portTier(m.portability.score)));
+
+    const ready = s.critical_readiness || [];
+    $("#readyTable").innerHTML = ready.length ? `<thead><tr><th>Account</th><th>Readiness</th><th class="num-cell" title="Technical portability, 0-100: 100 is easy to move">Portability</th><th class="num-cell">Engineer-days</th><th class="num-cell" title="AWS-specific integrations found by the dependency scan">Integrations</th><th class="num-cell">Data</th><th>What blocks it</th></tr></thead><tbody>` +
+      ready.map((a) => `<tr><td><strong>${esc(a.name)}</strong><div class="hint">${money(a.monthly_spend)}/month</div></td><td>${pill(STATUS_TIER[a.status], a.status, a.status === "Needs work" ? css("--warn-ink") : "")}</td><td class="num-cell">${a.portability == null ? EMPTY : Math.round(a.portability)}</td><td class="num-cell">${num(a.effort_days)}</td><td class="num-cell">${a.integrations == null ? EMPTY : num(a.integrations)}</td><td class="num-cell">${tb(a.data_tb)}</td><td>${esc((a.blockers.length ? a.blockers : a.lockin).slice(0, 3).join(", ") || "none")}</td></tr>`).join("") + "</tbody>"
+      : `<tbody><tr><td class="muted">No account is marked critical. Tag accounts, or list their names under Resilience in the exit model, to see their readiness here.</td></tr></tbody>`;
+
+    const it = s.integrations || {};
+    $("#intCap").textContent = it.measured
+      ? `${num(it.total)} found in ${plural(it.accounts, "dependency-scanned account")}, ${num(it.hard)} involving High or Critical services. Each one is wiring an exit must rebuild, whatever the services cost.`
+      : "Not measured: run a Dependency scan to count the event sources, rule targets, subscriptions and API and workflow integrations between services.";
+    $("#intTable").innerHTML = it.measured && it.top?.length ? `<thead><tr><th>Integration</th><th class="num-cell">Count</th><th>Exit tier</th></tr></thead><tbody>` +
+      it.top.map((x) => `<tr><td>${esc(x.label)}</td><td class="num-cell">${num(x.count)}</td><td>${pill(x.tier, r.tiers.find((t) => t.tier === x.tier)?.label || `Tier ${x.tier}`)}</td></tr>`).join("") + "</tbody>" : "";
+    $("#intNote").innerHTML = it.measured
+      ? `Read from: ${esc(it.sources.join("; ") || "none")}.${it.missing_sources?.length ? ` <strong>Not read</strong> (permission refused somewhere, see Data quality): ${esc(it.missing_sources.join("; "))}.` : ""} Not visible to this scan: ${esc(it.not_discovered.join("; "))}. Missing evidence is not evidence of independence.`
+      : "";
   }
 
   function renderSummary(r) {
@@ -504,7 +556,7 @@
   function writtenOffTile(x, provisional, short) {
     const f = (x.exit_facts || []).find((v) => v.label === "Commitments written off");
     const sub = f?.value === "None" ? "all end before the fastest exit finishes"
-      : short ? "still owed after the exit; whole organisation" : "still owed after the exit; whole organisation, even when filtered";
+      : short ? "still owed after the exit" : "still owed after the exit; whole organisation, even when filtered";
     return f ? [tile(f.label, f.value, sub, provisional)] : [];
   }
 
@@ -855,7 +907,7 @@
       <td class="risk">${a.score == null ? EMPTY : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span><div class="hint">${pct(a.high_risk_pct)} High/Crit spend</div>`}</td>
       <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.spend_at_risk / maxC).toFixed(1)}%"></i></div><span class="num-cell">${money(a.spend_at_risk)}</span></div></td>
       <td><div class="chips">${a.top_lockin.map((s) => `<span class="chip">${esc(s.service)}</span>`).join("") || '<span class="hint">none</span>'}</div></td>
-      <td class="num-cell">${num(a.effort_weeks / 4.33, 1)}</td>
+      <td class="num-cell">${num(a.effort_weeks / 4.33, 1)}${a.portability == null ? "" : `<div class="hint" title="Technical portability, 0-100: 100 is easy to move">portability ${Math.round(a.portability)}</div>`}</td>
     </tr>`).join("");
     $("#accountTable").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Account</th><th class="num-cell">Per month</th><th title="Exit-risk rating and score (0-100); beneath, the share of the account's spend on High or Critical services">Risk</th><th title="Spend x risk / 100: monthly spend that is hard to move. The ranking sorts by this.">Spend at risk / month</th><th>Main lock-in</th><th class="num-cell" title="Estimated engineering effort to move this account">Person-months</th></tr></thead><tbody>${rows}</tbody>`;
     const more = all.length - shown.length;
@@ -1208,6 +1260,7 @@
       tile("High/Critical spend", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
       tile("High/Critical accounts", s.accounts_rated ? `${num(s.high_risk_accounts)} of ${num(s.accounts_rated)}` : EMPTY, s.accounts_rated ? `${pct(s.high_risk_accounts_spend_pct)} of spend` : ""),
       tile("AWS-only services", num(s.bespoke_services), s.top_lockin_services.slice(0, 3).map((v) => v.display).join(", ") || "none in use"),
+      ...(s.measures?.portability?.score == null ? [] : [tile("Technical portability", `${Math.round(s.measures.portability.score)}/100`, `${s.measures.portability.rating} difficulty, by effort`)]),
       ...(e.empty ? [] : [
         tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's spend` : "", e.provisional),
         tile("Exit window", e.ranges.duration, `bound by ${e.duration.constrained_by}`, e.provisional),
@@ -1231,7 +1284,7 @@
     $("#opAccounts").innerHTML = `<thead><tr><th>Account</th>${showOwner ? "<th>Owner</th>" : ""}<th class="num-cell">Per month</th><th>Risk</th><th class="num-cell">Spend at risk / month</th><th>Main lock-in</th></tr></thead><tbody>` +
       top.map((a) => `<tr><td><strong>${esc(a.name)}</strong></td>${showOwner ? `<td class="nowrap">${esc(a.owner || a.executive || EMPTY)}</td>` : ""}<td class="num-cell">${money(a.monthly_spend)}</td><td><span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span></td><td class="num-cell">${money(a.spend_at_risk)}</td><td>${esc(a.top_lockin.slice(0, showOwner ? 2 : 3).map((v) => v.service).join(", ") || "none")}</td></tr>`).join("") + "</tbody>";
     renderOnePagerOwners(o);
-    $("#opFoot").textContent = `Confidence: ${x.confidence}. ${x.confidence_reasons.join(" ")} Cost and time are ranges for a planning decision, not a delivery quote. Generated ${new Date(m.generated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} by aws-regulatory-risk-review-framework v${m.tool_version}, scan ${m.scan_id}. The full report has the method, every account and service, and the data gaps.`;
+    $("#opFoot").textContent = `Confidence: ${x.confidence}. ${x.confidence_reasons.join(" ")} Cost and time are ranges for a planning decision, not a delivery quote. Generated ${new Date(m.generated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} by aws-regulatory-risk-review-framework v${m.tool_version}, scan ${m.scan_id}. The full report has the method, every account and the data gaps.`;
   }
 
   // The executives to talk to: the top four by spend at risk, and how much spend has no owner tag.
@@ -1724,7 +1777,8 @@
     const f = $("#scanForm");
     const body = {
       profile: f.profile.value || null, ou_ids: pickedOus(), months: Number(f.months.value || 12),
-      inventory: f.inventory.checked, role_name: f.role_name.value || null,
+      inventory: f.depth.value !== "quick", dependencies: f.depth.value === "dependency",
+      inventory_scope: f.material_only.checked ? "material" : "all", role_name: f.role_name.value || null,
       regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: f.label.value,
       target: f.target.value || "azure",
     };
@@ -2216,7 +2270,7 @@
       if (action === "model") openModel();
       else if (action === "scan" || action === "deep") {
         await openScanDialog();
-        if (action === "deep") { $("#sInventory").checked = true; $("#sInventory").dispatchEvent(new Event("change", { bubbles: true })); $("#sInventory").focus(); }
+        if (action === "deep") { $("#sDepth").value = "dependency"; $("#sDepth").dispatchEvent(new Event("change", { bubbles: true })); $("#sDepth").focus(); }
       }
     });
     document.querySelectorAll("[data-model]").forEach((b) => b.addEventListener("click", () => openModel(b.dataset.model)));
@@ -2320,7 +2374,10 @@
     enterDoes("#scanForm", () => { if (!$("#btnStartScan").disabled) startScan(); });
     enterDoes("#ssoForm", (el) => { if (el.closest("#ssoAdd")) ssoAddPortal(); });
     enterDoes("#accessForm", () => runAccessCheck());
-    $("#sInventory").addEventListener("change", (e) => { $("#invOpts").hidden = !e.target.checked; });
+    $("#sDepth").addEventListener("change", (e) => {
+      $("#invOpts").hidden = e.target.value === "quick";
+      $("#sDepthHint").textContent = DEPTH_HINT[e.target.value];
+    });
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));
     $("#btnLogs").addEventListener("click", openLog);
     $("#btnCompare").addEventListener("click", openCompare);

@@ -129,7 +129,10 @@ worse than "Terraform with drift" because the IaC itself must be rewritten.
 
 ```
 service effort   = catalog effort_weeks × size multiplier × AI agent factor   for every service ≥ materiality, per account
-size multiplier  = clamp( max( √(monthly spend / 1,000 USD), √(resource count / typical count) ), 0.25, 8 )
+size multiplier  = clamp( √(monthly spend / 1,000 USD), 0.25, 8 )
+  or, in a material deep-scanned account, for every service the inventory counted (whatever it costs):
+service effort   = Σ resources (days per resource × complexity × repeat discount) ÷ 5 × AI agent factor
+integrations     = Σ integrations (days per integration × repeat discount) ÷ 5   (dependency scan)
 account overhead = 1 week per account with material spend           (network, IAM, decommissioning)
 delivery         = (Σ service effort + account overhead) × CI/CD × IaC × target × regulated
 landing zone     = (clamp(4 + 12 × √(monthly spend / 100,000), 4, 24) + 0.5 × accounts) × target
@@ -138,9 +141,8 @@ contingency      = contingency% × (delivery + landing zone + programme mgmt)
 ```
 
 The square-root size multiplier encodes economies of scale: four times the spend is roughly twice the
-work, because the design, tooling and testing approach are reused. Typical counts used with the deep
-scan include 25 Lambda functions, 10 DynamoDB tables, 10 state machines and 30 CloudFormation stacks
-per "typical workload" (`TYPICAL_COUNTS` in `estimate.py`).
+work, because the design, tooling and testing approach are reused. Where the deep scan reached an
+account, spend no longer sizes the work: see [Effort from resources](#effort-from-resources-and-integrations).
 
 **AI coding agents.** When the Exit model says teams use AI coding agents, each service's weeks are
 multiplied by its catalog `agentic` rating: high 0.5 (code and templates an agent can translate:
@@ -207,10 +209,79 @@ The calendar duration is reported as the **exit window**: how long it would take
 
 The asymmetric ranges reflect that early estimates of migrations are far more often under than over.
 
+### Effort from resources and integrations
+
+Spend measures **financial exposure**: concentration, commitments and the economics of an exit. It does
+not measure how hard an exit is. A $20 Lambda function wired to four queues is more work to move than a
+$10,000 EC2 instance, and the report should say so. In every material account the deep scan reached,
+each service the inventory counted is sized from its resources instead of its spend
+(`resource_effort.py`):
+
+| Resource | Engineer-days each | Resource | Engineer-days each |
+|---|---|---|---|
+| EC2 instance | 0.5 | SQS queue, SNS topic, S3 bucket | 0.5 |
+| Lambda function | 2 | EventBridge rule, CloudFormation stack | 1 |
+| DynamoDB table | 6 | API Gateway REST / HTTP API | 3 / 2 |
+| Step Functions state machine | 4 | Glue job, Kinesis stream | 3 |
+| ECS cluster, ECS service | 2 | EKS cluster | 10 |
+| RDS instance: open-source / commercial / Aurora | 3 / 5 / 6 | Cognito user pool | 15 |
+| Redshift cluster | 20 | | |
+
+- **Complexity**: Lambda functions on a custom runtime ×1.5, on an end-of-support runtime ×1.3, packaged
+  as containers ×0.7. RDS by engine family, as in the table.
+- **Repeat discount**: after the first 20 of a type in an account, each further one counts 35% (templated,
+  scripted work).
+- **Integrations** (Dependency scan only): 1 engineer-day per AWS-specific integration (0.25 for e-mail
+  and SMS subscriptions, 0.5 for HTTP and mobile targets), with the same repeat discount. Each integration
+  is its own line, rated by the harder end (SQS to Lambda is High; DynamoDB streams to Lambda is
+  Critical), so no work is counted twice.
+- Services the inventory cannot count (S3 data, CloudFront, Connect...), accounts it did not reach, and
+  accounts under the materiality cut-off stay sized from spend. The report shows the share of effort on
+  each basis.
+
+These coefficients are uncalibrated planning assumptions: calibrate them against your own completed
+migrations. Delivery factors, programme management and contingency then apply exactly as above.
+
+### Measures, dimensions and scan depth
+
+The spend-weighted score stays as the measure of **exposure**. Beside it, section 1 reports exit
+difficulty on its own terms:
+
+- **Technical portability** (0 to 100, higher is easier) = 100 − the tier score weighted by engineering
+  effort instead of spend. Its difficulty rating uses the same bands as the exit-risk score.
+- **Exit effort** in engineer-days, and the **exit window**, from the estimate.
+- **Five dimensions**, each shown on its own so none hides another: service portability, dependency
+  complexity (integrations counted), data gravity (TB to move, from Cost Explorer storage usage),
+  engineering effort (and how much of it rests on counted resources, integrations or spend) and
+  operational criticality (critical accounts, from tags or your list: a business judgement, not inferred).
+- **Critical-account readiness**: each critical account judged alone. Ready: portability 60 or more and
+  no Critical (tier 5) service with work to do. Hard to move: portability under 40, or a Critical service
+  to replace.
+
+**Scan depth** decides what the figures rest on and caps confidence:
+
+| Depth | Reads | Confidence |
+|---|---|---|
+| Quick scan | Billing and accounts (management account only) | Effort sized from spend |
+| Inventory scan | Plus resource counts in each member account | At most Medium |
+| Dependency scan | Plus the integrations between services | Can be High |
+
+The dependency scan reads Lambda event source mappings, EventBridge rule targets, SNS subscriptions,
+API Gateway integrations and Step Functions task states, and stores only counts per kind of edge
+("SQS to Lambda: 12"), never names, ARNs or definitions. It cannot see SDK calls made inside code,
+S3 event notifications, Lambda resource-policy triggers or network traffic. **Missing evidence is not
+evidence of independence**: an account with no integrations found is unmeasured on that dimension, not
+free of them. Large accounts are capped (300 EventBridge rules, 100 REST and 100 HTTP APIs, 200 state
+machines per region); a capped count is reported as a floor.
+
+**Selective deep scan**: "Only material accounts" deep-scans the accounts that make up 95% of spend plus
+any spending $100 a month or more on High or Critical services; the rest stay sized from spend.
+
 ## 5. Limitations
 
 - **Spend understates small-but-complex services.** A $300/month Step Functions estate can orchestrate
-  the whole bank. Run the deep scan for resource counts, and read the account drill-down, not only the score.
+  the whole bank. The spend score is exposure, not difficulty: run a Dependency scan so effort and
+  technical portability come from resources and integrations, and read critical-account readiness.
 - **One RDS line.** Cost Explorer reports RDS and Aurora together. Aurora-specific features (Global
   Database, Babelfish, Serverless v2 scaling) and commercial engines (Oracle, SQL Server licensing) are
   visible in the deep scan's engine breakdown.

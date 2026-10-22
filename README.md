@@ -97,7 +97,13 @@ exit" (a fact a board can govern).
   written to a structured log.
 
 Everything is read-only. The core score needs only Organizations and Cost Explorer read access in the
-management (payer) account; the optional deep scan counts resources through a list-only role.
+management (payer) account; the optional deep scan counts resources, and the dependency scan the
+integrations between them, through a read-only role that stores counts only.
+
+Spend measures exposure, not difficulty. Beside the spend-weighted score the report gives **technical
+portability** (weighted by engineering effort), **exit effort** in engineer-days, the **exit window**,
+five dimensions (service portability, dependency complexity, data gravity, engineering effort,
+operational criticality) and the readiness of each critical account.
 
 ## Quick start
 
@@ -147,6 +153,8 @@ share the sign-in; it is never sent to the browser.
 ```bash
 exitrisk scan --profile mgmt --ou ou-ab12-cdef3456 --months 3          # spend-only scan (--ou a,b for several OUs)
 exitrisk scan --profile mgmt --inventory --role ExitRiskReadOnly        # plus resource counts
+exitrisk scan --profile mgmt --dependencies --role ExitRiskReadOnly     # plus integrations between services
+exitrisk scan --profile mgmt --dependencies --inventory-scope material --role ExitRiskReadOnly  # deep-scan material accounts only
 exitrisk scan --profile mgmt --target gcp                               # exit target: azure (default), gcp, oci, sovereign, onprem, datacenter
 exitrisk pdf <scan-id> --include prod --questionnaire answers.json --out board-pack.pdf  # PDF without a browser
 exitrisk pdf <scan-id> --include prod --onepage                      # one-page ExCo summary

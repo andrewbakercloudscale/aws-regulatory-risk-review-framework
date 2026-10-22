@@ -179,6 +179,25 @@
         <div class="tiles" id="kpiTiles"></div>
       </div>
       </div>
+      <div class="keep-together" id="workBlock">
+        <h3 class="sub">Where the work is <span class="badge depth" id="depthBadge"></span></h3>
+        <p class="muted work-cap" id="workCap">The score above weighs exit risk by spend: financial exposure. These measures weigh it by the engineering work instead, so a small but deeply wired service counts for what it takes to move.</p>
+        <div class="tiles measures" id="measureTiles"></div>
+        <div class="dims" id="dimCards"></div>
+      </div>
+      <div class="grid-2 work-detail" id="workDetail">
+        <div class="card">
+          <h3>Critical accounts: ready to move?</h3>
+          <p class="muted small">Judged on their own, so many easy moves elsewhere cannot hide one that is hard. Ready: portability 60 or more and no Critical services to replace.</p>
+          <div class="table-wrap"><table class="data compact" id="readyTable"></table></div>
+        </div>
+        <div class="card">
+          <h3>AWS-specific integrations</h3>
+          <p class="muted small" id="intCap"></p>
+          <div class="table-wrap"><table class="data compact" id="intTable"></table></div>
+          <p class="muted small" id="intNote"></p>
+        </div>
+      </div>
     </section>
 
     <!-- 2. Risk profile -->
@@ -685,10 +704,15 @@
           <label>Exit target<select name="target" id="sTarget"></select><span class="fd-hint">For the cost and time estimate. Change later under Exit model.</span></label>
           <label>Months of spend history<input name="months" type="number" min="1" max="12" value="12"><span class="fd-hint">12 shows a year of growth by product type.</span></label>
         </div>
-        <label class="check fd-check"><input type="checkbox" name="inventory" id="sInventory"><span><strong>Deep scan</strong><br><span class="fd-hint">Count resources in each member account. Needs a role in every member account.</span></span></label>
+        <label>Scan depth<select name="depth" id="sDepth">
+          <option value="quick">Quick scan: billing only</option>
+          <option value="inventory">Inventory scan: count resources in each account</option>
+          <option value="dependency">Dependency scan: resources and the integrations between them</option>
+        </select><span class="fd-hint" id="sDepthHint">Spend and account data from the management account. Effort is sized from spend, so confidence stays lower.</span></label>
         <div id="invOpts" class="fd-grid" hidden>
           <label>Role to assume in member accounts<input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
           <label><span>Regions <span class="opt">blank = all enabled</span></span><input name="regions" placeholder="eu-west-1,us-east-1"></label>
+          <label class="check fd-check span-2"><input type="checkbox" name="material_only" id="sMaterial"><span><strong>Only material accounts</strong><br><span class="fd-hint">Deep-scan the accounts that make up 95% of spend, plus any with AWS-only services; the rest stay sized from spend.</span></span></label>
         </div>
         <label><span>Label <span class="opt">optional</span></span><input name="label" maxlength="120" placeholder="e.g. Q4 board pack"></label>
       </section>
