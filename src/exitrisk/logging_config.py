@@ -21,7 +21,7 @@ run_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("run_id", defau
 # Belt and braces: redact anything that looks like an AWS secret before it is written.
 _SECRET_PATTERNS = [
     re.compile(
-        r"(?i)(aws_secret_access_key|secretaccesskey|sessiontoken|aws_session_token)(['\"]?\s*[:=]\s*['\"]?)[^\s'\",}]+"
+        r"(?i)(aws_secret_access_key|secretaccesskey|sessiontoken|aws_session_token|accesstoken|refreshtoken|clientsecret|devicecode)(['\"]?\s*[:=]\s*['\"]?)[^\s'\",}]+"
     ),
     re.compile(r"\b(ASIA|AKIA)[A-Z0-9]{16}\b"),
 ]

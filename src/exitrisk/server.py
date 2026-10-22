@@ -50,34 +50,46 @@ def _aws_error(exc: Exception) -> bool:
     return isinstance(exc, (ClientError, BotoCoreError))
 
 
+class UpstreamError(Exception):
+    """An AWS call behind an API route failed; answered as 502 with the code and hint the console shows."""
+
+    def __init__(self, exc: Exception):
+        self.code, self.msg, self.hint = describe_exception(exc)
+        super().__init__(self.msg)
+
+
 WEB_DIR = resources.files("exitrisk").joinpath("web")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
 
 
+PROFILE = Field(None, max_length=128)
+REGION = Annotated[str, Field(max_length=30, pattern=r"^[a-z]{2}(-[a-z]+)+-\d+$")]
+
+
 class OUQuery(BaseModel):
-    profile: str | None = None
+    profile: str | None = PROFILE
     refresh: bool = False  # bypass the cache (the ↻ button)
 
 
 class AccessCheckRequest(BaseModel):
-    profile: str | None = Field(None, max_length=128)
+    profile: str | None = PROFILE
     role_name: str | None = Field(None, max_length=64, pattern=r"^[\w+=,.@-]*$")
 
 
 class ScanRequest(BaseModel):
-    profile: str | None = None
+    profile: str | None = PROFILE
     ou_id: str | None = Field(None, max_length=80)
     ou_ids: list[Annotated[str, Field(max_length=80)]] | None = Field(None, max_length=100)
     months: int = Field(12, ge=1, le=12)
     role_name: str | None = Field(None, max_length=64, pattern=r"^[\w+=,.@-]*$")
     inventory: bool = False
-    regions: list[str] | None = None
+    regions: list[REGION] | None = Field(None, max_length=40)
     label: str = Field("", max_length=120)
     target: str = Field("azure", pattern=TARGET_PATTERN)
 
 
 class SSOSessionRequest(BaseModel):
-    name: str = Field(..., max_length=64)
+    name: str = Field(..., max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
     start_url: str = Field(..., max_length=300)
     region: str | None = Field(None, max_length=30, pattern=r"^[a-z0-9-]*$")
 
@@ -174,6 +186,10 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         )
         return response
 
+    @app.exception_handler(UpstreamError)
+    async def upstream_error(_request: Request, exc: UpstreamError):
+        return JSONResponse({"error": exc.msg, "code": exc.code, "hint": exc.hint}, status_code=502)
+
     @app.get("/api/health")
     def health():
         return {
@@ -194,9 +210,9 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         except sso.SSOFailure as exc:
             raise HTTPException(400, str(exc)) from exc
         except Exception as exc:
-            code, msg, hint = describe_exception(exc)
-            log.warning("SSO call %s failed: %s %s", fn.__name__, code, msg, exc_info=not _aws_error(exc))
-            return JSONResponse({"error": msg, "code": code, "hint": hint}, status_code=502)
+            err = UpstreamError(exc)
+            log.warning("SSO call %s failed: %s %s", fn.__name__, err.code, err.msg, exc_info=not _aws_error(exc))
+            raise err from exc
 
     @app.get("/api/sso/sessions")
     def sso_sessions():
@@ -335,6 +351,9 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
 
     @app.delete("/api/scans/{scan_id}")
     def delete(scan_id: str):
+        job = get_job(scan_id)
+        if job and job.status == "running":
+            raise HTTPException(409, "the scan is still running; wait for it to finish, then delete it")
         try:
             store.delete_scan(scan_id)
         except store.ScanNotFound as exc:

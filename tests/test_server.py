@@ -97,3 +97,35 @@ def test_compare_two_scans():
     body = r.json()
     assert body["before"]["scan_id"] == a and body["after"]["scan_id"] == b and body["summary"]
     assert c.post("/api/compare", headers=H, json={"before_id": a, "after_id": "nope"}).status_code == 404
+
+
+def test_sso_aws_errors_are_502_with_code_and_hint(monkeypatch):
+    from botocore.exceptions import ClientError
+
+    from exitrisk import sso
+
+    def expired(*_a):
+        raise ClientError({"Error": {"Code": "ExpiredToken", "Message": "token expired"}}, "ListAccounts")
+
+    monkeypatch.setattr(sso, "list_sessions", expired)
+    monkeypatch.setattr(sso, "start_login", expired)
+    c = client()
+    for r in (c.get("/api/sso/sessions"), c.post("/api/sso/login", headers=H, json={"session": "corp"})):
+        assert r.status_code == 502
+        assert r.json()["code"] == "ExpiredToken" and r.json()["hint"]
+
+
+def test_sso_session_name_rejects_newline():
+    r = client().post(
+        "/api/sso/sessions", headers=H, json={"name": "corp\n", "start_url": "https://x.awsapps.com/start"}
+    )
+    assert r.status_code == 422
+
+
+def test_cannot_delete_a_running_scan(monkeypatch):
+    from types import SimpleNamespace
+
+    from exitrisk import server
+
+    monkeypatch.setattr(server, "get_job", lambda i: SimpleNamespace(status="running"))
+    assert client().delete("/api/scans/20260101-000000-abcd", headers=H).status_code == 409

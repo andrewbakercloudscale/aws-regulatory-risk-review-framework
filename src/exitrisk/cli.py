@@ -122,7 +122,7 @@ def _stop_running_console(port: int) -> bool:
 
 
 def _scan(args) -> int:
-    from .scanner import ScanJob, ScanParams, run_scan
+    from .scanner import ScanJob, ScanParams, record_failure, run_scan
 
     params = ScanParams(
         profile=args.profile,
@@ -140,7 +140,8 @@ def _scan(args) -> int:
     try:
         doc = run_scan(job)
     except Exception as exc:
-        log.error("scan failed: %s", exc)
+        record_failure(job, exc)
+        log.error("partial data saved as scan %s", job.id)
         return 2
     finally:
         run_id_var.reset(token)
@@ -161,7 +162,7 @@ def _scan(args) -> int:
 def _schedule(args) -> int:
     """`show` prints the monthly scan; `run` runs it if due (for launchd or cron), or at once with --now."""
     from . import schedule
-    from .scanner import ScanJob, ScanParams, run_scan
+    from .scanner import ScanJob, ScanParams, record_failure, run_scan
 
     if args.action == "show":
         print(json.dumps(schedule.status(schedule.load()), indent=2))
@@ -189,9 +190,7 @@ def _schedule(args) -> int:
     try:
         doc = run_scan(job)
     except Exception as exc:
-        from .issues import describe_exception
-
-        msg = describe_exception(exc)[1]
+        msg = record_failure(job, exc)
         schedule.finished(job.id, "failed", msg)
         log.error("monthly scan failed: %s", msg)
         return 2

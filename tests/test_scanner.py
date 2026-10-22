@@ -267,3 +267,39 @@ def test_commitments_failure_is_an_issue_not_a_failed_scan(monkeypatch):
     doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
     assert doc["status"] == "complete" and doc["commitments"] is None
     assert any("Savings Plans and reservations unavailable" in i["message"] for i in doc["issues"])
+
+
+def test_expired_sign_in_mid_scan_makes_it_partial(monkeypatch):
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+
+    def expired(*_a):
+        raise ClientError({"Error": {"Code": "ExpiredToken", "Message": "expired"}}, "GetReservationUtilization")
+
+    monkeypatch.setattr(scanner.cost, "fetch_commitments", expired)
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
+    assert doc["status"] == "partial"
+    assert "commitments" in doc["unavailable"] and doc["commitments"] is None
+
+
+def test_one_account_inventory_bug_does_not_fail_the_scan(monkeypatch, caplog):
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+    monkeypatch.setattr(scanner, "assume_role_session", lambda s, a, r, j: object())
+
+    def inv(_s, account_id, _regions):
+        if account_id == "222222222222":
+            raise KeyError("Reservations")
+        return {"resources": {}}, []
+
+    monkeypatch.setattr(scanner.inventory, "inventory_account", inv)
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(inventory=True, role_name="r")))
+    assert doc["status"] == "partial" and list(doc["inventory"]) == ["333333333333"]
+    assert any(i["account_id"] == "222222222222" and i["severity"] == "error" for i in doc["issues"])
+    assert any(r.exc_info for r in caplog.records if "unexpected" in r.getMessage())
+
+
+def test_bad_worker_setting_falls_back():
+    from exitrisk.config import _workers
+
+    assert _workers("") == 8 and _workers("abc") == 8 and _workers("0") == 1 and _workers("12") == 12

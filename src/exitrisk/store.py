@@ -9,6 +9,7 @@ import secrets
 import tempfile
 import threading
 from datetime import datetime
+from pathlib import Path
 
 from .config import settings
 from .logging_config import get_logger
@@ -29,7 +30,7 @@ def new_scan_id() -> str:
 
 def _path(scan_id: str):
     # The id is used in a file path: reject anything that is not exactly our format.
-    if not _ID_RE.match(scan_id):
+    if not _ID_RE.fullmatch(scan_id):
         raise ScanNotFound(scan_id)
     return settings.scans_dir / f"{scan_id}.json"
 
@@ -39,10 +40,17 @@ def save_scan(scan: dict) -> None:
     path = _path(scan["id"])
     with _lock:
         fd, tmp = tempfile.mkstemp(dir=settings.scans_dir, prefix=".tmp-", suffix=".json")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(scan, fh, indent=1, default=str)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)  # atomic: a reader never sees half a file
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(scan, fh, indent=1, default=str)
+                fh.flush()
+                os.fsync(fh.fileno())  # a crash after the rename never leaves an empty scan
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)  # atomic: a reader never sees half a file
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            log.exception("could not save scan %s", scan["id"])
+            raise
 
 
 def load_scan(scan_id: str) -> dict:

@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 import threading
 import time
 import uuid
@@ -161,7 +162,7 @@ def _append_config(block: str) -> None:
 def add_session(name: str, start_url: str, region: str | None = None) -> dict:
     """Add an ``[sso-session]`` block, as ``aws configure sso`` would."""
     start_url = start_url.strip().split("#")[0].rstrip("/")
-    if not NAME_RE.match(name):
+    if not NAME_RE.fullmatch(name):
         raise SSOFailure("Session name: letters, digits, '.', '_' and '-' only.")
     if not START_URL_RE.match(start_url):
         raise SSOFailure("Start URL looks wrong; it is like https://d-1234567890.awsapps.com/start")
@@ -253,7 +254,12 @@ def _poll(login: Login, client, reg: dict, auth: dict, start_url: str, region: s
             _finish(login, "failed", f"Sign-in failed: {exc}")
             log.exception("SSO sign-in %s crashed", login.id)
             return
-        _write_token(login.session, start_url, region, reg, tok)
+        try:
+            _write_token(login.session, start_url, region, reg, tok)
+        except OSError as exc:
+            _finish(login, "failed", f"Signed in, but the token could not be saved: {exc.strerror or exc}.")
+            log.exception("SSO sign-in %s could not save its token", login.id)
+            return
         _finish(login, "complete", "Signed in.")
         log.info("SSO sign-in %s complete for session %s", login.id, login.session)
         return
@@ -279,11 +285,14 @@ def _write_token(session_name: str, start_url: str, region: str, reg: dict, tok:
         data["refreshToken"] = tok["refreshToken"]
     path = _cache_file(session_name)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        json.dump(data, fh)
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".json")  # 0600, unique per sign-in
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def logout(session_name: str) -> None:
@@ -356,7 +365,7 @@ def role_session(session_name: str, account_id: str, role: str) -> boto3.Session
 def ensure_profile(session_name: str, account_id: str, role: str, region: str = "us-east-1") -> str:
     """Return a profile for (session, account, role), adding one to ~/.aws/config if none exists."""
     _session_config(session_name)
-    if not re.fullmatch(r"\d{12}", account_id) or not NAME_RE.match(role):
+    if not re.fullmatch(r"\d{12}", account_id) or not NAME_RE.fullmatch(role):
         raise SSOFailure("Invalid account id or role name.")
     profiles = _full_config().get("profiles", {})
     for name, p in sorted(profiles.items()):

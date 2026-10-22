@@ -82,7 +82,11 @@ class ScanJob:
             issue.category,
             issue.message,
             f" ({issue.hint})" if issue.hint else "",
-            extra={k: v for k, v in (("account_id", issue.account_id), ("error_code", issue.error_code)) if v},
+            extra={
+                k: getattr(issue, k)
+                for k in ("account_id", "region", "service", "error_code")
+                if getattr(issue, k, None)
+            },
         )
 
     def snapshot(self) -> dict:
@@ -126,15 +130,27 @@ def _run_safely(job: ScanJob) -> None:
     try:
         run_scan(job)
     except Exception as exc:  # last line of defence: record it, never lose it
-        code, msg, hint = describe_exception(exc)
-        job.add_issue(Issue("critical", "scan", f"scan failed: {msg}", hint, error_code=code))
-        log.error("scan failed\n%s", traceback.format_exc())
-        job.status = "failed"
-        job.update("failed", 100, msg)
-        store.save_scan(_document(job, job.data, failed=True))
+        record_failure(job, exc)
     finally:
         job.data = {}  # saved to disk by now; a large organisation's scan holds tens of MB
         run_id_var.reset(token)
+
+
+def record_failure(job: ScanJob, exc: Exception) -> str:
+    """Mark a scan failed and save what it collected, so a failure is evidence too. Returns the message."""
+    code, msg, hint = describe_exception(exc)
+    job.add_issue(Issue("critical", "scan", f"scan failed: {msg}", hint, error_code=code))
+    if isinstance(exc, (ScanFailed, ClientError, BotoCoreError)):
+        log.error("scan failed: %s", msg)
+    else:
+        log.error("scan failed\n%s", traceback.format_exc())  # a bug: keep the traceback
+    job.status = "failed"
+    job.update("failed", 100, msg)
+    try:
+        store.save_scan(_document(job, job.data, failed=True))
+    except Exception:
+        log.exception("could not save the failed scan %s", job.id)
+    return msg
 
 
 def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None = None) -> dict:
@@ -158,8 +174,34 @@ def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None
         "commitments": data.get("commitments"),
         "period": data.get("period"),
         "inventory": data.get("inventory", {}),
+        "unavailable": data.get("unavailable", {}),
         "issues": [i.to_dict() for i in job.issues],
     }
+
+
+def _optional(job: ScanJob, data: dict, key: str, what: str, advice: str, fetch, category: str = "cost") -> bool:
+    """Collect optional data into data[key]. A refusal never fails the scan, but it is recorded in
+    data["unavailable"] so the report says why the section is empty rather than "run a new scan". An
+    expired sign-in is an error, so a scan that lost its credentials part-way is saved as partial."""
+    try:
+        data[key] = fetch()
+        return True
+    except Exception as exc:
+        if not isinstance(exc, (ClientError, BotoCoreError)):
+            log.exception("%s failed with an unexpected error", what)  # a bug: keep the traceback
+        code, msg, hint = describe_exception(exc)
+        severity = "error" if is_fatal_auth_error(code) else "warning"
+        job.add_issue(
+            Issue(
+                severity,
+                category,
+                f"{what} unavailable: {msg}",
+                " ".join(x for x in (hint, advice) if x),
+                error_code=code,
+            )
+        )
+        data.setdefault("unavailable", {})[key] = msg
+        return False
 
 
 def run_scan(job: ScanJob) -> dict:
@@ -293,121 +335,73 @@ def run_scan(job: ScanJob) -> dict:
     job.update("cost", 50, f"{len(data['costs'])} cost line(s) collected")
 
     # 3b. Spend by region, for the multi-region estimate. Optional: the exit score does not need it.
+    ids = [a.id for a in accounts]
     job.update("cost", 52, "Querying Cost Explorer for spend by region")
-    try:
-        data["region_costs"] = cost.fetch_region_costs(session, [a.id for a in accounts], p.months)
-    except Exception as exc:  # optional data: never fail a scan for it
-        if not isinstance(exc, (ClientError, BotoCoreError)):
-            log.exception("spend by region failed with an unexpected error")  # a bug: keep the traceback
-        code, msg, hint = describe_exception(exc)
-        job.add_issue(
-            Issue(
-                "warning",
-                "cost",
-                f"spend by region unavailable: {msg}",
-                " ".join(
-                    x for x in (hint, "Until then the multi-region view assumes all spend runs in one region.") if x
-                ),
-                error_code=code,
-            )
-        )
-    job.update("cost", 55, f"{len(data.get('region_costs', []))} region cost line(s) collected")
+    _optional(
+        job,
+        data,
+        "region_costs",
+        "spend by region",
+        "Until then the multi-region view assumes all spend runs in one region.",
+        lambda: cost.fetch_region_costs(session, ids, p.months),
+    )
+    job.update("cost", 55, f"{len(data.get('region_costs') or [])} region cost line(s) collected")
 
     # 3c. Data held per account (GB-months of storage), for the data-gravity view. Optional.
     job.update("cost", 57, "Querying Cost Explorer for data stored")
-    try:
-        data["storage"] = cost.fetch_storage(session, [a.id for a in accounts], {r["service"] for r in data["costs"]})
-    except Exception as exc:  # optional data: never fail a scan for it
-        if not isinstance(exc, (ClientError, BotoCoreError)):
-            log.exception("data stored failed with an unexpected error")
-        code, msg, hint = describe_exception(exc)
-        job.add_issue(
-            Issue(
-                "warning",
-                "cost",
-                f"data stored unavailable: {msg}",
-                " ".join(x for x in (hint, "The resilience view will not size the data to move.") if x),
-                error_code=code,
-            )
-        )
+    _optional(
+        job,
+        data,
+        "storage",
+        "data stored",
+        "The resilience view will not size the data to move.",
+        lambda: cost.fetch_storage(session, ids, {r["service"] for r in data["costs"]}),
+    )
     job.update("cost", 58, f"{len(data.get('storage') or [])} storage line(s) collected")
 
     # 3c2. Direct Connect ports and data out, to size the links an exit would need. Optional. Asked for
     # the whole organisation: the links usually sit in a network account outside the scanned OU.
     job.update("cost", 58, "Querying Cost Explorer for Direct Connect links")
-    try:
-        data["direct_connect"] = cost.fetch_direct_connect(session, None)
-    except Exception as exc:  # optional data: never fail a scan for it
-        if not isinstance(exc, (ClientError, BotoCoreError)):
-            log.exception("direct connect failed with an unexpected error")
-        code, msg, hint = describe_exception(exc)
-        job.add_issue(
-            Issue(
-                "warning",
-                "cost",
-                f"Direct Connect links unavailable: {msg}",
-                " ".join(x for x in (hint, "The resilience view will not show the links you have today.") if x),
-                error_code=code,
-            )
-        )
+    _optional(
+        job,
+        data,
+        "direct_connect",
+        "Direct Connect links",
+        "The resilience view will not show the links you have today.",
+        lambda: cost.fetch_direct_connect(session, None),
+    )
 
     # 3d. Savings Plans and reservations with their end dates, to time an exit. Optional.
     job.update("cost", 59, "Querying Cost Explorer for Savings Plans and reservations")
-    try:
-        data["commitments"] = cost.fetch_commitments(session)
-    except Exception as exc:  # optional data: never fail a scan for it
-        if not isinstance(exc, (ClientError, BotoCoreError)):
-            log.exception("commitments failed with an unexpected error")
-        code, msg, hint = describe_exception(exc)
-        job.add_issue(
-            Issue(
-                "warning",
-                "cost",
-                f"Savings Plans and reservations unavailable: {msg}",
-                " ".join(
-                    x
-                    for x in (
-                        hint,
-                        "Grant ce:GetSavingsPlansUtilizationDetails and ce:GetReservationUtilization "
-                        "to time the exit against commitments.",
-                    )
-                    if x
-                ),
-                error_code=code,
-            )
-        )
+    _optional(
+        job,
+        data,
+        "commitments",
+        "Savings Plans and reservations",
+        "Grant ce:GetSavingsPlansUtilizationDetails and ce:GetReservationUtilization "
+        "to time the exit against commitments.",
+        lambda: cost.fetch_commitments(session),
+    )
 
     # Account tags, read in the background since step 2b. Optional, so a refusal is a warning.
     if tags_read:
         job.update("organizations", 60, "Reading account tags (criticality, channel)")
-        try:
-            tags = tags_read.result()
+        if _optional(
+            job,
+            data,
+            "tags",
+            "account tags",
+            "Grant organizations:ListTagsForResource, or name the critical accounts in the console.",
+            tags_read.result,
+            category="organizations",
+        ):
+            tags = data.pop("tags")
             for a in data["accounts"]:
                 a["tags"] = tags.get(a["id"], {})
-        except Exception as exc:  # optional data: never fail a scan for it
-            if not isinstance(exc, (ClientError, BotoCoreError)):
-                log.exception("account tags failed with an unexpected error")
-            code, msg, hint = describe_exception(exc)
-            job.add_issue(
-                Issue(
-                    "warning",
-                    "organizations",
-                    f"account tags unavailable: {msg}",
-                    " ".join(
-                        x
-                        for x in (
-                            hint,
-                            "Grant organizations:ListTagsForResource, or name the critical accounts in the console.",
-                        )
-                        if x
-                    ),
-                    error_code=code,
-                )
-            )
 
     # 4. Optional deep inventory through a role in each member account.
     if p.inventory:
-        data["inventory"] = _run_inventory(job, session, accounts)
+        data["inventory"] = _run_inventory(job, session, accounts, data["identity"]["account_id"])
 
     status = "complete" if not any(i.severity in ("error", "critical") for i in job.issues) else "partial"
     job.update("saving", 99, "Saving the scan")
@@ -419,19 +413,15 @@ def run_scan(job: ScanJob) -> dict:
     return doc
 
 
-def _run_inventory(job: ScanJob, session, accounts) -> dict:
+def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
+    """Inventory each active account through the scan role; the caller's own account uses the session as is."""
     p = job.params
     results: dict = {}
     done = 0
-    mgmt = None
-    try:
-        mgmt = caller_identity(session)["account_id"]
-    except Exception:
-        log.debug("could not resolve caller account for inventory", exc_info=True)
 
     def one(account):
         try:
-            sess = session if account.id == mgmt else assume_role_session(session, account.id, p.role_name, job.id)
+            sess = session if account.id == caller else assume_role_session(session, account.id, p.role_name, job.id)
         except (ClientError, BotoCoreError) as exc:
             code, msg, hint = describe_exception(exc)
             return (
@@ -448,7 +438,22 @@ def _run_inventory(job: ScanJob, session, accounts) -> dict:
                     )
                 ],
             )
-        inv, issues = inventory.inventory_account(sess, account.id, p.regions)
+        try:
+            inv, issues = inventory.inventory_account(sess, account.id, p.regions)
+        except Exception as exc:  # one account's odd answer must not lose the other accounts
+            if not isinstance(exc, (ClientError, BotoCoreError)):
+                log.exception("inventory of %s failed with an unexpected error", account.id)
+            code, msg, hint = describe_exception(exc)
+            severity = "critical" if is_fatal_auth_error(code) else "error"
+            issue = Issue(
+                severity,
+                "inventory",
+                f"inventory of {account.name} failed: {msg}",
+                hint,
+                account_id=account.id,
+                error_code=code,
+            )
+            return account, None, [issue]
         return account, inv, issues
 
     active = [a for a in accounts if a.status in ("ACTIVE", "UNKNOWN")]
@@ -462,7 +467,7 @@ def _run_inventory(job: ScanJob, session, accounts) -> dict:
             done += 1
             job.update(
                 "inventory",
-                55 + int(40 * done / max(len(active), 1)),
+                60 + int(38 * done / max(len(active), 1)),
                 f"Inventory {done}/{len(active)}: {account.name}",
             )
     return results

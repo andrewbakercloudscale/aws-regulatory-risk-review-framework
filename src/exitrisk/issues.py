@@ -54,7 +54,10 @@ _HINTS = {
         "The credentials were rejected. Check the profile with `aws sts get-caller-identity`."
     ),
     "InvalidClientTokenId": "The credentials were rejected. Check the profile with `aws sts get-caller-identity`.",
-    "ThrottlingException": "AWS throttled the request after retries. Re-run, or lower EXITRISK_MAX_WORKERS.",
+    "ThrottlingException": (
+        "AWS throttled the request after retries. Wait a minute and re-run; for a deep scan, "
+        "lower EXITRISK_MAX_WORKERS."
+    ),
     "LimitExceededException": "Cost Explorer request limit reached. Wait a minute and re-run.",
     "RequestExpired": "Local clock skew. Check the system time.",
     "OptInRequired": "Region not enabled for this account; skipped.",
