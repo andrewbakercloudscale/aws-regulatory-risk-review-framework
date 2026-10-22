@@ -6,6 +6,28 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- Change in monthly spend: each bar is split by exit tier instead of one averaged colour, so a
+  hard-to-exit service inside a mostly easy product type stays visible.
+- Confidence is High only when the scan finished without errors, the deep scan reached accounts with
+  at least 90% of spend and services missing from the catalog are under 2% of spend. Services left
+  out under Exclusions no longer lower it.
+- The EDP shortfall is net of Savings Plan and reservation fees still billed after the exit, so the
+  same dollars are not written off twice.
+- The one-off exit cost now says what copying the data out adds beside it (Links for the migration).
+
+### Fixed
+
+- AWS sign-in errors return a clear message with a hint instead of a broken response or a 500.
+- A scan whose sign-in expires part-way is saved as partial, and the report says which sections AWS
+  refused and why, instead of "this scan predates".
+- One account's unexpected inventory error no longer fails the whole deep scan.
+- Failed CLI and monthly scans save what they collected and log the full error.
+- The headline matches the rating shown (a score of 54.6 reads as High), and a deadline is judged
+  against the range shown.
+- With default answers the CLI narrative no longer quotes cost and time.
+
 ## [0.11.4] - 2026-10-22
 
 ### Changed

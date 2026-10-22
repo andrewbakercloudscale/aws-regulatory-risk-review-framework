@@ -384,3 +384,9 @@ def test_leaving_a_service_out_is_not_an_access_gap():
 def test_narrative_holds_back_cost_on_default_answers():
     r = build_report(build_demo_scan())
     assert not any("would take roughly" in line for line in r["summary"]["narrative"])
+
+
+def test_growth_by_tier_adds_up_to_the_change():
+    r = build_report(build_demo_scan())
+    for c in r["growth"]["by_category"]:
+        assert sum(c["by_tier"].values()) == pytest.approx(c["change"], abs=1)

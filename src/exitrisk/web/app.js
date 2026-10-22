@@ -626,7 +626,7 @@
       (annual ? ` (${sgn(g.total.annualised_pct)} a year)` : "") +
       `; spend on High/Critical services <span class="${cls(g.lockin.pct)}">${sgn(g.lockin.pct)}</span>` + (annual ? ` (${sgn(g.lockin.annualised_pct)} a year)` : "") +
       `. ${g.lockin.pct != null && g.total.pct != null ? (g.lockin.pct > g.total.pct + 1 ? "Lock-in is growing faster than the estate." : g.lockin.pct < g.total.pct - 1 ? "Lock-in is growing more slowly than the estate." : "Lock-in is growing in line with the estate.") : ""}`;
-    $("#growthCap").textContent = `Change in monthly spend from ${month(g.first_month)} to ${month(g.last_month)}, by product type, in dollars and percent. Under each type, the service that moved most. Colour = how hard the product type is to exit, from its services' tiers weighted by spend: green easy to exit, grey moderate, red hard.`;
+    $("#growthCap").textContent = `Change in monthly spend from ${month(g.first_month)} to ${month(g.last_month)}, by product type, in dollars and percent. Under each type, the service that moved most. Each bar is split by how hard its services are to exit: green easy, grey moderate, red hard.`;
     const rows = [...g.by_category].sort((a, b) => b.change - a.change);
     // The service that moved a product type most; for Marketplace/Bedrock, the product behind it.
     const pctOrNew = (v) => (v == null ? "new" : sgn(v, 0));
@@ -648,28 +648,40 @@
       ctx.fillStyle = css("--ink");
       ctx.textBaseline = "middle";
       ctx.textAlign = "left";
-      ch.getDatasetMeta(0).data.forEach((bar, i) => ctx.fillText(endText[i], Math.max(bar.x, bar.base) + 8, bar.y));
+      // Stacked by tier: write after the rises (or after zero, for a decline).
+      ch.getDatasetMeta(0).data.forEach((bar, i) => ctx.fillText(endText[i], ch.scales.x.getPixelForValue(rises[i]) + 8, bar.y));
       ctx.restore();
     } };
+    const tiers = [1, 2, 3, 4, 5];
+    const seg = (c, t) => (c.by_tier ? c.by_tier[t] || 0 : 0);
+    const rises = rows.map((c) => tiers.reduce((sum, t) => sum + Math.max(seg(c, t), 0), 0));
     // Match the table beside it so the two cards line up.
     $("#chGrowth").parentElement.style.height = `${Math.max(300, 42 * rows.length + 70)}px`;
     chart("chGrowth", {
       type: "bar",
       data: {
         labels: rows.map((c) => c.drivers?.length ? [c.category, driverText(c.drivers[0])] : c.category),
-        datasets: [{ label: "Change in USD / month", data: rows.map((c) => c.change), backgroundColor: rows.map((c) => (c.tier ? tierColor(c.tier) : css("--muted"))), borderRadius: 3, barPercentage: 0.75 }],
+        datasets: tiers.map((t) => ({ label: `${t} · ${r.tiers[t - 1].label}`, data: rows.map((c) => seg(c, t)), backgroundColor: tierColor(t), barPercentage: 0.75 })),
       },
       plugins: [barEnds],
       options: {
         indexAxis: "y",
         layout: { padding: { right: endPad } },
         // Chart.js caps the label column and clips longer labels, so size it to the widest line.
-        scales: { x: { ticks: { callback: (v) => usd(v), maxRotation: 0 }, grid: { color: css("--grid") } }, y: { grid: { display: false }, afterFit: (sc) => { sc.width = Math.max(sc.width, labelWidth); } } },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => {
-          const x = rows[c.dataIndex];
-          return [...(x.tier ? [` Exit difficulty: ${x.tier} · ${r.tiers[x.tier - 1].label}`] : []), ` ${money(x.first)} → ${money(x.last)} a month`, ` ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`,
-            ...(x.drivers || []).map((d) => ` ${d.display}: ${usd(d.change)}${d.products?.length ? ` (${d.products.join(", ")})` : ""}`)];
-        } } } },
+        scales: { x: { stacked: true, ticks: { callback: (v) => usd(v), maxRotation: 0 }, grid: { color: css("--grid") } }, y: { stacked: true, grid: { display: false }, afterFit: (sc) => { sc.width = Math.max(sc.width, labelWidth); } } },
+        interaction: { mode: "index", axis: "y", intersect: false },
+        plugins: { legend: { position: "bottom", labels: { filter: (l) => rows.some((c) => Math.abs(seg(c, l.datasetIndex + 1)) >= 1) } }, tooltip: {
+          filter: (c) => Math.abs(c.raw) >= 1,
+          callbacks: {
+            title: (items) => rows[items[0].dataIndex].category,
+            label: (c) => ` ${c.dataset.label}: ${usd(c.raw)}`,
+            afterBody: (items) => {
+              const x = rows[items[0].dataIndex];
+              return [` ${money(x.first)} → ${money(x.last)} a month, ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`,
+                ...(x.drivers || []).map((d) => ` ${d.display}: ${usd(d.change)}${d.products?.length ? ` (${d.products.join(", ")})` : ""}`)];
+            },
+          },
+        } },
       },
     });
     $("#growthTable").innerHTML = `<thead><tr><th>Product type</th><th class="num-cell">${esc(month(g.first_month))}</th><th class="num-cell">${esc(month(g.last_month))}</th><th class="num-cell">Change</th>${annual ? `<th class="num-cell">Per year</th>` : ""}<th class="num-cell" title="Share of this product type's spend on High or Critical services">Lock-in</th></tr></thead><tbody>` +
