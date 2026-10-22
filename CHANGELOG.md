@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-10-22
+
 ### Changed
 
 - Change in monthly spend: each bar is split by exit tier instead of one averaged colour, so a
