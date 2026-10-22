@@ -6,6 +6,12 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- Change in monthly spend: bars are coloured by how hard each product type is to exit (its services'
+  tiers weighted by spend) instead of growth or decline. Tier colours now run green (easy to exit)
+  to red (hard) everywhere in the console and reports.
+
 ### Fixed
 
 - "scan not found" straight after a scan finished: the scan is now saved before its status says

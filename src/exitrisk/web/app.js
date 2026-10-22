@@ -626,7 +626,7 @@
       (annual ? ` (${sgn(g.total.annualised_pct)} a year)` : "") +
       `; spend on High/Critical services <span class="${cls(g.lockin.pct)}">${sgn(g.lockin.pct)}</span>` + (annual ? ` (${sgn(g.lockin.annualised_pct)} a year)` : "") +
       `. ${g.lockin.pct != null && g.total.pct != null ? (g.lockin.pct > g.total.pct + 1 ? "Lock-in is growing faster than the estate." : g.lockin.pct < g.total.pct - 1 ? "Lock-in is growing more slowly than the estate." : "Lock-in is growing in line with the estate.") : ""}`;
-    $("#growthCap").textContent = `Change in monthly spend from ${month(g.first_month)} to ${month(g.last_month)}, by product type, in dollars and percent. Under each type, the service that moved most. Red = growth, blue = decline.`;
+    $("#growthCap").textContent = `Change in monthly spend from ${month(g.first_month)} to ${month(g.last_month)}, by product type, in dollars and percent. Under each type, the service that moved most. Colour = how hard the product type is to exit, from its services' tiers weighted by spend: green easy to exit, grey moderate, red hard.`;
     const rows = [...g.by_category].sort((a, b) => b.change - a.change);
     // The service that moved a product type most; for Marketplace/Bedrock, the product behind it.
     const pctOrNew = (v) => (v == null ? "new" : sgn(v, 0));
@@ -657,7 +657,7 @@
       type: "bar",
       data: {
         labels: rows.map((c) => c.drivers?.length ? [c.category, driverText(c.drivers[0])] : c.category),
-        datasets: [{ label: "Change in USD / month", data: rows.map((c) => c.change), backgroundColor: rows.map((c) => (c.change >= 0 ? tierColor(5) : tierColor(1))), borderRadius: 3, barPercentage: 0.75 }],
+        datasets: [{ label: "Change in USD / month", data: rows.map((c) => c.change), backgroundColor: rows.map((c) => (c.tier ? tierColor(c.tier) : css("--muted"))), borderRadius: 3, barPercentage: 0.75 }],
       },
       plugins: [barEnds],
       options: {
@@ -667,7 +667,7 @@
         scales: { x: { ticks: { callback: (v) => usd(v), maxRotation: 0 }, grid: { color: css("--grid") } }, y: { grid: { display: false }, afterFit: (sc) => { sc.width = Math.max(sc.width, labelWidth); } } },
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => {
           const x = rows[c.dataIndex];
-          return [` ${money(x.first)} → ${money(x.last)} a month`, ` ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`,
+          return [...(x.tier ? [` Exit difficulty: ${x.tier} · ${r.tiers[x.tier - 1].label}`] : []), ` ${money(x.first)} → ${money(x.last)} a month`, ` ${usd(x.change)} (${sgn(x.pct)})`, ` ${pct(x.lockin_pct)} of it on High/Critical services`,
             ...(x.drivers || []).map((d) => ` ${d.display}: ${usd(d.change)}${d.products?.length ? ` (${d.products.join(", ")})` : ""}`)];
         } } } },
       },

@@ -98,6 +98,11 @@ def _growth(months: list[str], trend: dict, cat_trend: dict, cat_lockin: dict, s
         )
         members = [s for s in services if s["category"] == cat]
         row["services"] = [s["display"] for s in members]
+        # How hard this product type is to exit: its services' tiers weighted by spend (1 easy to 5 hard).
+        weight = sum(s["monthly_spend"] for s in members)
+        row["tier"] = (
+            min(5, max(1, int(sum(s["tier"] * s["monthly_spend"] for s in members) / weight + 0.5))) if weight else None
+        )
         movers = sorted((s for s in members if abs(s.get("change", 0)) >= 1), key=lambda s: -abs(s["change"]))
         row["drivers"] = [
             {k: s[k] for k in ("display", "tier", "first", "last", "change", "change_pct")}
