@@ -19,6 +19,13 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ### Fixed
 
+- Console buttons and menus work while a report is still loading, and an unexpected error shows a message pointing to the application log instead of a dead page.
+- Scan progress survives a brief loss of contact with the console (retries with backoff) and stops cleanly if the scan is gone.
+- Opening a shared link no longer overwrites your own saved answers.
+- Enter submits the New scan, SSO and access check dialogs; "Run now" on a schedule cannot be pressed twice.
+- Dark mode uses the right greens and ambers for verdicts and good news.
+- One label per figure across the console and the one-page summary ("Exit cost (one-off)", "High/Critical spend", "AWS-only services").
+- Missing values show "n/a" instead of a dash.
 - AWS sign-in errors return a clear message with a hint instead of a broken response or a 500.
 - A scan whose sign-in expires part-way is saved as partial, and the report says which sections AWS
   refused and why, instead of "this scan predates".

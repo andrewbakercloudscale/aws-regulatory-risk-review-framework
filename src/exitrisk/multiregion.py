@@ -703,7 +703,7 @@ def build_multiregion(
     p = regions[primary]
 
     def mr(lo: float, hi: float) -> str:
-        return money_range(lo, hi, cur) if hi > 0 else "–"
+        return money_range(lo, hi, cur) if hi > 0 else "n/a"
 
     ranges = {
         "run_annual": mr(run_annual * COST_RANGE[0], run_annual * COST_RANGE[1]),
@@ -718,13 +718,13 @@ def build_multiregion(
             calendar_weeks * DURATION_RANGE[0] / WEEKS_PER_MONTH, calendar_weeks * DURATION_RANGE[1] / WEEKS_PER_MONTH
         )
         if calendar_weeks
-        else "–",
+        else "n/a",
         "build_effort": effort_range(
             total_weeks / WEEKS_PER_MONTH * COST_RANGE[0], total_weeks / WEEKS_PER_MONTH * COST_RANGE[1]
         )
         if total_weeks
-        else "–",
-        "staff": f"{math.floor(fte * STAFF_RANGE[0]):,.0f} to {math.ceil(fte * STAFF_RANGE[1]):,.0f}" if fte else "–",
+        else "n/a",
+        "staff": f"{math.floor(fte * STAFF_RANGE[0]):,.0f} to {math.ceil(fte * STAFF_RANGE[1]):,.0f}" if fte else "n/a",
     }
 
     selected_risks = [r for a in acct_out if a["selected"] for r in a["risks"] if r["monthly_spend"] >= q.materiality]

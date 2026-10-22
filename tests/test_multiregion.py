@@ -177,7 +177,7 @@ def test_no_accounts_selected_is_a_clean_empty_estimate():
     r = build_multiregion(build_demo_scan(12), mq=MultiRegionAnswers(accounts=[]))
     s = r["summary"]
     assert s["accounts_selected"] == 0 and s["run"]["annual_total"] == 0 and s["staff"]["fte"] == 0
-    assert s["ranges"]["run_annual"] == "–" and "Pick at least one account" in s["executive"]["headline"]
+    assert s["ranges"]["run_annual"] == "n/a" and "Pick at least one account" in s["executive"]["headline"]
 
 
 def _connect_scan():

@@ -512,7 +512,7 @@ def build_report(
     summary["growth"] = {k: growth[k] for k in ("months", "first_month", "last_month", "total", "lockin")}
     summary["growth"]["top_rises"] = _top_rises(services_out)
     estimate["empty"] = total_monthly <= 0
-    if estimate["empty"]:  # nothing to move: no "$0–$0" ranges for a caller to show by mistake
+    if estimate["empty"]:  # nothing to move: no "$0 to $0" ranges for a caller to show by mistake
         estimate["ranges"] = dict.fromkeys(estimate["ranges"])
     estimate["provisional"] = not questionnaire.confirmed
     summary["coverage"], summary["coverage_gaps"] = _coverage_notes(
@@ -827,7 +827,7 @@ def _exit(est: dict, q: Questionnaire, defaults: bool) -> tuple[list[dict], str]
     facts = [
         {"label": "Exit window", "value": rg["duration"], "note": f"bound by {est['duration']['constrained_by']}"},
         {
-            "label": "One-off cost",
+            "label": "Exit cost (one-off)",
             "value": rg["cost"],
             "note": (f"{pct} of a year's AWS spend; " if pct else "") + _cost_parts(est),
         },

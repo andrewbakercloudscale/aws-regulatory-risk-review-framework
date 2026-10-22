@@ -22,8 +22,10 @@
   const RATING_TIER = { Low: 1, Moderate: 2, Elevated: 3, High: 4, Critical: 5 };
   const SEV_COLOR = { critical: "--sev-critical", error: "--sev-error", warning: "--sev-warning", info: "--sev-info" };
 
+  // A value that is not there. Not a dash: the console and reports use no en or em dashes.
+  const EMPTY = "n/a";
   function money(v, cur = "USD", digits) {
-    if (v == null || isNaN(v)) return "–";
+    if (v == null || isNaN(v)) return EMPTY;
     const abs = Math.abs(v);
     const sym = cur === "USD" ? "$" : cur + " ";
     if (abs >= 1e6) return `${sym}${(v / 1e6).toFixed(digits ?? 1)}m`;
@@ -31,14 +33,14 @@
     if (abs >= 1e3) return `${sym}${(v / 1e3).toFixed(1)}k`;
     return `${sym}${v.toFixed(0)}`;
   }
-  const num = (v, d = 0) => (v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
-  const pct = (v, d = 0) => (v == null ? "–" : `${Number(v).toFixed(d)}%`);
+  const num = (v, d = 0) => (v == null || isNaN(v) ? EMPTY : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
+  const pct = (v, d = 0) => (v == null ? EMPTY : `${Number(v).toFixed(d)}%`);
   const plural = (n, word, many) => `${num(n)} ${Math.round(n) === 1 ? word : many || word + "s"}`;
   // "2025-10" -> "Oct 2025" (or "Oct 25" for chart axes).
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   function month(m, short) {
     const [y, mo] = String(m || "").split("-").map(Number);
-    if (!y || !mo) return String(m ?? "–");
+    if (!y || !mo) return String(m ?? EMPTY);
     return `${MONTHS[mo - 1]} ${short ? String(y).slice(2) : y}`;
   }
   const ACCOUNT_ROWS = 15; // account ranking rows shown before "Show all"
@@ -124,7 +126,7 @@
     let q = { ...(state.options?.defaults || {}) };
     try { Object.assign(q, JSON.parse(localStorage.getItem(LS_Q) || "{}")); } catch { /* ignore */ }
     if (params.get("q")) {
-      try { Object.assign(q, JSON.parse(params.get("q"))); } catch { console.warn("bad q param"); }
+      try { Object.assign(q, JSON.parse(params.get("q"))); state.answersFromLink = true; } catch { console.warn("bad q param"); }
     }
     return q;
   }
@@ -167,7 +169,9 @@
       else q[el.name] = el.name === "currency" ? el.value.toUpperCase() : el.value;
     }
     q.exclude_services = [...(state.exclude || [])].sort();
-    try { localStorage.setItem(LS_Q, JSON.stringify(q)); } catch { /* ignore */ }
+    // Answers opened from a shared link (?q=) are someone else's: keep them out of this browser's saved
+    // answers until the reader changes one.
+    if (!state.answersFromLink) { try { localStorage.setItem(LS_Q, JSON.stringify(q)); } catch { /* ignore */ } }
     return q;
   }
 
@@ -209,12 +213,12 @@
 
   function renderCompare(c) {
     const h = c.headline;
-    const chg = (d, fmt) => d.change == null ? "–" : `${d.change > 0 ? "+" : d.change < 0 ? "−" : ""}${fmt(Math.abs(d.change))}${d.change_pct != null && d.change ? ` (${d.change_pct > 0 ? "+" : ""}${num(d.change_pct)}%)` : ""}`;
+    const chg = (d, fmt) => d.change == null ? EMPTY : `${d.change > 0 ? "+" : d.change < 0 ? "−" : ""}${fmt(Math.abs(d.change))}${d.change_pct != null && d.change ? ` (${d.change_pct > 0 ? "+" : ""}${num(d.change_pct)}%)` : ""}`;
     // Colour only the figures where up is worse (risk); spend and counts are neutral.
     const cls = (d, worse) => !worse || !d.change ? "" : d.change > 0 ? "up-bad" : "down-good";
     const before = (ym) => { const [y, m] = ym.split("-").map(Number); return m > 1 ? `${y}-${m - 1}` : `${y - 1}-12`; };
     const period = (x) => x.period?.start ? `${month(x.period.start.slice(0, 7))} to ${month(before(x.period.end.slice(0, 7)))}` : ""; // end is exclusive
-    const row = (k, d, fmt, worse) => `<tr><td><strong>${esc(k)}</strong></td><td class="num-cell">${d.before == null ? "–" : fmt(d.before)}</td><td class="num-cell">${d.after == null ? "–" : fmt(d.after)}</td><td class="num-cell ${cls(d, worse)}">${chg(d, fmt)}</td></tr>`;
+    const row = (k, d, fmt, worse) => `<tr><td><strong>${esc(k)}</strong></td><td class="num-cell">${d.before == null ? EMPTY : fmt(d.before)}</td><td class="num-cell">${d.after == null ? EMPTY : fmt(d.after)}</td><td class="num-cell ${cls(d, worse)}">${chg(d, fmt)}</td></tr>`;
     const n1 = (v) => num(v, 1), n0 = (v) => num(v);
     let html = `<ul class="cmp-summary">${c.summary.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`;
     if (!c.same_scope) html += `<p class="warn-text small">The scans cover different OUs (${esc(c.before.ou)} and ${esc(c.after.ou)}): part of the change is scope.</p>`;
@@ -226,12 +230,12 @@
     html += `<h3>Spend by tier</h3><div class="table-wrap"><table class="data"><thead><tr><th>Tier</th><th class="num-cell">Earlier</th><th class="num-cell">Later</th><th class="num-cell">Change</th></tr></thead><tbody>` +
       c.tiers.map((t) => row(`${t.tier} · ${t.label}`, t, money, t.tier >= 4 ? 1 : 0)).join("") + "</tbody></table></div>";
     const a = c.accounts;
-    const names = (list, n) => list.map((x) => `${esc(x.name)} <span class="muted">(${money(x.monthly_spend)}/month, ${esc(x.rating || "–")})</span>`).join(", ") + (n > list.length ? `, and ${n - list.length} more` : "");
+    const names = (list, n) => list.map((x) => `${esc(x.name)} <span class="muted">(${money(x.monthly_spend)}/month, ${esc(x.rating || EMPTY)})</span>`).join(", ") + (n > list.length ? `, and ${n - list.length} more` : "");
     html += `<h3>Accounts</h3>`;
     if (a.added_count) html += `<p><strong>Added (${num(a.added_count)}):</strong> ${names(a.added, a.added_count)}</p>`;
     if (a.removed_count) html += `<p><strong>Removed (${num(a.removed_count)}):</strong> ${names(a.removed, a.removed_count)}</p>`;
     html += a.movers.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Biggest movers</th><th>Rating</th><th class="num-cell">Per month</th><th class="num-cell">Spend at risk / month</th></tr></thead><tbody>` +
-      a.movers.map((m) => `<tr><td><strong>${esc(m.name)}</strong></td><td>${m.rating.before === m.rating.after ? esc(m.rating.after || "–") : `${esc(m.rating.before || "–")} → <strong>${esc(m.rating.after || "–")}</strong>`}</td>
+      a.movers.map((m) => `<tr><td><strong>${esc(m.name)}</strong></td><td>${m.rating.before === m.rating.after ? esc(m.rating.after || EMPTY) : `${esc(m.rating.before || EMPTY)} → <strong>${esc(m.rating.after || EMPTY)}</strong>`}</td>
         <td class="num-cell">${money(m.monthly_spend.after)} <span class="hint">${chg(m.monthly_spend, money)}</span></td><td class="num-cell ${cls(m.spend_at_risk, 1)}">${chg(m.spend_at_risk, money)}</td></tr>`).join("") + "</tbody></table></div>"
       : `<p class="muted">No account changed materially.</p>`;
     html += `<h3>Services</h3>` + (c.services.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Service</th><th>Tier</th><th class="num-cell">Earlier</th><th class="num-cell">Later</th><th class="num-cell">Change</th></tr></thead><tbody>` +
@@ -307,23 +311,27 @@
 
   async function scheduleRunNow() {
     $("#schedError").textContent = "";
+    clearTimeout(state.schedTimer);
+    $("#btnSchedRun").disabled = true;
     busy("#schedBusy", "Starting the monthly scan…");
     try {
       const r = await api("/api/schedule/run", { method: "POST" });
       const tick = async () => {
-        const j = await api(`/api/scans/${encodeURIComponent(r.scan_id)}/status`).catch(() => null);
-        if (!j) { busy("#schedBusy", ""); return; }
+        let j;
+        try { j = await api(`/api/scans/${encodeURIComponent(r.scan_id)}/status`); }
+        catch (e) { busy("#schedBusy", ""); $("#btnSchedRun").disabled = false; $("#schedError").textContent = `Lost track of the scan: ${e.message}. It may still be running; check the scan list.`; return; }
         busyProgress("#schedBusy", j.pct / 100);
         $("#schedBusy .busy-text").textContent = j.message || j.phase;
-        if (j.status === "running") { setTimeout(tick, 1000); return; }
+        if (j.status === "running") { state.schedTimer = setTimeout(tick, 1000); return; }
         busy("#schedBusy", "");
+        $("#btnSchedRun").disabled = false;
         await refreshSchedule();
         if (j.status === "failed") $("#schedError").textContent = `Scan failed: ${j.message}.`;
         else { await refreshScans(state.scanId); toast(`Monthly scan ${j.status}: open it from the scan list, or Compare scans`); }
       };
       refreshSchedule();
       tick();
-    } catch (e) { busy("#schedBusy", ""); $("#schedError").textContent = e.message; }
+    } catch (e) { busy("#schedBusy", ""); $("#btnSchedRun").disabled = false; $("#schedError").textContent = e.message; }
   }
 
   // ------------------------------------------------------------------ scans
@@ -338,8 +346,9 @@
     return scans;
   }
 
+  /** Load and render the report; true when it worked (the error is already shown when it did not). */
   async function loadReport() {
-    if (!state.scanId) return;
+    if (!state.scanId) return false;
     const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
     const weighting = $("#fWeighting").value || "spend";
     $("#filterError").textContent = "";
@@ -352,7 +361,7 @@
       $("#filterError").textContent = msg;
       toast(msg);
       if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
-      return;
+      return false;
     }
     const url = new URL(location.href);
     url.searchParams.set("scan", state.scanId);
@@ -364,6 +373,7 @@
     // The multi-region view follows the same scan and filter.
     state.mr = null;
     if (state.view === "multiregion") loadMultiRegion();
+    return true;
   }
 
   // ------------------------------------------------------------------ render
@@ -406,11 +416,11 @@
       : "How hard it would be to leave AWS, weighted by where the money is spent.";
     const items = [
       ["Scope", m.filter.description],
-      ["Organizational unit", m.ou?.path || "–"],
+      ["Organizational unit", m.ou?.path || EMPTY],
       ["Accounts in scope", `${r.summary.accounts_in_scope} of ${r.summary.accounts_total}`],
-      ["Spend period", m.months_in_data?.length ? `${month(m.months_in_data[0])} to ${month(m.months_in_data.at(-1))} (${plural(m.months_in_data.length, "month")}, amortised)` : "–"],
-      ["Scanned", m.scanned_at ? new Date(m.scanned_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "–"],
-      ["Management account", m.org?.management_account_id || m.identity?.account_id || "–"],
+      ["Spend period", m.months_in_data?.length ? `${month(m.months_in_data[0])} to ${month(m.months_in_data.at(-1))} (${plural(m.months_in_data.length, "month")}, amortised)` : EMPTY],
+      ["Scanned", m.scanned_at ? new Date(m.scanned_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : EMPTY],
+      ["Management account", m.org?.management_account_id || m.identity?.account_id || EMPTY],
       ["Resource inventory", m.inventory ? "Included (deep scan)" : "Not run (spend only)"],
       ["Exit target assumed", m.target_label],
     ];
@@ -440,10 +450,10 @@
 
   function renderSummary(r) {
     const s = r.summary, e = r.estimate;
-    $("#heroScore").textContent = s.score_by_spend == null ? "–" : Math.round(s.score_by_spend);
+    $("#heroScore").textContent = s.score_by_spend == null ? EMPTY : Math.round(s.score_by_spend);
     ratingBadge($("#heroRating"), s.rating_by_spend, s.score_by_spend == null ? "No spend in scope" : s.rating_by_spend);
-    $("#heroScoreAcc").textContent = s.score_by_accounts == null ? "–" : Math.round(s.score_by_accounts);
-    ratingBadge($("#heroRatingAcc"), s.rating_by_accounts, s.score_by_accounts == null ? "–" : s.rating_by_accounts);
+    $("#heroScoreAcc").textContent = s.score_by_accounts == null ? EMPTY : Math.round(s.score_by_accounts);
+    ratingBadge($("#heroRatingAcc"), s.rating_by_accounts, s.score_by_accounts == null ? EMPTY : s.rating_by_accounts);
     $(".scale-bands").innerHTML = [1, 2, 3, 4, 5].map((t) => `<div style="background:${tierColor(t)};border-radius:3px"></div>`).join("");
     $("#heroAlt").textContent = s.score == null ? "" : s.score_by_spend - s.score_by_accounts >= 5
       ? "Risk is concentrated in a few large accounts: most accounts are easier to move than the spend view suggests."
@@ -454,14 +464,14 @@
     $("#scaleMarkerAcc").style.left = `${Math.min(100, Math.max(0, s.score_by_accounts || 0))}%`;
     $("#kpiTiles").innerHTML = [
       tile("Annual spend in scope", money(s.annual_spend), `${money(s.monthly_spend)} / month, amortised`),
-      tile("Spend on High/Critical services", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
+      tile("High/Critical spend", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
       tile("Accounts in scope", num(s.accounts_in_scope), `${num(s.accounts_with_spend)} with spend · ${num(s.accounts_excluded)} filtered out`),
-      tile("High/Critical accounts", s.accounts_rated ? `${num(s.high_risk_accounts)} of ${num(s.accounts_rated)}` : "–",
+      tile("High/Critical accounts", s.accounts_rated ? `${num(s.high_risk_accounts)} of ${num(s.accounts_rated)}` : EMPTY,
         s.accounts_rated ? `${pct(s.high_risk_accounts_spend_pct)} of spend · ${num(s.portable_accounts)} portable (Low/Moderate)` : "No accounts with spend"),
-      tile("Bespoke (AWS-only) services", num(s.bespoke_services), s.top_lockin_services.length ? `largest: ${s.top_lockin_services.slice(0, 3).map((x) => x.display).join(", ")}` : "none in use"),
-      tile("Spend growth", s.growth?.total?.pct == null ? "–" : `${s.growth.total.pct > 0 ? "+" : ""}${num(s.growth.total.pct, 1)}%`,
+      tile("AWS-only services", num(s.bespoke_services), s.top_lockin_services.length ? `largest: ${s.top_lockin_services.slice(0, 3).map((x) => x.display).join(", ")}` : "none in use"),
+      tile("Spend growth", s.growth?.total?.pct == null ? EMPTY : `${s.growth.total.pct > 0 ? "+" : ""}${num(s.growth.total.pct, 1)}%`,
         s.growth?.total ? `${month(s.growth.first_month)} → ${month(s.growth.last_month)} · High/Critical ${s.growth.lockin.pct > 0 ? "+" : ""}${num(s.growth.lockin.pct, 1)}%` : "needs 2+ months of history"),
-      ...(e.empty ? [tile("Indicative exit cost", "–", "No spend in scope"), tile("Exit window (time to leave AWS)", "–", "No spend in scope"), tile("Engineering effort", "–", "No spend in scope")] : [
+      ...(e.empty ? [tile("Exit cost (one-off)", EMPTY, "No spend in scope"), tile("Exit window (time to leave AWS)", EMPTY, "No spend in scope"), tile("Engineering effort", EMPTY, "No spend in scope")] : [
         // Ranges only: a single figure would claim precision an early-stage estimate does not have.
         tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend` : "engineering and parallel running", e.provisional),
         tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, e.provisional),
@@ -608,7 +618,7 @@
 
   function renderGrowth(r) {
     const g = r.growth;
-    const sgn = (v, d = 1) => v == null ? "–" : `${v > 0 ? "+" : ""}${num(v, d)}%`;
+    const sgn = (v, d = 1) => v == null ? EMPTY : `${v > 0 ? "+" : ""}${num(v, d)}%`;
     const usd = (v) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${money(Math.abs(v))}`;
     // The model caps annualised growth at 999% (a near-zero first month); say so rather than show a false figure.
     const perYear = (v) => (v != null && v >= 999 ? "over +999%" : sgn(v));
@@ -711,7 +721,7 @@
     });
     $("#ratingTable").innerHTML = `<thead><tr><th>Rating</th><th class="num-cell">Accounts</th><th class="num-cell">Share</th><th class="num-cell">Per month</th><th class="num-cell">Spend share</th></tr></thead><tbody>` +
       rows.map((b) => `<tr><td><span class="swatch" style="background:${tierColor(RATING_TIER[b.rating])}"></span>${esc(b.rating)}</td><td class="num-cell">${num(b.accounts)}</td><td class="num-cell">${pct(b.pct_accounts, 1)}</td><td class="num-cell">${money(b.monthly_spend)}</td><td class="num-cell">${pct(b.pct_spend, 1)}</td></tr>`).join("") +
-      `<tr class="total"><td class="nowrap"><strong>Portable</strong> (Low + Moderate)</td><td class="num-cell"><strong>${num(s.portable_accounts)}</strong></td><td class="num-cell">${s.accounts_rated ? pct(100 * s.portable_accounts / s.accounts_rated, 1) : "–"}</td><td></td><td></td></tr></tbody>`;
+      `<tr class="total"><td class="nowrap"><strong>Portable</strong> (Low + Moderate)</td><td class="num-cell"><strong>${num(s.portable_accounts)}</strong></td><td class="num-cell">${s.accounts_rated ? pct(100 * s.portable_accounts / s.accounts_rated, 1) : EMPTY}</td><td></td><td></td></tr></tbody>`;
     $("#weightingNote").textContent = `OU score weighting: ${s.weighting_label}. ` + ({
       spend: "Each account counts in proportion to its spend, so a small high-risk account adds little.",
       equal: "Every account with spend counts the same, whatever its size.",
@@ -842,7 +852,7 @@
       <td class="num-cell muted">${i + 1}</td>
       <td class="acct"><strong>${esc(a.name)}</strong>${a.critical ? ` <span class="chip crit" title="${a.critical_source === "tag" ? "Criticality tag on the account" : "Matches a critical name in section 6"}">Critical</span>` : ""}<div class="hint">${esc(a.id)}${a.channel ? ` · ${esc(a.channel)}` : ""}${multiOu ? ` · ${esc(a.ou_path)}` : ""}${perOwner && a.owner ? ` · Owner: ${esc(a.owner)}` : ""}</div></td>
       <td class="num-cell">${money(a.monthly_spend)}</td>
-      <td class="risk">${a.score == null ? "–" : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span><div class="hint">${pct(a.high_risk_pct)} High/Crit spend</div>`}</td>
+      <td class="risk">${a.score == null ? EMPTY : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span><div class="hint">${pct(a.high_risk_pct)} High/Crit spend</div>`}</td>
       <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.spend_at_risk / maxC).toFixed(1)}%"></i></div><span class="num-cell">${money(a.spend_at_risk)}</span></div></td>
       <td><div class="chips">${a.top_lockin.map((s) => `<span class="chip">${esc(s.service)}</span>`).join("") || '<span class="hint">none</span>'}</div></td>
       <td class="num-cell">${num(a.effort_weeks / 4.33, 1)}</td>
@@ -876,7 +886,7 @@
     $("#chServices").parentElement.style.height = `${Math.min(760, Math.max(420, 54 * lock.length + 40))}px`;
     const g = r.growth || {};
     const hasChange = lock.some((s) => s.change != null);
-    const chg = (s) => s.change == null ? "–" : `${s.change > 0 ? "+" : s.change < 0 ? "−" : ""}${money(Math.abs(s.change))}${s.change_pct != null ? `<div class="hint">${s.change_pct > 0 ? "+" : ""}${num(s.change_pct, 0)}%</div>` : ""}`;
+    const chg = (s) => s.change == null ? EMPTY : `${s.change > 0 ? "+" : s.change < 0 ? "−" : ""}${money(Math.abs(s.change))}${s.change_pct != null ? `<div class="hint">${s.change_pct > 0 ? "+" : ""}${num(s.change_pct, 0)}%</div>` : ""}`;
     $("#lockinTable").innerHTML = `<thead><tr><th>Service</th><th>Tier</th><th class="num-cell">Per month</th><th class="num-cell">Share</th><th class="num-cell">Accounts</th>${hasChange ? `<th class="num-cell" title="Monthly spend in ${esc(month(g.last_month))} minus ${esc(month(g.first_month))}">Change</th>` : ""}</tr></thead><tbody>` +
       (lock.map((s) => `<tr><td><strong>${esc(s.display)}</strong><div class="hint">${esc(s.category)}</div></td><td><span class="tier-pill" style="--dot:${tierColor(s.tier)}">${s.tier} · ${esc(s.tier_label)}</span></td><td class="num-cell">${money(s.monthly_spend)}</td><td class="num-cell">${pct(s.pct, 1)}</td><td class="num-cell">${s.accounts}</td>${hasChange ? `<td class="num-cell">${chg(s)}</td>` : ""}</tr>`).join("")
         || `<tr><td colspan="6" class="hint">No High or Critical services in scope.</td></tr>`) + "</tbody>";
@@ -905,7 +915,7 @@
       ? `<span class="prov-tag">Provisional</span> Using default answers. Change any answer, or confirm these, to estimate for your organisation.`
       : `<span class="ok-tag">✓ Your answers</span> The estimate uses the answers below.`;
     $("#estTiles").innerHTML = e.empty ? "" : [
-      tile("Total exit cost (indicative)", e.ranges.cost, `${e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend · ` : ""}${costSplit(e)}`, prov),
+      tile("Exit cost (one-off)", e.ranges.cost, `${e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend · ` : ""}${costSplit(e)}`, prov),
       tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, prov),
       tile("Engineering effort", e.ranges.effort, plural(e.effort.material_accounts, "material account"), prov),
     ].join("");
@@ -946,7 +956,7 @@
   }
 
   // ------------------------------------------------------------------ resilience
-  const tb = (v) => (!v ? "–" : v >= 1000 ? `${num(v / 1024, 1)} PB` : `${num(v, v < 10 ? 1 : 0)} TB`);
+  const tb = (v) => (!v ? EMPTY : v >= 1000 ? `${num(v / 1024, 1)} PB` : `${num(v, v < 10 ? 1 : 0)} TB`);
   const days = (d) => (d < 1 ? "under a day" : d < 120 ? `${Math.round(d)} days` : `${num(d / 30.4, 0)} months`);
 
   function splitList(rows) {
@@ -973,7 +983,7 @@
     const none = st.buckets.find((b) => b.key === "none");
     const tiles = [
       tile("Critical accounts", crit ? num(c.critical_accounts) : "None marked", crit ? `${pct(c.pct_spend)} of spend · ${money(c.monthly_spend * 12)} a year` : "Figures below cover all in-scope accounts"),
-      k.available ? tile("Correlated failure", `${k.level} · ${k.score}`, `${pct(k.pct)} of ${basis} in ${k.region_name}`) : tile("Correlated failure", "–", k.reason),
+      k.available ? tile("Correlated failure", `${k.level} · ${k.score}`, `${pct(k.pct)} of ${basis} in ${k.region_name}`) : tile("Correlated failure", EMPTY, k.reason),
       tile("No rapid exit", pct(none.pct), `of ${basis} is on AWS-only services`),
     ];
     if (d.available && !d.empty) {
@@ -1056,7 +1066,7 @@
   }
 
   // ------------------------------------------------------------------ timing
-  const monthYear = (iso) => (iso ? new Date(`${iso.slice(0, 7)}-15`).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : "–");
+  const monthYear = (iso) => (iso ? new Date(`${iso.slice(0, 7)}-15`).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : EMPTY);
   const mrange = (x) => (x[0] === x[1] ? money(x[0]) : `${money(x[0])} to ${money(x[1])}`);
 
   // The Exit model answers a section uses, shown above its results (the forms live in the dialog).
@@ -1078,9 +1088,9 @@
     answerStrip("#timeAnswers", [
       ["Notice period", d.set ? `${d.months} months` : "None"],
       ["EDP ends", tf.edp_end.value ? monthYear(`${tf.edp_end.value}-15`) : "No EDP"],
-      ["EDP annual commit", Number(tf.edp_annual_commit.value) > 0 ? money(Number(tf.edp_annual_commit.value)) : "–"],
+      ["EDP annual commit", Number(tf.edp_annual_commit.value) > 0 ? money(Number(tf.edp_annual_commit.value)) : EMPTY],
     ]);
-    const exitEnd = t.exit_end ? `${monthYear(t.exit_end[0])} to ${monthYear(t.exit_end[1])}` : "–";
+    const exitEnd = t.exit_end ? `${monthYear(t.exit_end[0])} to ${monthYear(t.exit_end[1])}` : EMPTY;
     const tiles = [
       tile("Exit finishes", exitEnd, t.duration_range ? `${t.duration_range} if it starts now` : "No spend in scope", t.provisional),
       d.set ? tile("Deadline", d.label, `${d.months}-month notice`, t.provisional)
@@ -1119,7 +1129,7 @@
       return;
     }
     $("#timeNote").textContent = `${plural(c.savings_plans, "Savings Plan")} and ${plural(c.reservations, "reservation")} from Cost Explorer, amortised per month. Written off is what would still be owed between the exit finishing and the commitment ending: paid for, no longer used.${undated}`;
-    $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Written off</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || "–")}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded?.[1] ? mrange(x.stranded) : "–"}</td></tr>`).join("")}</tbody>`;
+    $("#timeTable").innerHTML = `<thead><tr><th>Commitment</th><th>Term</th><th>Ends</th><th class="num-cell">Per month</th><th class="num-cell">Still to run</th><th class="num-cell">Written off</th></tr></thead><tbody>${c.rows.map((x) => `<tr><td><strong>${esc(x.name)}</strong>${x.utilization_pct != null ? `<div class="hint">${pct(x.utilization_pct)} used</div>` : ""}</td><td>${esc(x.term || EMPTY)}<div class="hint">${esc(x.payment || "")}</div></td><td>${monthYear(x.end)}</td><td class="num-cell">${money(x.monthly)}</td><td class="num-cell">${money(x.remaining)}</td><td class="num-cell">${x.stranded?.[1] ? mrange(x.stranded) : EMPTY}</td></tr>`).join("")}</tbody>`;
   }
 
   // Commitments by month, and what is written off if the exit finishes in that month. Months after the
@@ -1189,14 +1199,14 @@
     $("#opTitle").textContent = m.mode === "demo" ? "Demo organisation (synthetic data)" : m.ou?.path || "Organisation";
     $("#opScope").textContent = [m.filter.description, `${num(s.accounts_in_scope)} accounts`, `${money(s.annual_spend)} a year on AWS`,
       m.scanned_at ? `scanned ${new Date(m.scanned_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""].filter(Boolean).join(" · ");
-    $("#opScore").textContent = s.score_by_spend == null ? "–" : Math.round(s.score_by_spend);
+    $("#opScore").textContent = s.score_by_spend == null ? EMPTY : Math.round(s.score_by_spend);
     ratingBadge($("#opRating"), s.rating_by_spend, s.score_by_spend == null ? "No spend in scope" : s.rating_by_spend);
     $("#opScoreAcc").textContent = s.score_by_accounts == null ? "" : `By spend · ${Math.round(s.score_by_accounts)} by no. of accounts`;
     $("#opHeadline").textContent = x.headline || x.bottom_line;
     $("#opProv").hidden = !x.provisional;
     $("#opTiles").innerHTML = [
       tile("High/Critical spend", pct(s.high_risk_pct), `${money(s.high_risk_monthly * 12)} a year`),
-      tile("High/Critical accounts", s.accounts_rated ? `${num(s.high_risk_accounts)} of ${num(s.accounts_rated)}` : "–", s.accounts_rated ? `${pct(s.high_risk_accounts_spend_pct)} of spend` : ""),
+      tile("High/Critical accounts", s.accounts_rated ? `${num(s.high_risk_accounts)} of ${num(s.accounts_rated)}` : EMPTY, s.accounts_rated ? `${pct(s.high_risk_accounts_spend_pct)} of spend` : ""),
       tile("AWS-only services", num(s.bespoke_services), s.top_lockin_services.slice(0, 3).map((v) => v.display).join(", ") || "none in use"),
       ...(e.empty ? [] : [
         tile("Exit cost (one-off)", e.ranges.cost, e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's spend` : "", e.provisional),
@@ -1219,7 +1229,7 @@
     const o = r.resilience?.owners;
     const showOwner = !!o?.tagged_accounts && !o.single_owner;
     $("#opAccounts").innerHTML = `<thead><tr><th>Account</th>${showOwner ? "<th>Owner</th>" : ""}<th class="num-cell">Per month</th><th>Risk</th><th class="num-cell">Spend at risk / month</th><th>Main lock-in</th></tr></thead><tbody>` +
-      top.map((a) => `<tr><td><strong>${esc(a.name)}</strong></td>${showOwner ? `<td class="nowrap">${esc(a.owner || a.executive || "–")}</td>` : ""}<td class="num-cell">${money(a.monthly_spend)}</td><td><span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span></td><td class="num-cell">${money(a.spend_at_risk)}</td><td>${esc(a.top_lockin.slice(0, showOwner ? 2 : 3).map((v) => v.service).join(", ") || "none")}</td></tr>`).join("") + "</tbody>";
+      top.map((a) => `<tr><td><strong>${esc(a.name)}</strong></td>${showOwner ? `<td class="nowrap">${esc(a.owner || a.executive || EMPTY)}</td>` : ""}<td class="num-cell">${money(a.monthly_spend)}</td><td><span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span></td><td class="num-cell">${money(a.spend_at_risk)}</td><td>${esc(a.top_lockin.slice(0, showOwner ? 2 : 3).map((v) => v.service).join(", ") || "none")}</td></tr>`).join("") + "</tbody>";
     renderOnePagerOwners(o);
     $("#opFoot").textContent = `Confidence: ${x.confidence}. ${x.confidence_reasons.join(" ")} Cost and time are ranges for a planning decision, not a delivery quote. Generated ${new Date(m.generated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} by aws-regulatory-risk-review-framework v${m.tool_version}, scan ${m.scan_id}. The full report has the method, every account and service, and the data gaps.`;
   }
@@ -1259,7 +1269,7 @@
       ? `<thead><tr><th>Severity</th><th>Area</th><th>Account</th><th>Issue</th></tr></thead><tbody>` + r.issues.map((i) => `<tr>
           <td><span class="sev" style="--dot:${css(SEV_COLOR[i.severity] || "--muted")}">${esc(i.severity)}</span></td>
           <td class="cap">${esc(i.category)}${i.region ? `<div class="hint">${esc(i.region)}</div>` : ""}</td>
-          <td>${esc(names[i.account_id] || i.account_id || "–")}</td>
+          <td>${esc(names[i.account_id] || i.account_id || EMPTY)}</td>
           <td>${esc(String(i.message || "").replace(/^./, (ch) => ch.toUpperCase()))}${i.error_code ? ` <span class="chip">${esc(i.error_code)}</span>` : ""}${i.hint ? `<div class="hint">→ ${esc(i.hint)}</div>` : ""}</td></tr>`).join("") + "</tbody>"
       : `<tbody><tr><td class="hint">No issues recorded. Every API call in the scan succeeded.</td></tr></tbody>`;
   }
@@ -1356,7 +1366,7 @@
     const a = { ...MR_DEFAULTS };
     try { Object.assign(a, JSON.parse(localStorage.getItem(LS_MR) || "{}")); } catch { /* ignore */ }
     if (params.get("mr")) {
-      try { Object.assign(a, JSON.parse(params.get("mr"))); } catch { console.warn("bad mr param"); }
+      try { Object.assign(a, JSON.parse(params.get("mr"))); state.mrFromLink = true; } catch { console.warn("bad mr param"); }
     }
     return a;
   }
@@ -1371,7 +1381,7 @@
       else if (MR_NUM.includes(el.name)) a[el.name] = el.value === "" ? undefined : Number(el.value);
       else a[el.name] = el.value;
     }
-    try { localStorage.setItem(LS_MR, JSON.stringify(a)); } catch { /* ignore */ }
+    if (!state.mrFromLink) { try { localStorage.setItem(LS_MR, JSON.stringify(a)); } catch { /* ignore */ } }
     return a;
   }
 
@@ -1439,7 +1449,7 @@
   }
 
   function sevBadge(sev) {
-    return sev ? `<span class="badge" style="--dot:${tierColor(SEV_TIER[sev])}">${esc(sev)}</span>` : `<span class="muted">–</span>`;
+    return sev ? `<span class="badge" style="--dot:${tierColor(SEV_TIER[sev])}">${esc(sev)}</span>` : `<span class="muted">n/a</span>`;
   }
 
   function renderMr() {
@@ -1451,7 +1461,7 @@
       ["Scope", state.report?.meta.filter.description || "All accounts"],
       ["Accounts going multi-region", `${num(s.accounts_selected)} of ${num(s.accounts_in_scope)}`],
       ["Primary region", `${s.primary_name} (${s.primary})${s.primary_detected ? "" : " · set by you"}`],
-      ["Second region", s.secondary_name ? `${s.secondary_name} (${s.secondary})${s.secondary === s.recommended ? " · recommended" : " · chosen by you"}` : "–"],
+      ["Second region", s.secondary_name ? `${s.secondary_name} (${s.secondary})${s.secondary === s.recommended ? " · recommended" : " · chosen by you"}` : EMPTY],
       ["Recovery target", m.labels.recovery[m.answers.recovery]],
       ["Data residency", m.labels.residency[m.answers.residency]],
     ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
@@ -1470,8 +1480,8 @@
       tile("Extra cost to run (a year)", rg.run_annual, rg.uplift_pct ? `${rg.uplift_pct} of the chosen accounts' spend` : "infrastructure, support and people", prov),
       tile("Cost to achieve (one-off)", rg.build_cost, rg.build_effort, prov),
       tile("Time to achieve", rg.build_duration, `bound by ${s.build.constrained_by}`, prov),
-      tile("Extra people", rg.staff === "–" ? "–" : `${rg.staff} FTE`, `${rg.staff_annual} a year`, prov),
-      tile("Recommended region", s.recommended_name || "–", t ? `~${t.latency_ms} ms · ${num(t.parity_pct)}% service parity` : "none meets the residency rule"),
+      tile("Extra people", rg.staff === EMPTY ? EMPTY : `${rg.staff} FTE`, `${rg.staff_annual} a year`, prov),
+      tile("Recommended region", s.recommended_name || EMPTY, t ? `~${t.latency_ms} ms · ${num(t.parity_pct)}% service parity` : "none meets the residency rule"),
       tile("Accounts with failover risk", `${num(s.accounts_blocked)} of ${num(s.accounts_selected)}`, "a material service cannot meet the target as built"),
     ].join("");
     $("#mrStatus").innerHTML = m.provisional
@@ -1552,7 +1562,7 @@
       options: { indexAxis: "y", plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${num(c.raw)} person-months` } } },
         scales: { x: { grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } } },
     });
-    $("#mrParityTable").innerHTML = `<thead><tr><th>Service</th><th>Class</th><th class="num-cell">Accounts</th><th class="num-cell">Spend / month</th><th>In ${esc(s.secondary || "–")}</th></tr></thead><tbody>` +
+    $("#mrParityTable").innerHTML = `<thead><tr><th>Service</th><th>Class</th><th class="num-cell">Accounts</th><th class="num-cell">Spend / month</th><th>In ${esc(s.secondary || EMPTY)}</th></tr></thead><tbody>` +
       (PRINT ? m.parity.filter((p) => p.availability !== "available" || p.monthly_spend >= 1000) : m.parity.slice(0, 40)).map((p) => `<tr><td>${esc(p.service)}</td><td class="small">${esc(p.class_label)}</td><td class="num-cell">${num(p.accounts)}</td><td class="num-cell">${money(p.monthly_spend)}</td>
         <td><span class="badge" style="--dot:${tierColor(AVAIL_TIER[p.availability])}">${esc(AVAIL_LABEL[p.availability])}</span></td></tr>`).join("") + "</tbody>";
     $("#mrAssumptions").innerHTML = m.assumptions.map((a) => `<li>${esc(a)}</li>`).join("");
@@ -1739,9 +1749,23 @@
 
   function pollScan(id) {
     clearTimeout(state.pollTimer);
+    let misses = 0;
     const tick = async () => {
       try {
-        const s = await api(`/api/scans/${encodeURIComponent(id)}/status`);
+        let s;
+        try {
+          s = await api(`/api/scans/${encodeURIComponent(id)}/status`);
+          misses = 0;
+        } catch (e) {
+          // The scan keeps running on the server: ride out a blip (or a console restart) for about a
+          // minute before giving up, so a dropped request never invites a duplicate scan.
+          if (e.status !== 404 && ++misses <= 12) {
+            $("#scanMsg").textContent = `Lost contact with the console; retrying (${misses})…`;
+            state.pollTimer = setTimeout(tick, Math.min(1000 * 2 ** misses, 5000));
+            return;
+          }
+          throw e;
+        }
         $("#scanBar").style.width = `${s.pct}%`;
         $("#scanMsg").textContent = `${s.message || s.phase}${s.issues ? ` · ${plural(s.issues, "issue")} so far (listed under Issues when the scan finishes)` : ""}`;
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
@@ -1886,7 +1910,12 @@
       // With the management account found, show one line instead of a 300-account list.
       $("#ssoPick").hidden = !!mgmt && $("#ssoAccount").value === mgmt;
       await loadSsoRoles(linked?.role);
-    } catch (e) { $("#ssoError").textContent = `${e.message}${e.hint ? ". " + e.hint : ""}`; busy("#ssoBusy", null); }
+    } catch (e) {
+      $("#ssoError").textContent = `${e.message}${e.hint ? ". " + e.hint : ""}`;
+      $("#ssoAccount").innerHTML = `<option value="">Could not load the accounts: sign in again, or reopen this dialog</option>`;
+      $("#ssoRole").innerHTML = "";
+      busy("#ssoBusy", null);
+    }
   }
 
   async function loadSsoRoles(prefer) {
@@ -2020,7 +2049,7 @@
   }
 
   function checkRow(c) {
-    const icon = { ok: "✓", fail: "✗", warn: "!", skip: "–" };
+    const icon = { ok: "✓", fail: "✗", warn: "!", skip: "○" };
     return `<li class="${esc(c.status)}"><span class="ic" aria-label="${esc(c.status)}">${icon[c.status] || "?"}</span><strong>${esc(c.label)}</strong>
         ${c.detail ? `<span class="d">${esc(c.detail)}</span>` : ""}${c.fix ? `<span class="f">→ ${esc(c.fix)}</span>` : ""}</li>`;
   }
@@ -2065,7 +2094,7 @@
       $("#aChecks").innerHTML = r.checks.map(checkRow).join("");
       $("#aVerdict").textContent = r.verdict;
       $("#aVerdict").hidden = false;
-      $("#aVerdict").style.color = r.ready ? "#2f9e5b" : r.partial ? "#b7791f" : css("--sev-critical");
+      $("#aVerdict").style.color = css(r.ready ? "--good" : r.partial ? "--warn-ink" : "--sev-critical");
       const needsAdmin = r.checks.some((c) => c.status === "fail" && c.needs) || !r.ready;
       $("#aAdmin").hidden = !needsAdmin || r.checks[0].status !== "ok";
       $("#aAdminText").value = r.admin_request;
@@ -2109,27 +2138,9 @@
   }
 
   // ------------------------------------------------------------------ boot
-  async function boot() {
-    window.addEventListener("error", (e) => console.error("ui error", e.message));
-    window.addEventListener("unhandledrejection", (e) => console.error("ui promise error", e.reason));
-    chartDefaults();
-    try {
-      [state.options, state.catalog] = await Promise.all([api("/api/options"), api("/api/catalog")]);
-    } catch (e) { toast(e.message, 8000); return; }
-    fillQuestionnaire(loadQuestionnaire());
-    state.view = params.get("view") === "multiregion" ? "multiregion" : "exit";
-    document.body.dataset.view = state.view;
-    for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
-    bindMultiRegion();
-    if (["balanced", "spend", "equal"].includes(params.get("weighting"))) $("#fWeighting").value = params.get("weighting");
-    if (["Moderate", "High"].includes(params.get("min_rating"))) $("#fMinRating").value = params.get("min_rating");
-    for (const k of ["include", "exclude", "mode"]) if (params.get(k)) $(`#f${k[0].toUpperCase()}${k.slice(1)}`).value = params.get(k);
-
-    const scans = await refreshScans();
-    state.scanId = params.get("scan") || scans.find((s) => s.status !== "failed")?.id || null;
-    if (state.scanId) { $("#scanSelect").value = state.scanId; await loadReport(); }
-    else document.body.dataset.ready = "1";
-
+  // Every control is wired before the first request, so the buttons work while a large report loads
+  // and still work (New scan, AWS sign-in, Log) when the console cannot load one.
+  function bindControls() {
     $("#scanSelect").addEventListener("change", (e) => {
       state.scanId = e.target.value;
       state.mrShowAll = false;
@@ -2148,7 +2159,7 @@
     });
     for (const id of ["#fInclude", "#fExclude"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") loadReport(); });
     // Any answer, or "these answers are right", makes the estimate the organisation's own.
-    const confirmAnswers = () => { $("#qForm").confirmed.value = "true"; syncDatacenter(); loadReport(); };
+    const confirmAnswers = () => { state.answersFromLink = false; $("#qForm").confirmed.value = "true"; syncDatacenter(); loadReport(); };
     $("#btnRecalc").addEventListener("click", confirmAnswers);
     $("#qForm").addEventListener("change", confirmAnswers);
     for (const id of ["#resForm", "#timeForm"]) {
@@ -2195,7 +2206,7 @@
       state.exclude = new Set(state.exclDraft);
       $("#exclDialog").close();
       readQuestionnaire();
-      await loadReport();
+      if (!(await loadReport())) return;
       const n = state.exclude.size;
       toast(n ? `Regenerated without ${plural(n, "product")}` : "Regenerated with every product");
     });
@@ -2215,7 +2226,7 @@
       renderAccountTable(state.report, Math.max(...state.report.accounts.map((a) => a.spend_at_risk), 0.01));
     });
     $("#btnDemo").addEventListener("click", async () => {
-      try { const { id } = await api("/api/scans/demo", { method: "POST" }); await refreshScans(id); state.scanId = id; await loadReport(); toast("Loaded synthetic demo organisation"); }
+      try { const { id } = await api("/api/scans/demo", { method: "POST" }); await refreshScans(id); state.scanId = id; if (await loadReport()) toast("Loaded synthetic demo organisation"); }
       catch (e) { toast(e.message); }
     });
     $("#btnPdf").addEventListener("click", () => {
@@ -2302,6 +2313,13 @@
     $("#sOu").addEventListener("change", syncOus);
     $("#sProfile").addEventListener("change", loadOus);
     $("#btnStartScan").addEventListener("click", startScan);
+    // Enter in a text field acts, rather than submitting the dialog form (whose first button is Close).
+    const enterDoes = (form, fn) => $(form).addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.matches("input:not([type=checkbox]):not([type=radio])")) { e.preventDefault(); fn(e.target); }
+    });
+    enterDoes("#scanForm", () => { if (!$("#btnStartScan").disabled) startScan(); });
+    enterDoes("#ssoForm", (el) => { if (el.closest("#ssoAdd")) ssoAddPortal(); });
+    enterDoes("#accessForm", () => runAccessCheck());
     $("#sInventory").addEventListener("change", (e) => { $("#invOpts").hidden = !e.target.checked; });
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));
     $("#btnLogs").addEventListener("click", openLog);
@@ -2323,6 +2341,39 @@
     window.addEventListener("pageshow", (e) => { if (e.persisted) redrawCharts(); });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) redrawCharts(); });
     document.querySelectorAll("canvas").forEach((c) => c.addEventListener("contextrestored", redrawCharts));
+  }
+
+  async function boot() {
+    const unexpected = (what, detail) => {
+      console.error(what, detail);
+      if (!PRINT) toast("Something went wrong in the console. Settings › Application log has the details.", 6000);
+    };
+    window.addEventListener("error", (e) => unexpected("ui error", e.message));
+    window.addEventListener("unhandledrejection", (e) => unexpected("ui promise error", e.reason));
+    chartDefaults();
+    bindControls();
+    const failed = (e) => {
+      toast(e.message, 8000);
+      if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
+    };
+    try {
+      [state.options, state.catalog] = await Promise.all([api("/api/options"), api("/api/catalog")]);
+    } catch (e) { failed(e); return; }
+    fillQuestionnaire(loadQuestionnaire());
+    state.view = params.get("view") === "multiregion" ? "multiregion" : "exit";
+    document.body.dataset.view = state.view;
+    for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
+    bindMultiRegion();
+    if (["balanced", "spend", "equal"].includes(params.get("weighting"))) $("#fWeighting").value = params.get("weighting");
+    if (["Moderate", "High"].includes(params.get("min_rating"))) $("#fMinRating").value = params.get("min_rating");
+    for (const k of ["include", "exclude", "mode"]) if (params.get(k)) $(`#f${k[0].toUpperCase()}${k.slice(1)}`).value = params.get(k);
+
+    let scans;
+    try { scans = await refreshScans(); } catch (e) { failed(e); return; }
+    state.scanId = params.get("scan") || scans.find((s) => s.status !== "failed")?.id || null;
+    if (state.scanId) { $("#scanSelect").value = state.scanId; await loadReport(); }
+    else document.body.dataset.ready = "1";
+
   }
 
   document.addEventListener("DOMContentLoaded", boot);

@@ -92,7 +92,7 @@ services scores 10; entirely on tier-2, 30.
 feed the estimate (below), but they do not change the score; the score stays a pure, auditable
 function of the bill.
 
-**Bespoke services.** "Bespoke (AWS-only) services" counts distinct High or Critical (tier 4 to 5) services
+**Bespoke services.** "AWS-only services" counts distinct High or Critical (tier 4 to 5) services
 with at least $1/month of in-scope spend: the services with no direct equivalent outside AWS.
 
 **Spend growth.** Change in amortised monthly spend from the first to the last complete month scanned,
