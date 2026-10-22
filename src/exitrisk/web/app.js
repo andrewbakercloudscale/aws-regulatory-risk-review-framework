@@ -2105,7 +2105,8 @@
   function checkRow(c) {
     const icon = { ok: "✓", fail: "✗", warn: "!", skip: "○" };
     return `<li class="${esc(c.status)}"><span class="ic" aria-label="${esc(c.status)}">${icon[c.status] || "?"}</span><strong>${esc(c.label)}</strong>
-        ${c.detail ? `<span class="d">${esc(c.detail)}</span>` : ""}${c.fix ? `<span class="f">→ ${esc(c.fix)}</span>` : ""}</li>`;
+        ${c.detail ? `<span class="d">${esc(c.detail)}</span>` : ""}${c.fix ? `<span class="f">→ ${esc(c.fix)}</span>` : ""}
+        ${c.needs && c.status !== "ok" && c.status !== "skip" ? `<span class="n">Missing: ${c.needs.split(", ").map((a) => `<code>${esc(a)}</code>`).join(" ")}</span>` : ""}</li>`;
   }
 
   async function runAccessCheck() {
@@ -2130,7 +2131,8 @@
         : `<li class="wait"><span class="ic" aria-hidden="true">·</span><strong>${esc(st.label)}</strong></li>`).join("");
       if (current) {
         $("#aBusy .busy-text").textContent = `Step ${n + 1} of ${steps.length}: ${current.label}` +
-          (current.id === "identity" ? " (approve Touch ID if prompted)" : "");
+          (current.id === "identity" ? " (approve Touch ID if prompted)" : "") +
+          (current.id === "deep_scan" ? " (checks your permission set in every account; about a minute per 300)" : "");
       }
       busyProgress("#aBusy", steps.length ? (n + 0.5) / steps.length : 0);
     };
@@ -2149,7 +2151,7 @@
       $("#aVerdict").textContent = r.verdict;
       $("#aVerdict").hidden = false;
       $("#aVerdict").style.color = css(r.ready ? "--good" : r.partial ? "--warn-ink" : "--sev-critical");
-      const needsAdmin = r.checks.some((c) => c.status === "fail" && c.needs) || !r.ready;
+      const needsAdmin = r.checks.some((c) => c.status !== "ok" && c.status !== "skip" && c.needs) || !r.ready;
       $("#aAdmin").hidden = !needsAdmin || r.checks[0].status !== "ok";
       $("#aAdminText").value = r.admin_request;
       $("#btnAccessScan").hidden = !(r.ready || r.partial);

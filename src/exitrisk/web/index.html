@@ -710,7 +710,7 @@
           <option value="dependency">Dependency scan: resources and the integrations between them</option>
         </select><span class="fd-hint" id="sDepthHint">Spend and account data from the management account. Effort is sized from spend, so confidence stays lower.</span></label>
         <div id="invOpts" class="fd-grid" hidden>
-          <label>Role to assume in member accounts<input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
+          <label><span>Role to assume in member accounts <span class="opt">blank = your own permission set</span></span><input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"><span class="fd-hint">With an IAM Identity Center sign-in, leave blank to use the permission set you signed in with in each account.</span></label>
           <label><span>Regions <span class="opt">blank = all enabled</span></span><input name="regions" placeholder="eu-west-1,us-east-1"></label>
           <label class="check fd-check span-2"><input type="checkbox" name="material_only" id="sMaterial"><span><strong>Only material accounts</strong><br><span class="fd-hint">Deep-scan the accounts that make up 95% of spend, plus any with AWS-only services; the rest stay sized from spend.</span></span></label>
         </div>
@@ -776,10 +776,11 @@
 <dialog id="accessDialog" class="dialog">
   <form method="dialog" id="accessForm" autocomplete="off">
     <h2>Check access</h2>
-    <p class="muted small">Makes the same read-only calls a scan makes. One Cost Explorer call costs US$0.01.</p>
+    <p class="muted small">Makes every read-only call a scan makes and names any permission that is missing. Costs US$0.03 (three Cost Explorer calls).</p>
     <label>AWS profile<select id="aProfile"></select></label>
     <details class="small"><summary>Deep scan role (optional)</summary>
       <label>Role to assume in member accounts<input id="aRole" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"></label>
+      <p class="muted">Leave blank with an IAM Identity Center sign-in: the check then tests your own permission set in the member accounts.</p>
     </details>
     <!-- Actions sit above the results, so starting the scan never needs a scroll past the checks. -->
     <div class="row access-actions">

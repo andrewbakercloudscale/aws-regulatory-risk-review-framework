@@ -34,6 +34,7 @@ from botocore.exceptions import ClientError
 
 from .aws_session import BOTO_CONFIG
 from .logging_config import get_logger
+from .parallel import pmap
 
 log = get_logger("sso")
 
@@ -337,6 +338,15 @@ def list_accounts(session_name: str) -> dict:
     return {"accounts": accounts, "management_account_id": mgmt}
 
 
+def accounts_with_role(session_name: str, role: str) -> tuple[list[str], list[str]]:
+    """(account ids where ``role`` is assigned to the analyst, all account ids the portal shows them)."""
+    token, region = _token_or_fail(session_name)
+    pages = _portal(region).get_paginator("list_accounts").paginate(accessToken=token)
+    ids = sorted(a["accountId"] for p in pages for a in p["accountList"])
+    have = pmap(lambda a: role in list_roles(session_name, a), ids, workers=8)
+    return [a for a, ok in zip(ids, have, strict=True) if ok], ids
+
+
 def _find_management(session_name: str, accounts: list[dict]) -> str | None:
     """DescribeOrganization works from any member account; try a few until one answers."""
     for acct in accounts[:5]:
@@ -360,6 +370,21 @@ def role_session(session_name: str, account_id: str, role: str) -> boto3.Session
         aws_secret_access_key=c["secretAccessKey"],
         aws_session_token=c["sessionToken"],
     )
+
+
+def profile_permission_set(profile: str | None) -> tuple[str, str] | None:
+    """(SSO session, permission set) behind an IAM Identity Center profile, else None.
+
+    Lets a deep scan reach member accounts with the analyst's own permission set, no extra role needed.
+    """
+    try:
+        p = _full_config().get("profiles", {}).get(profile or "default") or {}
+    except Exception:
+        log.exception("could not read AWS profiles")
+        return None
+    if p.get("sso_session") and p.get("sso_role_name"):
+        return p["sso_session"], p["sso_role_name"]
+    return None
 
 
 def ensure_profile(session_name: str, account_id: str, role: str, region: str = "us-east-1") -> str:

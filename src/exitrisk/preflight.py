@@ -14,7 +14,8 @@ from dataclasses import asdict, dataclass
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from .aws_session import BOTO_CONFIG, assume_role_session, make_session
+from . import sso
+from .aws_session import BOTO_CONFIG, make_session, member_session
 from .collectors.cost import month_window
 from .issues import describe_exception
 from .logging_config import get_logger
@@ -76,6 +77,77 @@ def _fail(check_id: str, label: str, exc: Exception, needs: str, fix: str = "") 
         "access check %s failed: %s %s", check_id, code, msg, exc_info=not isinstance(exc, (ClientError, BotoCoreError))
     )
     return Check(check_id, label, "fail", f"{code}: {msg}", fix or hint, needs)
+
+
+# Error codes that mean "this identity may not make the call". Anything else (a missing resource,
+# a validation error) proves the call itself is allowed.
+DENIED = {
+    "AccessDenied",
+    "AccessDeniedException",
+    "AuthorizationError",
+    "AuthorizationErrorException",
+    "UnauthorizedOperation",
+    "UnauthorizedException",
+    "Forbidden",
+    "ForbiddenException",
+}
+PROBE_REGION = "us-east-1"  # enabled in every account
+_NO_SUCH = "exitrisk-access-check"  # a name that does not exist: the call proves access, reads nothing
+
+# (IAM action, client, method, kwargs): one cheap call per action a deep scan makes in a member account.
+INVENTORY_PROBES = [
+    ("ec2:DescribeRegions", "ec2", "describe_regions", {}),
+    ("ec2:DescribeInstances", "ec2", "describe_instances", {"MaxResults": 5}),
+    ("s3:ListAllMyBuckets", "s3", "list_buckets", {}),
+    ("lambda:ListFunctions", "lambda", "list_functions", {"MaxItems": 1}),
+    ("dynamodb:ListTables", "dynamodb", "list_tables", {"Limit": 1}),
+    ("states:ListStateMachines", "stepfunctions", "list_state_machines", {"maxResults": 1}),
+    ("kinesis:ListStreams", "kinesis", "list_streams", {"Limit": 1}),
+    ("sqs:ListQueues", "sqs", "list_queues", {"MaxResults": 1}),
+    ("sns:ListTopics", "sns", "list_topics", {}),
+    ("events:ListRules", "events", "list_rules", {"Limit": 1}),
+    ("apigateway:GET", "apigateway", "get_rest_apis", {"limit": 1}),
+    ("apigateway:GET (HTTP APIs)", "apigatewayv2", "get_apis", {"MaxResults": "1"}),
+    ("cognito-idp:ListUserPools", "cognito-idp", "list_user_pools", {"MaxResults": 1}),
+    ("glue:GetJobs", "glue", "get_jobs", {"MaxResults": 1}),
+    ("redshift:DescribeClusters", "redshift", "describe_clusters", {"MaxRecords": 20}),
+    ("cloudformation:ListStacks", "cloudformation", "list_stacks", {}),
+    ("eks:ListClusters", "eks", "list_clusters", {"maxResults": 1}),
+    ("ecs:ListClusters", "ecs", "list_clusters", {"maxResults": 1}),
+    ("ecs:ListServices", "ecs", "list_services", {"cluster": _NO_SUCH, "maxResults": 1}),
+    ("rds:DescribeDBInstances", "rds", "describe_db_instances", {"MaxRecords": 20}),
+]
+DEPENDENCY_PROBES = [
+    ("lambda:ListEventSourceMappings", "lambda", "list_event_source_mappings", {"MaxItems": 1}),
+    ("events:ListTargetsByRule", "events", "list_targets_by_rule", {"Rule": _NO_SUCH}),
+    ("sns:ListSubscriptions", "sns", "list_subscriptions", {}),
+    (
+        "states:DescribeStateMachine",
+        "stepfunctions",
+        "describe_state_machine",
+        {"stateMachineArn": f"arn:aws:states:{PROBE_REGION}:{{account}}:stateMachine:{_NO_SUCH}"},
+    ),
+]
+
+
+def probe_actions(session, account_id: str, probes: list) -> tuple[list[str], list[str]]:
+    """Make each probe call; return (denied actions, other failures as "action: code")."""
+    denied: list[str] = []
+    other: list[str] = []
+    for action, client_name, method, kwargs in probes:
+        kwargs = {k: v.format(account=account_id) if isinstance(v, str) else v for k, v in kwargs.items()}
+        try:
+            getattr(session.client(client_name, region_name=PROBE_REGION, config=BOTO_CONFIG), method)(**kwargs)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in DENIED:
+                denied.append(action)
+            elif code in ("ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId"):
+                other.append(f"{action}: {code}")
+        except Exception as exc:  # network or client trouble: say so rather than report a false "allowed"
+            log.warning("access probe %s failed", action, exc_info=not isinstance(exc, BotoCoreError))
+            other.append(f"{action}: {type(exc).__name__}")
+    return denied, other
 
 
 class _Checks(list):
@@ -153,7 +225,10 @@ def run_checks(
     root_id = None
     try:
         root_id = org.list_roots()["Roots"][0]["Id"]
-        checks.append(Check("ou_tree", "Read the OU tree", "ok", f"Root {root_id}"))
+        ous = org.list_organizational_units_for_parent(ParentId=root_id, MaxResults=20)["OrganizationalUnits"]
+        checks.append(
+            Check("ou_tree", "Read the OU tree", "ok", f"Root {root_id}; {len(ous)} top-level OU(s) readable")
+        )
     except Exception as exc:
         checks.append(
             _fail(
@@ -174,6 +249,18 @@ def run_checks(
             checks.append(_fail("accounts", "List accounts", exc, "organizations:ListAccountsForParent"))
     else:
         skip("accounts", "List accounts", "Needs the OU tree.")
+
+    tags_label = "Read account tags"
+    if not member_id:
+        skip("account_tags", tags_label, "No member account found to test against.")
+    else:
+        try:
+            org.list_tags_for_resource(ResourceId=member_id)
+            checks.append(Check("account_tags", tags_label, "ok", "Criticality and product tags are readable."))
+        except Exception as exc:
+            c = _fail("account_tags", tags_label, exc, "organizations:ListTagsForResource")
+            c.status, c.fix = "warn", "Without it, accounts are not grouped by criticality or product tags."
+            checks.append(c)
 
     start, end = month_window(1)
     try:
@@ -210,45 +297,158 @@ def run_checks(
         )
         checks.append(_fail("cost", "Read Cost Explorer", exc, "ce:GetCostAndUsage", fix))
 
-    if not role_name:
-        skip("deep_scan", "Deep scan role (optional)", "No member role given; the spend-only scan does not need one.")
-    elif not member_id:
-        skip("deep_scan", "Deep scan role (optional)", "No member account found to test against.")
-    else:
+    ce = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
+    denied = []
+    for action, call in (
+        ("ce:GetSavingsPlansUtilizationDetails", ce.get_savings_plans_utilization_details),
+        ("ce:GetReservationUtilization", ce.get_reservation_utilization),
+    ):
         try:
-            assume_role_session(session, member_id, role_name, "preflight")
-            checks.append(Check("deep_scan", "Deep scan role (optional)", "ok", f"Assumed {role_name} in {member_id}."))
-        except Exception as exc:
-            checks.append(
-                _fail(
-                    "deep_scan",
-                    "Deep scan role (optional)",
-                    exc,
-                    f"sts:AssumeRole on arn:aws:iam::*:role/{role_name}",
-                    f"Deploy the {role_name} role to member accounts (iam/cloudformation/member-role-stackset.yaml) "
-                    "and allow sts:AssumeRole on it.",
-                )
-            )
+            call(TimePeriod={"Start": start, "End": end})
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in DENIED:
+                denied.append(action)
+        except Exception:  # not a refusal; the scan treats missing commitment data as "none found"
+            log.warning("commitments check %s failed", action, exc_info=True)
+    commit_label = "Read Savings Plans and reservations"
+    checks.append(
+        Check(
+            "commitments",
+            commit_label,
+            "warn" if denied else "ok",
+            f"Refused: {', '.join(denied)}" if denied else "Commitment end dates are readable (2 calls, US$0.02).",
+            "Without it, the report cannot show commitments that lock spend in." if denied else "",
+            ", ".join(denied),
+        )
+    )
+
+    _member_checks(checks, session, profile, role_name, member_id, ctx)
     return _result(checks, ctx)
+
+
+DEEP_LABEL = "Deep scan access (optional)"
+INV_LABEL = "Count resources in a member account"
+DEP_LABEL = "Read integrations in a member account"
+
+
+def _member_checks(checks, session, profile, role_name, member_id, ctx) -> None:
+    """Reach one member account the way a deep scan does, then make every call the scan makes there."""
+    pair = None if role_name else sso.profile_permission_set(profile)
+    ctx["member_access"] = role_name or (f"permission set {pair[1]}" if pair else None)
+
+    def skip_rest(why: str) -> None:
+        for cid, label in (("inventory_reads", INV_LABEL), ("dependency_reads", DEP_LABEL)):
+            checks.append(Check(cid, label, "skip", why))
+
+    if not role_name and not pair:
+        checks.append(
+            Check(
+                "deep_scan",
+                DEEP_LABEL,
+                "skip",
+                "No member role given; the quick (billing-only) scan does not need one.",
+            )
+        )
+        return skip_rest("Needs deep scan access.")
+    if not member_id and not pair:
+        checks.append(Check("deep_scan", DEEP_LABEL, "skip", "No member account found to test against."))
+        return skip_rest("Needs a member account.")
+    try:
+        if pair:
+            # The scan reaches each account with this permission set, so count where it is assigned.
+            assigned, reachable = sso.accounts_with_role(pair[0], pair[1])
+            ctx["permission_set_accounts"] = len(assigned)
+            members = [a for a in assigned if a != ctx.get("account_id")]
+            if not members:
+                checks.append(
+                    Check(
+                        "deep_scan",
+                        DEEP_LABEL,
+                        "warn",
+                        f"Permission set {pair[1]} is not assigned to you in any member account.",
+                        f"Assign {pair[1]} in the member accounts to deep-scan, or give a member role to assume.",
+                        f"IAM Identity Center assignment of {pair[1]} in member accounts",
+                    )
+                )
+                return skip_rest("Needs deep scan access.")
+            member_id = member_id if member_id in members else members[0]
+            gap = len(reachable) - len(assigned)
+            assigned_note = (
+                f" Assigned in {len(assigned)} of the {len(reachable)} accounts your sign-in reaches; "
+                f"the other {gap} will not be deep-scanned."
+                if gap
+                else f" Assigned in all {len(assigned)} accounts your sign-in reaches."
+            )
+        member = member_session(session, profile, member_id, role_name, "preflight")
+        how = f"Assumed {role_name}" if role_name else f"Signed in with permission set {pair[1]}"
+        checks.append(
+            Check(
+                "deep_scan",
+                DEEP_LABEL,
+                "warn" if pair and gap else "ok",
+                f"{how} in member account {member_id}.{assigned_note if pair else ''}",
+                f"Assign {pair[1]} in the remaining accounts, or give a member role to assume." if pair and gap else "",
+                f"IAM Identity Center assignment of {pair[1]} in {gap} more account(s)" if pair and gap else "",
+            )
+        )
+    except Exception as exc:
+        checks.append(
+            _fail(
+                "deep_scan",
+                DEEP_LABEL,
+                exc,
+                f"sts:AssumeRole on arn:aws:iam::*:role/{role_name}" if role_name else "",
+                f"Deploy the {role_name} role to member accounts (iam/cloudformation/member-role-stackset.yaml) "
+                "and allow sts:AssumeRole on it."
+                if role_name
+                else "Sign in again with AWS sign-in (SSO) at the top.",
+            )
+        )
+        return skip_rest("Needs deep scan access.")
+
+    for cid, label, probes, what in (
+        ("inventory_reads", INV_LABEL, INVENTORY_PROBES, "Inventory"),
+        ("dependency_reads", DEP_LABEL, DEPENDENCY_PROBES, "Dependency"),
+    ):
+        denied, other = probe_actions(member, member_id, probes)
+        n = len(probes)
+        if denied:
+            detail = f"{len(denied)} of {n} calls refused in {member_id}: {', '.join(denied)}"
+            fix = f"{what} scans will miss these. Grant them (iam/member-account-role-policy.json)."
+        elif other:
+            detail, fix = f"Could not finish: {'; '.join(other)}", "Sign in again and re-check."
+        else:
+            detail, fix = f"All {n} read-only calls allowed in {member_id}.", ""
+        status = "warn" if denied or other else "ok"
+        checks.append(Check(cid, label, status, detail, fix, ", ".join(denied)))
 
 
 _LATER = [
     ("organization", "Management account"),
     ("ou_tree", "Read the OU tree"),
     ("accounts", "List accounts"),
+    ("account_tags", "Read account tags"),
     ("cost", "Read Cost Explorer"),
-    ("deep_scan", "Deep scan role (optional)"),
+    ("commitments", "Read Savings Plans and reservations"),
+    ("deep_scan", DEEP_LABEL),
+    ("inventory_reads", INV_LABEL),
+    ("dependency_reads", DEP_LABEL),
 ]
+# Checks a quick scan can do without: a failure there is a warning, not "Not ready".
+OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads"}
 # Every run reports exactly these checks, in this order (skipped ones included).
 STEPS = [("identity", "Sign in to AWS"), *_LATER]
 
 
 def _result(checks: list[Check], ctx: dict) -> dict:
-    required = [c for c in checks if c.id != "deep_scan"]
+    required = [c for c in checks if c.id not in OPTIONAL]
     ready = all(c.status == "ok" for c in required)
+    gaps = [c for c in checks if c.id in OPTIONAL and c.status in ("warn", "fail")]
     partial = not ready and all(c.status in ("ok", "warn") for c in required)
     verdict = (
-        "Ready: a scan will cover the whole organisation."
+        f"Ready for a quick scan; {len(gaps)} optional check(s) show missing permissions, listed below."
+        if ready and gaps
+        else "Ready: a scan will cover the whole organisation."
         if ready
         else "Usable, but the scan will not cover the whole organisation - see the warnings."
         if partial
@@ -262,7 +462,9 @@ def _result(checks: list[Check], ctx: dict) -> dict:
 
 def admin_request(result: dict) -> str:
     """Plain-text message for the AWS administrator, specific to what failed."""
-    missing = [c for c in result["checks"] if c["status"] == "fail" and c["needs"]]
+    missing = [c for c in result["checks"] if c["status"] in ("fail", "warn") and c["needs"]]
+    member_gaps = [c for c in missing if c["id"] in ("inventory_reads", "dependency_reads")]
+    missing = [c for c in missing if c not in member_gaps]
     wrong_account = any(c["id"] == "organization" and c["status"] == "warn" for c in result["checks"])
     mgmt = result.get("management_account_id") or "<management account id>"
     who = result.get("arn") or "<my identity>"
@@ -302,6 +504,20 @@ def admin_request(result: dict) -> str:
         "",
         json.dumps(MANAGEMENT_POLICY, indent=2),
         "",
+    ]
+    if member_gaps:
+        access = result.get("member_access") or "the deep-scan role"
+        lines += [
+            f"For the deep scan, {access} in the member accounts is refused these read-only calls "
+            "(they list and count resources; no data or configuration is stored):",
+        ]
+        lines += [f"  - {a}" for c in member_gaps for a in c["needs"].split(", ")]
+        lines += [
+            "Please add them to that role or permission set in every member account. The full member policy is "
+            "iam/member-account-role-policy.json (StackSet: iam/cloudformation/member-role-stackset.yaml).",
+            "",
+        ]
+    lines += [
         "Cost: Cost Explorer API calls are US$0.01 each, about 2 per 100 accounts per scan.",
         "",
         "Thanks",

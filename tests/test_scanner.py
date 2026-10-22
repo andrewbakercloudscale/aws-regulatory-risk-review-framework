@@ -285,7 +285,7 @@ def test_expired_sign_in_mid_scan_makes_it_partial(monkeypatch):
 def test_one_account_inventory_bug_does_not_fail_the_scan(monkeypatch, caplog):
     _org(monkeypatch)
     monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
-    monkeypatch.setattr(scanner, "assume_role_session", lambda s, a, r, j: object())
+    monkeypatch.setattr(scanner, "member_session", lambda s, pr, a, r, j: object())
 
     def inv(_s, account_id, _regions, dependencies=False):
         if account_id == "222222222222":
@@ -303,3 +303,10 @@ def test_bad_worker_setting_falls_back():
     from exitrisk.config import _workers
 
     assert _workers("") == 8 and _workers("abc") == 8 and _workers("0") == 1 and _workers("12") == 12
+
+
+def test_inventory_without_role_uses_identity_center_permission_set(monkeypatch):
+    monkeypatch.setattr(scanner.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read") if p == "sso" else None)
+    ScanParams(inventory=True, profile="sso").validate()
+    with pytest.raises(ValueError, match="IAM Identity Center"):
+        ScanParams(inventory=True, profile="keys").validate()

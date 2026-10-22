@@ -45,8 +45,12 @@ An existing read-only permission set that already includes these actions (many o
 ### Check before you scan
 
 **Check access** in the console (or on the first screen) makes each call above once and shows
-✓ / ✗ with the fix. When something is refused it writes the request for your administrator: your
-identity, the management account id, the missing actions, and the policy, ready to copy or download.
+✓ / ✗ with the fix. It covers every call a scan makes: the OU tree, account names and tags, Cost
+Explorer spend, Savings Plans and reservation utilisation, and, for a deep scan, every inventory and
+dependency call inside one member account (each refused action is named). Optional checks that fail
+(tags, commitments, deep scan) show as warnings: a quick scan still runs. When something is refused it
+writes the request for your administrator: your identity, the management account id, the missing
+actions, and the policy, ready to copy or download. The check costs US$0.03 in Cost Explorer calls.
 
 ## 2. Deep scan (member accounts)
 
@@ -83,6 +87,12 @@ aws cloudformation create-stack-instances --stack-set-name exit-risk-readonly \
 ```
 
 or with Terraform from your account-vending pipeline: [`iam/terraform`](../iam/terraform/main.tf).
+
+**Signed in with IAM Identity Center?** Leave the role blank. The scanner then uses the permission set
+you signed in with (for example a "ReadOnly" or "CTO-Read" set) in each member account, through the SSO
+portal, so no role or StackSet is needed, as long as that permission set is assigned to you in those
+accounts and includes the list actions above. Check access counts the accounts where it is assigned and
+tests every inventory and dependency call in one of them.
 
 Already have a read-only role everywhere (e.g. one with `ReadOnlyAccess` or `ViewOnlyAccess`)? Enter its
 name in the scan dialog instead; any role that grants the list actions above works.

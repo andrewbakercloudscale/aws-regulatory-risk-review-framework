@@ -17,8 +17,8 @@ from datetime import datetime, timezone
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from . import store
-from .aws_session import assume_role_session, caller_identity, make_session
+from . import sso, store
+from .aws_session import caller_identity, make_session, member_session
 from .collectors import cost, inventory, organizations
 from .config import settings
 from .issues import Issue, describe_exception, is_fatal_auth_error
@@ -84,8 +84,11 @@ class ScanParams:
             raise ValueError(f"inventory_scope must be one of {', '.join(INVENTORY_SCOPES)}")
         if not 1 <= self.months <= 12:
             raise ValueError("months must be between 1 and 12")
-        if self.inventory and not self.role_name:
-            raise ValueError("a member-account role name is required for the resource inventory")
+        if self.inventory and not self.role_name and not sso.profile_permission_set(self.profile):
+            raise ValueError(
+                "a member-account role name is required for the resource inventory "
+                "(or use an IAM Identity Center profile, whose permission set is then used in each account)"
+            )
 
 
 class ScanFailed(RuntimeError):
@@ -458,10 +461,15 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
     results: dict = {}
     done = 0
 
+    pair = None if p.role_name else sso.profile_permission_set(p.profile)
+    access = p.role_name or (f"permission set {pair[1]}" if pair else "your sign-in")
+
     def one(account):
         try:
-            sess = session if account.id == caller else assume_role_session(session, account.id, p.role_name, job.id)
-        except (ClientError, BotoCoreError) as exc:
+            sess = (
+                session if account.id == caller else member_session(session, p.profile, account.id, p.role_name, job.id)
+            )
+        except Exception as exc:  # AWS refusal, or an expired IAM Identity Center sign-in
             code, msg, hint = describe_exception(exc)
             return (
                 account,
@@ -470,8 +478,13 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
                     Issue(
                         "error",
                         "inventory",
-                        f"cannot assume {p.role_name} in {account.name}: {msg}",
-                        hint or "Deploy the read-only role from docs/IAM_PERMISSIONS.md.",
+                        f"cannot reach {account.name} as {access}: {msg}",
+                        hint
+                        or (
+                            "Deploy the read-only role from docs/IAM_PERMISSIONS.md."
+                            if p.role_name
+                            else "Assign your permission set in this account, or give a member role to assume."
+                        ),
                         account_id=account.id,
                         error_code=code,
                     )

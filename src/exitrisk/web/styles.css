@@ -389,6 +389,8 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .checks .pending .ic .spin { width: 14px; height: 14px; border-width: 2px; margin: 2px 0 0; }
 .checks .d { grid-column: 2; color: var(--ink-2); word-break: break-word; }
 .checks .f { grid-column: 2; color: var(--ink); }
+.checks .n { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; color: var(--muted); }
+.checks .n code { font-size: 11px; padding: 1px 5px; border-radius: 4px; background: var(--soft, rgba(127,127,127,.12)); color: var(--ink); }
 .verdict { font-weight: 600; margin: 10px 0 4px; }
 #aAdminText { width: 100%; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 8px; box-sizing: border-box; }
 .subpanel h3 { margin: 0 0 4px; font-size: 14px; }

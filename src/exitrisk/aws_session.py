@@ -65,3 +65,18 @@ def assume_role_session(base: boto3.Session, account_id: str, role_name: str, ru
         aws_secret_access_key=creds["SecretAccessKey"],
         aws_session_token=creds["SessionToken"],
     )
+
+
+def member_session(
+    base: boto3.Session, profile: str | None, account_id: str, role_name: str | None, run_id: str
+) -> boto3.Session:
+    """Session in a member account: assume ``role_name`` if given, else use the profile's own IAM
+    Identity Center permission set in that account (it must be assigned there)."""
+    if role_name:
+        return assume_role_session(base, account_id, role_name, run_id)
+    from . import sso  # here, not at import time: sso imports this module
+
+    pair = sso.profile_permission_set(profile)
+    if not pair:
+        raise ValueError("no member role given and the profile is not an IAM Identity Center profile")
+    return sso.role_session(pair[0], account_id, pair[1])

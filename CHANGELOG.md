@@ -6,6 +6,20 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- Deep scans with your own sign-in: with an IAM Identity Center profile and no member role, the
+  inventory and dependency scans use the permission set you signed in with in each member account.
+- Check access now tests every permission a scan uses: OU listing, account tags, Savings Plans and
+  reservation utilisation, and every inventory and dependency call inside a member account. Each refused
+  action is named, shown in the console and added to the administrator request. With an Identity Center
+  profile it also counts the accounts where your permission set is assigned.
+
+### Changed
+
+- Optional checks (tags, commitments, deep scan) that fail are warnings, so a quick scan is still
+  reported as ready.
+
 ## [0.12.0] - 2026-10-22
 
 ### Added
