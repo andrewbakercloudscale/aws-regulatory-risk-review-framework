@@ -123,12 +123,15 @@ class ReportRequest(BaseModel):
 
 
 class AISettingsRequest(BaseModel):
-    provider: str = Field("bedrock", pattern="^(bedrock|anthropic|together|openrouter)$")
+    provider: str = Field("bedrock", pattern="^(bedrock|anthropic|together|openrouter|gateway)$")
     model: str = Field("", max_length=200)
     region: str = Field("us-east-1", pattern=r"^[a-z]{2}(-[a-z]+)+-\d$")
     profile: str = Field("", max_length=200)
     mask_names: bool = True
     api_key: str | None = Field(None, max_length=500)  # None keeps the saved key; "" removes it
+    base_url: str | None = Field(None, max_length=300, pattern=r"^(https://\S+)?$")  # gateway; None keeps it
+    key_header: str | None = Field(None, pattern="^(authorization|x-portkey-api-key|api-key|x-api-key)$")
+    headers: str | None = Field(None, max_length=4000)  # gateway: "Name: value" lines; None keeps the saved ones
 
 
 class AIRunRequest(ReportRequest):
@@ -463,6 +466,17 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
                     s.keys[req.provider] = req.api_key.strip()
                 else:
                     s.keys.pop(req.provider, None)
+            if req.provider == "gateway" and s.model:
+                s.gateway_model = s.model
+            if req.base_url is not None:
+                s.base_url = req.base_url.strip()
+            if req.key_header is not None:
+                s.key_header = req.key_header
+            if req.headers is not None:
+                try:
+                    s.headers = ai_providers.parse_headers(req.headers)
+                except ai_providers.AIError as exc:
+                    raise HTTPException(400, str(exc)) from exc
         return s
 
     @app.get("/api/ai/settings")
@@ -508,7 +522,9 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             if key != saved.provider:
                 s.model = ""
             label = ai_providers.PROVIDERS[key].label
-            if key != "bedrock" and not s.api_key():
+            if key == "gateway" and not s.base_url:
+                return {"provider": key, "label": label, "ok": None, "error": "Not set up"}
+            if key not in ("bedrock", "gateway") and not s.api_key():
                 return {"provider": key, "label": label, "ok": None, "error": "No key saved"}
             try:
                 return {**ai_providers.test_connection(s), "label": label}
@@ -519,7 +535,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
 
         from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=len(ai_providers.PROVIDERS)) as pool:
             return {"results": list(pool.map(one, ai_providers.PROVIDERS))}
 
     @app.post("/api/ai/review")

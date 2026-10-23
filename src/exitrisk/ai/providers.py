@@ -1,13 +1,15 @@
 """Model providers for the optional AI review: one `complete(system, user)` call per provider.
 
-Four providers are supported out of the box:
+Five providers are supported out of the box:
 
 * **bedrock** - Amazon Bedrock in your own AWS account (the data stays in your account), signed with
   an AWS profile, or with a Bedrock API key;
 * **anthropic** - the Claude API, which is also how a Claude Enterprise organisation calls Claude
   (an API key from the Claude Console of that organisation);
 * **together** - Together AI (OpenAI-compatible), for open-weight reasoning models such as GLM;
-* **openrouter** - OpenRouter (OpenAI-compatible), one key for many vendors' models.
+* **openrouter** - OpenRouter (OpenAI-compatible), one key for many vendors' models;
+* **gateway** - any OpenAI-compatible AI gateway (Portkey, LiteLLM, a corporate gateway): a base URL,
+  a key sent in the header the gateway expects, and optional extra headers (routing, virtual keys).
 
 Plain HTTPS through urllib with the operating system's trust store (corporate TLS proxies work), so
 the feature needs no vendor SDK. Keys live in ``$EXITRISK_DATA_DIR/ai.json`` (mode 0600) or in the
@@ -98,11 +100,24 @@ PROVIDERS = {
             ),
             r"^(anthropic/claude-(fable|opus)|z-ai/glm-\d)",
         ),
+        Provider(
+            "gateway",
+            "AI gateway (Portkey, LiteLLM or your own)",
+            "Any OpenAI-compatible endpoint. Where the summary goes depends on where the gateway routes it.",
+            "EXITRISK_AI_GATEWAY_KEY",
+            "https://portkey.ai/docs/api-reference/inference-api/headers",
+            (),  # the gateway decides which models exist: pick from its list or type an id
+            r".",
+        ),
     )
 }
 # Small, fast, batch-only or vision variants: not what a whole-estate review needs.
 SKIP_MODELS = r":batch|flash|turbo|lite|mini|air\b|\dv\b|vision|-vl|ocr|lora"
 OPENAI_BASE = {"together": "https://api.together.xyz/v1", "openrouter": "https://openrouter.ai/api/v1"}
+# How a gateway expects its key: Authorization: Bearer (LiteLLM, most gateways), Portkey's own header,
+# or the api-key / x-api-key styles some corporate gateways use.
+KEY_HEADERS = ("authorization", "x-portkey-api-key", "api-key", "x-api-key")
+HEADER_NAME = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
 class AIError(Exception):
@@ -117,15 +132,28 @@ class AISettings:
     profile: str = ""  # Bedrock: AWS profile; blank = the default credential chain
     mask_names: bool = True
     keys: dict = field(default_factory=dict)
+    base_url: str = ""  # gateway only, e.g. https://api.portkey.ai/v1
+    key_header: str = "authorization"  # gateway only: one of KEY_HEADERS
+    headers: dict = field(default_factory=dict)  # gateway only: extra headers; values may be secrets
+    gateway_model: str = ""  # the gateway's last model, kept while another provider is chosen
 
     def model_id(self) -> str:
-        return self.model or PROVIDERS[self.provider].recommended[0][0]
+        rec = PROVIDERS[self.provider].recommended
+        if self.provider == "gateway":
+            return self.model or self.gateway_model
+        return self.model or (rec[0][0] if rec else "")
 
     def api_key(self) -> str:
         return self.keys.get(self.provider) or os.environ.get(PROVIDERS[self.provider].key_env, "")
 
+    def gateway_headers(self) -> dict:
+        """The key in the header the gateway expects, plus the extra headers."""
+        key = self.api_key()
+        auth = {"Authorization": f"Bearer {key}"} if self.key_header == "authorization" else {self.key_header: key}
+        return {**self.headers, **(auth if key else {})}
+
     def public(self) -> dict:
-        """What the browser may see: never a key, only whether one is set and its last characters."""
+        """What the browser may see: never a key or a header value, only whether one is set."""
         keys = {}
         for k, p in PROVIDERS.items():
             v = self.keys.get(k) or os.environ.get(p.key_env, "")
@@ -137,7 +165,30 @@ class AISettings:
             "profile": self.profile,
             "mask_names": self.mask_names,
             "keys": keys,
+            "base_url": self.base_url,
+            "key_header": self.key_header,
+            "header_names": sorted(self.headers),
+            "gateway_model": self.gateway_model,
         }
+
+
+RESERVED_HEADERS = {"host", "content-type", "content-length", "connection", "transfer-encoding", "user-agent"}
+
+
+def parse_headers(text: str) -> dict:
+    """Gateway headers typed one per line as "Name: value" (for example x-portkey-config: pc-...)."""
+    out = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        name, sep, value = line.partition(":")
+        name, value = name.strip(), value.strip()
+        if not sep or not HEADER_NAME.match(name) or not value:
+            raise AIError(f"Each header goes on its own line as Name: value (not {line.strip()[:40]!r})")
+        if name.lower() in RESERVED_HEADERS:
+            raise AIError(f"The {name} header is set by the console")
+        out[name.lower()] = value
+    return out
 
 
 def _settings_path():
@@ -245,7 +296,14 @@ class Client:
         self.s = s
         self.model = s.model_id()
         self.modes = ["adaptive", "budget"] if s.provider in ("anthropic", "bedrock") else ["high"]
-        if s.provider != "bedrock" and not s.api_key():
+        if s.provider == "gateway":
+            if not s.base_url.startswith("https://"):
+                raise AIError("Enter the gateway's base URL (https://...) in AI review settings.")
+            if not self.model:
+                raise AIError("Enter the model id the gateway should call.")
+            if not s.api_key() and not s.headers:
+                raise AIError("Enter the gateway's API key, or the headers it authenticates with.")
+        elif s.provider != "bedrock" and not s.api_key():
             raise AIError(f"No API key for {PROVIDERS[s.provider].label}. Enter one in AI review settings.")
 
     def complete(self, system: str, user: str, max_tokens: int = 16000) -> Reply:
@@ -302,7 +360,7 @@ class Client:
                 body["reasoning"] = {"effort": "high"}
             else:
                 body["reasoning_effort"] = "high"
-        j = _http("POST", f"{OPENAI_BASE[p]}/chat/completions", {"Authorization": f"Bearer {self.s.api_key()}"}, body)
+        j = _http("POST", f"{_openai_base(self.s)}/chat/completions", _openai_headers(self.s), body)
         choices = j.get("choices") or []
         if not choices:
             raise AIError(f"The provider returned no answer: {json.dumps(j)[:300]}")
@@ -329,6 +387,14 @@ class Client:
         text = "".join(c.get("text", "") for c in parts if "text" in c)
         u = j.get("usage", {})
         return Reply(text, u.get("inputTokens", 0), u.get("outputTokens", 0))
+
+
+def _openai_base(s: AISettings) -> str:
+    return s.base_url.rstrip("/") if s.provider == "gateway" else OPENAI_BASE[s.provider]
+
+
+def _openai_headers(s: AISettings) -> dict:
+    return s.gateway_headers() if s.provider == "gateway" else {"Authorization": f"Bearer {s.api_key()}"}
 
 
 def _bedrock_sdk(s: AISettings, model: str, body: dict) -> dict:
@@ -386,7 +452,7 @@ def _listed(s: AISettings) -> list[str]:
             timeout=30,
         )
         return [m["id"] for m in j.get("data", [])]
-    j = _http("GET", f"{OPENAI_BASE[s.provider]}/models", {"Authorization": f"Bearer {s.api_key()}"}, timeout=30)
+    j = _http("GET", f"{_openai_base(s)}/models", _openai_headers(s), timeout=30)
     data = j if isinstance(j, list) else j.get("data", [])
     return [m["id"] for m in data]
 

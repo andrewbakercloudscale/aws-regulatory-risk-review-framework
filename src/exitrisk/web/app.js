@@ -1476,6 +1476,8 @@
       $("#aiRegion").value = s.region;
       $("#aiProfile").value = s.profile;
       $("#aiMask").checked = s.mask_names;
+      $("#aiBaseUrl").value = s.base_url || "";
+      $("#aiKeyHeader").value = s.key_header || "authorization";
       aiProviderChanged(s.model);
     } catch (e) { $("#aiError").textContent = e.message; }
     $("#aiDialog").showModal();
@@ -1488,7 +1490,13 @@
     const p = aiProvider(), s = state.aiCfg.settings, k = s.keys[p.key];
     $("#aiProviderNote").textContent = p.note + (p.third_party ? " The summary leaves your AWS estate for this provider: check it is approved for this data." : "");
     $("#aiBedrock").hidden = p.key !== "bedrock";
-    $("#aiKeyLabel").textContent = p.key === "bedrock" ? "Bedrock API key (optional; blank = use the AWS profile)" : "API key";
+    $("#aiGateway").hidden = p.key !== "gateway";
+    // Header values can be secrets (virtual keys, configs): only their names come back, like keys.
+    $("#aiHeaders").value = "";
+    delete $("#aiHeaders").dataset.touched;
+    $("#aiHeaders").placeholder = s.header_names?.length ? `Saved: ${s.header_names.join(", ")}. Type to replace; clear to remove.` : "x-portkey-provider: @bedrock-prod";
+    $("#aiKeyLabel").textContent = p.key === "bedrock" ? "Bedrock API key (optional; blank = use the AWS profile)" : p.key === "gateway" ? "Gateway API key" : "API key";
+    if (p.key === "gateway" && !model) model = s.gateway_model || "";
     $("#aiKeyLink").href = p.key_url;
     $("#aiKey").value = "";
     $("#aiKey").placeholder = k.set ? (k.env ? `Using ${p.key_env} from the environment` : `Saved (${k.hint}); type to replace`) : p.key === "bedrock" ? "" : `Paste the key, or set ${p.key_env}`;
@@ -1522,6 +1530,8 @@
     return {
       provider: $("#aiProvider").value, model: aiModelId(), region: $("#aiRegion").value.trim() || "us-east-1",
       profile: $("#aiProfile").value, mask_names: $("#aiMask").checked, ...(withKey && key ? { api_key: key } : {}),
+      base_url: $("#aiBaseUrl").value.trim(), key_header: $("#aiKeyHeader").value,
+      ...($("#aiHeaders").dataset.touched === "1" ? { headers: $("#aiHeaders").value } : {}),
     };
   }
 
@@ -1529,6 +1539,7 @@
     const cfg = await api("/api/ai/settings", { method: "PUT", body: aiBody() });
     state.aiCfg.settings = cfg.settings;
     $("#aiKey").value = "";
+    if ($("#aiHeaders").dataset.touched === "1") aiProviderChanged(aiModelId());  // show the saved header names
     return cfg;
   }
 
@@ -2431,7 +2442,9 @@
     const drawSteps = () => {
       const current = steps.find((st) => !done[st.id]);
       const n = steps.filter((st) => done[st.id]).length;
-      $("#aChecks").innerHTML = steps.map((st) => done[st.id] ? checkRow(done[st.id])
+      // The step being checked goes first, so it stays in view; the finished ones follow, then the rest.
+      const order = [current, ...steps.filter((st) => done[st.id]), ...steps.filter((st) => !done[st.id] && st !== current)].filter(Boolean);
+      $("#aChecks").innerHTML = order.map((st) => done[st.id] ? checkRow(done[st.id])
         : st === current ? `<li class="pending"><span class="ic"><span class="spin" aria-hidden="true"></span></span><strong>${esc(st.label)}</strong><span class="d">${prog[st.id] ? `${num(prog[st.id].done)} of ${num(prog[st.id].total)} accounts checked` : "Checking…"}</span>${prog[st.id] ? `<span class="meter" aria-hidden="true"><i style="width:${(100 * prog[st.id].done / prog[st.id].total).toFixed(1)}%"></i></span>` : ""}</li>`
         : `<li class="wait"><span class="ic" aria-hidden="true">·</span><strong>${esc(st.label)}</strong></li>`).join("");
       if (current) {
@@ -2699,6 +2712,8 @@
     $("#aiModel").addEventListener("change", () => { $("#aiCustomWrap").hidden = $("#aiModel").value !== AI_CUSTOM; if (!$("#aiCustomWrap").hidden) $("#aiCustom").focus(); });
     $("#aiMask").addEventListener("change", () => { $("#aiMask").dataset.touched = "1"; });
     $("#aiKey").addEventListener("change", () => loadAiModels());
+    $("#aiHeaders").addEventListener("input", () => { $("#aiHeaders").dataset.touched = "1"; });
+    for (const id of ["#aiBaseUrl", "#aiKeyHeader", "#aiHeaders"]) $(id).addEventListener("change", () => loadAiModels());
     $("#aiForm").addEventListener("submit", (e) => e.preventDefault());
     $("#btnCompare").addEventListener("click", openCompare);
     $("#btnSchedule").addEventListener("click", openSchedule);

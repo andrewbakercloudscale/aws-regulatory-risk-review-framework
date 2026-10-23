@@ -6,6 +6,16 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- AI review: an **AI gateway** provider for any OpenAI-compatible endpoint (Portkey, LiteLLM or a
+  corporate gateway): base URL, the header the key goes in, and optional extra headers such as Portkey
+  configs or virtual keys. Header values are kept with the keys and never reach the browser.
+
+### Changed
+
+- Check access: the step being checked is shown at the top of the list, so it stays in view.
+
 ## [0.14.0] - 2026-10-23
 
 ### Added

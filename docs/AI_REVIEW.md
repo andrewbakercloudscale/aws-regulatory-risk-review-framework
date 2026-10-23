@@ -13,6 +13,17 @@ It is off until you run it, and it never changes the report's own figures.
 | Claude Enterprise / Claude API | Claude Fable 5.1, or Opus 5.5 | An API key from your organisation's Claude Console (`ANTHROPIC_API_KEY`) |
 | Together AI | GLM 5.3 | `TOGETHER_API_KEY` |
 | OpenRouter | Claude Fable 5.1, Opus 5.5 or GLM 5.3 | `OPENROUTER_API_KEY` |
+| AI gateway (Portkey, LiteLLM or your own) | Whatever the gateway routes to | Base URL, a key (`EXITRISK_AI_GATEWAY_KEY`) and optional extra headers |
+
+**AI gateway** calls any OpenAI-compatible endpoint (`<base URL>/chat/completions`, `/models`), so a
+firm that routes model traffic through Portkey, LiteLLM or its own gateway can use the same guardrails,
+logging and billing it already has. Set the base URL (https only), choose how the key is sent
+(`Authorization: Bearer` for LiteLLM and most gateways, `x-portkey-api-key` for Portkey, or `api-key` /
+`x-api-key`), and add any routing headers one per line as `Name: value`, for example
+`x-portkey-config: pc-...` or `x-portkey-provider: @bedrock-prod`. The model id is whatever the gateway
+expects (for Portkey's model catalog, `@provider/model`). Header values are stored like keys and never
+sent to the browser; only their names are shown. Where the summary ends up depends on where the
+gateway routes it, so the dialog treats it as a third party.
 
 Any other model the provider offers can be picked from the list (read from the provider with your key)
 or typed in as a custom model. Each call asks for deep reasoning: adaptive thinking at high effort for

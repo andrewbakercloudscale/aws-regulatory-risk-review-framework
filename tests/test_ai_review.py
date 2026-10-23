@@ -200,3 +200,64 @@ def test_review_endpoint_runs_in_background(monkeypatch):
 def test_missing_key_fails_fast():
     with pytest.raises(providers.AIError, match="No API key"):
         providers.Client(AISettings(provider="together", keys={}))
+
+
+def test_gateway_sends_key_and_headers_to_its_base_url(monkeypatch):
+    calls = []
+
+    def fake_http(method, url, headers, body=None, timeout=0):
+        calls.append((url, headers, body))
+        return {"choices": [{"message": {"content": "ok"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 1}}
+
+    monkeypatch.setattr(providers, "_http", fake_http)
+    s = AISettings(
+        provider="gateway",
+        model="@bedrock-prod/claude-opus-5-5",
+        base_url="https://api.portkey.ai/v1/",
+        key_header="x-portkey-api-key",
+        headers=providers.parse_headers("x-portkey-config: pc-secret-cfg\n\n"),
+        keys={"gateway": "pk-secret-12345678"},
+    )
+    reply = providers.Client(s).complete("sys", "user")
+    url, headers, body = calls[0]
+    assert url == "https://api.portkey.ai/v1/chat/completions" and reply.text == "ok"
+    assert headers == {"x-portkey-config": "pc-secret-cfg", "x-portkey-api-key": "pk-secret-12345678"}
+    assert body["model"] == "@bedrock-prod/claude-opus-5-5" and body["reasoning_effort"] == "high"
+    s.key_header = "authorization"
+    assert s.gateway_headers()["Authorization"] == "Bearer pk-secret-12345678"
+    pub = json.dumps(s.public())
+    assert "pk-secret" not in pub and "pc-secret" not in pub and "x-portkey-config" in pub
+
+
+def test_gateway_settings_are_checked():
+    with pytest.raises(providers.AIError, match="Name: value"):
+        providers.parse_headers("no colon here")
+    with pytest.raises(providers.AIError, match="set by the console"):
+        providers.parse_headers("Host: evil.example")
+    with pytest.raises(providers.AIError, match="base URL"):
+        providers.Client(AISettings(provider="gateway", model="m", keys={"gateway": "k"}))
+    with pytest.raises(providers.AIError, match="model id"):
+        providers.Client(AISettings(provider="gateway", base_url="https://gw.example/v1", keys={"gateway": "k"}))
+    c = TestClient(create_app(), base_url="http://127.0.0.1")
+    r = c.put("/api/ai/settings", headers=H, json={"provider": "gateway", "base_url": "http://gw.example/v1"})
+    assert r.status_code == 422  # https only
+    r = c.put("/api/ai/settings", headers=H, json={"provider": "gateway", "headers": "bad header"})
+    assert r.status_code == 400
+    r = c.put(
+        "/api/ai/settings",
+        headers=H,
+        json={
+            "provider": "gateway",
+            "model": "gw-model",
+            "base_url": "https://gw.example/v1",
+            "headers": "X-A: s3cret",
+        },
+    )
+    assert r.status_code == 200 and "s3cret" not in r.text
+    saved = providers.load_settings()
+    assert saved.headers == {"x-a": "s3cret"} and saved.gateway_model == "gw-model"
+    # Choosing another provider keeps the gateway's model, base URL and headers for later.
+    c.put("/api/ai/settings", headers=H, json={"provider": "together", "model": ""})
+    saved = providers.load_settings()
+    assert saved.headers == {"x-a": "s3cret"} and saved.base_url == "https://gw.example/v1"
+    assert AISettings(**{**saved.__dict__, "provider": "gateway", "model": ""}).model_id() == "gw-model"
