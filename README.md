@@ -204,6 +204,10 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 
 ![Resilience](docs/images/resilience.png)
 
+**Areas of focus**: The accounts that will decide the exit, why, how to tackle each and in which phase, with programme themes and a plan by phase. The optional AI review adds its second opinion at the top of this section.
+
+![Areas of focus](docs/images/focus.png)
+
 **Data quality**: What the report does not cover, and why.
 
 ![Data quality](docs/images/issues.png)

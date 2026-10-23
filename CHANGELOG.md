@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-23
+
 ### Added
 
 - Areas of focus (report section 7; issues move to section 8): the accounts whose complexity or risk
