@@ -163,6 +163,6 @@ def fetch_account_tags(session: boto3.Session, account_ids: list[str]) -> dict[s
                 tags.setdefault(t["Key"].strip(), t["Value"].strip())
         return account_id, tags
 
-    out = dict(pmap(one, account_ids))
+    out = dict(pmap(one, account_ids, workers=TREE_WORKERS))
     log.info("read tags for %d accounts (%d tagged)", len(out), sum(1 for t in out.values() if t))
     return out

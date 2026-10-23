@@ -15,11 +15,11 @@ from dataclasses import asdict, dataclass
 from botocore.exceptions import BotoCoreError, ClientError
 
 from . import sso
-from .aws_session import BOTO_CONFIG, make_session, member_session
+from .aws_session import BOTO_CONFIG, ClientCache, make_session, member_session
 from .collectors.cost import month_window
 from .issues import describe_exception
 from .logging_config import get_logger
-from .parallel import pmap
+from .parallel import background, pmap
 
 log = get_logger("preflight")
 
@@ -133,7 +133,8 @@ DEPENDENCY_PROBES = [
 
 def probe_actions(session, account_id: str, probes: list) -> tuple[list[str], list[str]]:
     """Make each probe call, several at once; return (denied actions, other failures as "action: code")."""
-    results = pmap(lambda probe: _probe(session, account_id, *probe), probes, workers=8)
+    session = ClientCache(session)  # one session, many threads: clients are made one at a time
+    results = pmap(lambda probe: _probe(session, account_id, *probe), probes, workers=len(probes))
     return [a for kind, a in results if kind == "denied"], [a for kind, a in results if kind == "other"]
 
 
@@ -188,6 +189,21 @@ def run_checks(
         m = SSO_ROLE_RE.search(ident["Arn"])
         ctx["permission_set"] = m.group("ps") if m else None
         checks.append(Check("identity", "Sign in to AWS", "ok", f"{ident['Arn']} in account {ident['Account']}"))
+        # The slowest check, one portal call per account: count while the others run.
+        pair = None if role_name else sso.profile_permission_set(profile)
+        counted = (
+            background(
+                lambda: sso.accounts_with_role(
+                    pair[0],
+                    pair[1],
+                    (lambda done, total: on_progress({"id": "assignments", "done": done, "total": total}))
+                    if on_progress
+                    else None,
+                )
+            )
+            if pair
+            else None
+        )
     except Exception as exc:
         checks.append(
             _fail(
@@ -330,7 +346,7 @@ def run_checks(
         )
     )
 
-    _member_checks(checks, session, profile, role_name, member_id, ctx, on_progress)
+    _member_checks(checks, session, profile, role_name, member_id, ctx, counted)
     return _result(checks, ctx)
 
 
@@ -343,7 +359,7 @@ ASSIGN_LABEL = "Permission set in every account"
 AI_LABEL = "AI review (optional)"
 
 
-def _member_checks(checks, session, profile, role_name, member_id, ctx, on_progress=None) -> None:
+def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=None) -> None:
     """Reach one member account the way a deep scan does, then make every call the scan makes there."""
     pair = None if role_name else sso.profile_permission_set(profile)
     ctx["member_access"] = role_name or (f"permission set {pair[1]}" if pair else None)
@@ -354,7 +370,7 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, on_progr
         if assignments is not None:
             checks.append(Check("assignments", ASSIGN_LABEL, "skip", assignments))
         else:
-            _assignment_check(checks, pair, ctx, on_progress)
+            _assignment_check(checks, pair, ctx, counted)
 
     if not role_name and not pair:
         checks.append(
@@ -402,11 +418,13 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, on_progr
         )
         return skip_rest("Needs deep scan access.", "Needs deep scan access." if role_name else None)
 
-    for cid, label, probes, what in (
+    sets = (
         ("inventory_reads", INV_LABEL, INVENTORY_PROBES, "Inventory"),
         ("dependency_reads", DEP_LABEL, DEPENDENCY_PROBES, "Dependency"),
-    ):
-        denied, other = probe_actions(member, member_id, probes)
+    )
+    # Both sets at once: every call goes to a different service.
+    results = pmap(lambda st: probe_actions(member, member_id, st[2]), sets, workers=len(sets))
+    for (cid, label, probes, what), (denied, other) in zip(sets, results, strict=True):
         n = len(probes)
         if denied:
             detail = f"{len(denied)} of {n} calls refused in {member_id}: {', '.join(denied)}"
@@ -427,7 +445,7 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, on_progr
             )
         )
     else:
-        _assignment_check(checks, pair, ctx, on_progress)
+        _assignment_check(checks, pair, ctx, counted)
 
 
 def _member_with_role(pair: tuple[str, str], preferred: str | None, own: str | None) -> str | None:
@@ -437,19 +455,14 @@ def _member_with_role(pair: tuple[str, str], preferred: str | None, own: str | N
     return next((a for a in candidates if a and pair[1] in sso.list_roles(pair[0], a)), None)
 
 
-def _assignment_check(checks, pair, ctx, on_progress) -> None:
-    """Count the accounts where the permission set is assigned: the scan reaches each one with it."""
-    if not pair:
+def _assignment_check(checks, pair, ctx, counted) -> None:
+    """Count the accounts where the permission set is assigned: the scan reaches each one with it.
+    ``counted`` is that count, started in the background when the checks began."""
+    if not pair or counted is None:
         checks.append(Check("assignments", ASSIGN_LABEL, "skip", "Only for a deep scan with your own sign-in."))
         return
     try:
-        assigned, reachable = sso.accounts_with_role(
-            pair[0],
-            pair[1],
-            (lambda done, total: on_progress({"id": "assignments", "done": done, "total": total}))
-            if on_progress
-            else None,
-        )
+        assigned, reachable = counted.result()
     except Exception as exc:
         checks.append(_fail("assignments", ASSIGN_LABEL, exc, "", "Sign in again and re-check."))
         return

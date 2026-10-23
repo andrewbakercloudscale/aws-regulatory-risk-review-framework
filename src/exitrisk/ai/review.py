@@ -36,7 +36,7 @@ log = get_logger("ai")
 
 BATCH_ACCOUNTS = 12  # small enough that the first answers, and the progress, come back quickly
 MAX_ACCOUNTS = 400
-WORKERS = 4  # batches in flight at once
+WORKERS = 8  # batches in flight at once; providers answer 429 when busy and the call waits and retries
 MAX_OUTPUT_TOKENS = 64000  # a reply cut off at max_tokens is asked again with double, up to this
 PASSES = {"Analysing accounts": 1, "Estate view": 2, "Reviewing for consistency": 3}
 PHASES = ("Before mobilisation", "Mobilise", "Wave 1", "Wave 2", "Wave 3", "Cutover")

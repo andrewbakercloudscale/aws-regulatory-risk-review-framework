@@ -8,6 +8,8 @@ tool never reads, stores or logs the keys themselves.
 
 from __future__ import annotations
 
+import threading
+
 import boto3
 import botocore.session
 from botocore.config import Config
@@ -23,6 +25,27 @@ BOTO_CONFIG = Config(
     read_timeout=60,
     user_agent_extra="aws-regulatory-risk-review-framework",
 )
+
+
+class ClientCache:
+    """One client per (service, region) of a session, for many threads at once.
+
+    A boto3 session is not thread safe but its clients are, so clients are made under a lock and
+    then shared: a deep scan's probes and dependency reads in one region reuse one connection pool.
+    Stands in for the session wherever only ``.client()`` is called.
+    """
+
+    def __init__(self, session: boto3.Session):
+        self.session = session
+        self._lock = threading.Lock()
+        self._clients: dict[tuple, object] = {}
+
+    def client(self, service: str, region_name: str | None = None, config: Config | None = None):
+        with self._lock:
+            key = (service, region_name)
+            if key not in self._clients:
+                self._clients[key] = self.session.client(service, region_name=region_name, config=config or BOTO_CONFIG)
+            return self._clients[key]
 
 
 def available_profiles() -> list[str]:

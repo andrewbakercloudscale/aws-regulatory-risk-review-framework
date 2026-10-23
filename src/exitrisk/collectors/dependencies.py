@@ -192,22 +192,42 @@ DISCOVERIES: list[tuple[str, Callable]] = [
 def discover_region(session: boto3.Session, account_id: str, region: str) -> tuple[dict, list[str], list[Issue]]:
     """({edge: count}, kinds discovered, issues) for one region of one account."""
     edges: Counter = Counter()
-    notes: list[str] = []
     issues: list[Issue] = []
     done: list[str] = []
     for kind, fn in DISCOVERIES:
-        try:
-            fn(session, region, edges, notes)
+        found, ok, kind_issues = discover_kind(session, account_id, region, kind, fn)
+        edges.update(found)
+        issues += kind_issues
+        if ok:
             done.append(kind)
-        except (ClientError, BotoCoreError) as exc:
-            code, msg, hint = describe_exception(exc)
-            if (
-                code in ("OptInRequired", "UnrecognizedClientException", "InvalidClientTokenId")
-                and region != "us-east-1"
-            ):
-                done.append(kind)  # region not usable by this account; nothing to discover
-                continue
-            issues.append(
+    return dict(edges), done, issues
+
+
+def discover_kind(
+    session: boto3.Session, account_id: str, region: str, kind: str, fn: Callable
+) -> tuple[dict, bool, list[Issue]]:
+    """({edge: count}, read in full, issues) for one kind of edge in one region: the unit a deep scan
+    runs in parallel."""
+    edges: Counter = Counter()
+    notes: list[str] = []
+    try:
+        fn(session, region, edges, notes)
+    except (ClientError, BotoCoreError) as exc:
+        code, msg, hint = describe_exception(exc)
+        if code in ("OptInRequired", "UnrecognizedClientException", "InvalidClientTokenId") and region != "us-east-1":
+            return {}, True, []  # region not usable by this account; nothing to discover
+        log.warning(
+            "dependencies %s %s %s failed: %s",
+            account_id,
+            region,
+            kind,
+            code,
+            extra={"account_id": account_id, "region": region, "error_code": code},
+        )
+        return (
+            dict(edges),  # what was read before the refusal still counts
+            False,
+            [
                 Issue(
                     "warning",
                     "dependencies",
@@ -217,23 +237,10 @@ def discover_region(session: boto3.Session, account_id: str, region: str) -> tup
                     region=region,
                     error_code=code,
                 )
-            )
-            log.warning(
-                "dependencies %s %s %s failed: %s",
-                account_id,
-                region,
-                kind,
-                code,
-                extra={"account_id": account_id, "region": region, "error_code": code},
-            )
-    for note in notes:
-        issues.append(
-            Issue(
-                "info",
-                "dependencies",
-                f"{note} in {region}; the count is a floor",
-                account_id=account_id,
-                region=region,
-            )
+            ],
         )
-    return dict(edges), done, issues
+    notes_issues = [
+        Issue("info", "dependencies", f"{note} in {region}; the count is a floor", account_id=account_id, region=region)
+        for note in notes
+    ]
+    return dict(edges), True, notes_issues

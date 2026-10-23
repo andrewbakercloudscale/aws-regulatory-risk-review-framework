@@ -18,7 +18,7 @@ from botocore.exceptions import ClientError
 
 from ..aws_session import BOTO_CONFIG
 from ..logging_config import get_logger
-from ..parallel import pmap
+from ..parallel import background, pmap
 
 log = get_logger("cost")
 
@@ -126,9 +126,8 @@ def fetch_region_costs(
     """
     client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
     start, end = month_window(months)
-    rows: list[dict] = []
-    for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER):
-        chunk = account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER]
+
+    def chunk_rows(chunk: list[str]) -> list[dict]:
         base = [
             {"Dimensions": {"Key": "LINKED_ACCOUNT", "Values": chunk}},
             {"Dimensions": {"Key": "BILLING_ENTITY", "Values": ["AWS"]}},
@@ -137,23 +136,33 @@ def fetch_region_costs(
         regions = _grouped(client, start, end, {"And": base}, ["REGION"])
         used = [r for (r,), total in sorted(regions.items(), key=lambda kv: -kv[1]) if total > 0]
 
-        def by_region(region: str, base=base) -> dict[tuple, float]:
+        def by_region(region: str) -> dict[tuple, float]:
             filt = {"And": [*base, {"Dimensions": {"Key": "REGION", "Values": [region]}}]}
             return _grouped(client, start, end, filt, ["LINKED_ACCOUNT", "SERVICE"])
 
-        for region, spend in zip(used, pmap(by_region, used), strict=True):
-            for (account_id, service), amount in spend.items():
-                if amount / months >= _MIN_REGION_MONTHLY:
-                    rows.append(
-                        {
-                            "account_id": sys.intern(account_id),
-                            "service": sys.intern(service),
-                            "region": sys.intern(region or "NoRegion"),
-                            "monthly": round(amount / months, 4),
-                        }
-                    )
+        return [
+            {
+                "account_id": sys.intern(account_id),
+                "service": sys.intern(service),
+                "region": sys.intern(region or "NoRegion"),
+                "monthly": round(amount / months, 4),
+            }
+            for region, spend in zip(used, pmap(by_region, used), strict=True)
+            for (account_id, service), amount in spend.items()
+            if amount / months >= _MIN_REGION_MONTHLY
+        ]
+
+    chunks = [
+        account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER] for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER)
+    ]
+    sizes = [len(c) for c in chunks]
+
+    def done(d: int, _total: int) -> None:
         if progress:
-            progress(min(i + _MAX_ACCOUNTS_PER_FILTER, len(account_ids)), len(account_ids))
+            progress(sum(sizes[:d]), len(account_ids))
+
+    # Chunks run side by side, each with its regions in parallel: two chunks put up to eight queries in flight.
+    rows = [r for found in pmap(chunk_rows, chunks, on_done=done) for r in found]
     log.info("cost explorer by region: %d rows, %d account(s)", len(rows), len(account_ids))
     return rows
 
@@ -341,13 +350,21 @@ def fetch_costs(
     """Return (rows, period). Each Cost Explorer request costs US$0.01; a typical scan makes a handful."""
     client = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
     start, end = month_window(months)
-    rows: list[dict] = []
-    for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER):
-        chunk = account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER]
-        rows += _query(client, start, end, chunk, "AWS")
-        rows += _query(client, start, end, chunk, "AWS Marketplace")
-        if progress:
-            progress(i + len(chunk), len(account_ids))
+    chunks = [
+        account_ids[i : i + _MAX_ACCOUNTS_PER_FILTER] for i in range(0, len(account_ids), _MAX_ACCOUNTS_PER_FILTER)
+    ]
+    # Each chunk of accounts asks twice (AWS, then Marketplace); the queries run in parallel.
+    queries = [(chunk, entity) for chunk in chunks for entity in ("AWS", "AWS Marketplace")]
+    n = len(account_ids)
+
+    def one(q: tuple[list[str], str]) -> list[dict]:
+        return _query(client, start, end, q[0], q[1])
+
+    rows = [
+        r
+        for found in pmap(one, queries, on_done=(lambda d, total: progress(n * d // total, n)) if progress else None)
+        for r in found
+    ]
     merged: dict[tuple, float] = {}
     for r in rows:
         key = (r["month"], r["account_id"], r["service"], r.get("product"))
@@ -419,6 +436,30 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
     out: list[dict] = []
     keys_seen: set[str] = set()  # attribute names, logged if an end date is missing
 
+    def reservations(service: str) -> list[dict]:
+        groups: list[dict] = []
+        token = None
+        while True:
+            kwargs = {
+                "TimePeriod": period,
+                "GroupBy": [{"Type": "DIMENSION", "Key": "SUBSCRIPTION_ID"}],
+                "Filter": {"Dimensions": {"Key": "SERVICE", "Values": [service]}},
+                **({"NextPageToken": token} if token else {}),
+            }
+            try:
+                resp = client.get_reservation_utilization(**kwargs)
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") in _SKIPPABLE:
+                    log.info("no reservation data for %s: %s", service, exc)
+                    return groups
+                raise
+            groups += [g for p in resp.get("UtilizationsByTime", []) for g in p.get("Groups", [])]
+            token = resp.get("NextPageToken")
+            if not token:
+                return groups
+
+    # Reservations are read while the Savings Plans pages come in.
+    reserved = background(lambda: pmap(reservations, RESERVATION_SERVICES))
     token = None
     while True:
         kwargs = {"TimePeriod": period, **({"NextToken": token} if token else {})}
@@ -451,30 +492,8 @@ def fetch_commitments(session: boto3.Session) -> list[dict]:
         if not token:
             break
 
-    def reservations(service: str) -> list[dict]:
-        groups: list[dict] = []
-        token = None
-        while True:
-            kwargs = {
-                "TimePeriod": period,
-                "GroupBy": [{"Type": "DIMENSION", "Key": "SUBSCRIPTION_ID"}],
-                "Filter": {"Dimensions": {"Key": "SERVICE", "Values": [service]}},
-                **({"NextPageToken": token} if token else {}),
-            }
-            try:
-                resp = client.get_reservation_utilization(**kwargs)
-            except ClientError as exc:
-                if exc.response.get("Error", {}).get("Code") in _SKIPPABLE:
-                    log.info("no reservation data for %s: %s", service, exc)
-                    return groups
-                raise
-            groups += [g for p in resp.get("UtilizationsByTime", []) for g in p.get("Groups", [])]
-            token = resp.get("NextPageToken")
-            if not token:
-                return groups
-
     seen: set[str] = set()
-    for service, groups in zip(RESERVATION_SERVICES, pmap(reservations, RESERVATION_SERVICES), strict=True):
+    for service, groups in zip(RESERVATION_SERVICES, reserved.result(), strict=True):
         for g in groups:
             rid = g.get("Value") or _attrs(g.get("Attributes")).get("subscriptionid", "")
             if rid in seen:

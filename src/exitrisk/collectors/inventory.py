@@ -16,12 +16,16 @@ from dataclasses import replace
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from ..aws_session import BOTO_CONFIG
+from ..aws_session import BOTO_CONFIG, ClientCache
 from ..issues import Issue, describe_exception
 from ..logging_config import get_logger
 from . import dependencies as dependencies_mod
 
 log = get_logger("inventory")
+
+# Calls in flight at once inside one account. Each service in each region is throttled on its own,
+# and the time goes on round trips, not on AWS limits: 24 cut a member account from about 90 s to 15 s.
+WORKERS = 24
 
 
 def _paged_count(client, op: str, key: str, **kwargs) -> int:
@@ -103,42 +107,35 @@ def enabled_regions(session: boto3.Session, wanted: list[str] | None) -> list[st
     return [r for r in regions if not wanted or r in wanted]
 
 
-def _probe_region(session: boto3.Session, account_id: str, region: str) -> tuple[dict, list[Issue]]:
-    counts: dict = {}
-    issues: list[Issue] = []
-    for service, client_name, fn in PROBES:
-        try:
-            values = fn(session.client(client_name, region_name=region, config=BOTO_CONFIG))
-        except (ClientError, BotoCoreError) as exc:
-            code, msg, hint = describe_exception(exc)
-            if (
-                code in ("OptInRequired", "UnrecognizedClientException", "InvalidClientTokenId")
-                and region != "us-east-1"
-            ):
-                continue  # region not usable by this account; nothing to count
-            issues.append(
-                Issue(
-                    "warning",
-                    "inventory",
-                    f"{service} ({client_name}) in {region}: {msg}",
-                    hint,
-                    account_id=account_id,
-                    service=service,
-                    region=region,
-                    error_code=code,
-                )
+def _probe(session: boto3.Session, account_id: str, region: str, probe: tuple) -> tuple[dict, list[Issue]]:
+    """One service counted in one region: the unit a deep scan runs in parallel."""
+    service, client_name, fn = probe
+    try:
+        return fn(session.client(client_name, region_name=region, config=BOTO_CONFIG)), []
+    except (ClientError, BotoCoreError) as exc:
+        code, msg, hint = describe_exception(exc)
+        if code in ("OptInRequired", "UnrecognizedClientException", "InvalidClientTokenId") and region != "us-east-1":
+            return {}, []  # region not usable by this account; nothing to count
+        log.warning(
+            "inventory %s %s %s failed: %s",
+            account_id,
+            region,
+            client_name,
+            code,
+            extra={"account_id": account_id, "region": region, "error_code": code},
+        )
+        return {}, [
+            Issue(
+                "warning",
+                "inventory",
+                f"{service} ({client_name}) in {region}: {msg}",
+                hint,
+                account_id=account_id,
+                service=service,
+                region=region,
+                error_code=code,
             )
-            log.warning(
-                "inventory %s %s %s failed: %s",
-                account_id,
-                region,
-                client_name,
-                code,
-                extra={"account_id": account_id, "region": region, "error_code": code},
-            )
-            continue
-        counts.update(values)
-    return counts, issues
+        ]
 
 
 def _s3_buckets(session: boto3.Session, account_id: str) -> tuple[dict, list[Issue]]:
@@ -191,7 +188,7 @@ def inventory_account(
     session: boto3.Session,
     account_id: str,
     regions: list[str] | None,
-    workers: int = 6,
+    workers: int = WORKERS,
     dependencies: bool = False,
 ) -> tuple[dict, list[Issue]]:
     """Return ({totals, by_region[, dependencies]}, issues) for one account.
@@ -199,7 +196,9 @@ def inventory_account(
     With ``dependencies`` the integrations between services are counted too (see
     collectors/dependencies.py): ``dependencies`` holds {edge: count} and ``dependency_kinds`` the
     kinds of edge read in every region, so a refused call is never mistaken for "no edges".
+    Every service in every region is its own task, ``workers`` at a time.
     """
+    session = ClientCache(session)
     issues: list[Issue] = []
     try:
         region_list = enabled_regions(session, regions)
@@ -211,32 +210,47 @@ def inventory_account(
 
     totals, s3_issues = _s3_buckets(session, account_id)
     issues += s3_issues
-    by_region: dict = {}
     edges: Counter = Counter()
     kinds_done = set(k for k, _ in dependencies_mod.DISCOVERIES) if dependencies else set()
 
-    def region_work(r):
-        counts, probe_issues = _probe_region(session, account_id, r)
-        if not dependencies:
-            return r, counts, probe_issues, {}, set()
-        found, done, dep_issues = dependencies_mod.discover_region(session, account_id, r)
-        return r, counts, probe_issues + dep_issues, found, set(done)
+    # Region by region, in a fixed order, so the issues come out as they did one region at a time.
+    tasks = [
+        (r, probe) for r in region_list for probe in [*PROBES, *(dependencies_mod.DISCOVERIES if dependencies else [])]
+    ]
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        for region, counts, region_issues, found, done in pool.map(region_work, region_list):
-            issues += region_issues
+    def work(task):
+        region, probe = task
+        if len(probe) == 3:
+            return _probe(session, account_id, region, probe)
+        found, ok, dep_issues = dependencies_mod.discover_kind(session, account_id, region, *probe)
+        return found, dep_issues, probe[0], ok
+
+    counts_by_region: dict[str, dict] = {r: {} for r in region_list}
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(tasks)))) as pool:
+        for (region, probe), result in zip(tasks, pool.map(work, tasks), strict=True):
+            if len(probe) == 3:
+                values, probe_issues = result
+                counts_by_region[region].update(values)
+                issues += probe_issues
+                continue
+            found, dep_issues, kind, ok = result
             edges.update(found)
-            kinds_done &= done
-            nonzero = {k: v for k, v in counts.items() if v}
-            if nonzero:
-                by_region[region] = nonzero
-            for k, v in counts.items():
-                if isinstance(v, dict):
-                    agg = totals.setdefault(k, {})
-                    for engine, n in v.items():
-                        agg[engine] = agg.get(engine, 0) + n
-                else:
-                    totals[k] = totals.get(k, 0) + v
+            issues += dep_issues
+            if not ok:
+                kinds_done.discard(kind)
+
+    by_region: dict = {}
+    for region, counts in counts_by_region.items():
+        nonzero = {k: v for k, v in counts.items() if v}
+        if nonzero:
+            by_region[region] = nonzero
+        for k, v in counts.items():
+            if isinstance(v, dict):
+                agg = totals.setdefault(k, {})
+                for engine, n in v.items():
+                    agg[engine] = agg.get(engine, 0) + n
+            else:
+                totals[k] = totals.get(k, 0) + v
     issues = _collapse(issues)
     out = {"regions_scanned": region_list, "totals": totals, "by_region": by_region}
     if dependencies:

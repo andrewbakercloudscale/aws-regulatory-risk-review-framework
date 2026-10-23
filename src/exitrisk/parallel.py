@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import threading
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TypeVar
@@ -15,14 +16,32 @@ R = TypeVar("R")
 WORKERS = 4
 
 
-def pmap(fn: Callable[[T], R], items: Iterable[T], workers: int = WORKERS) -> list[R]:
-    """``[fn(x) for x in items]`` on up to ``workers`` threads, results in input order."""
+def pmap(
+    fn: Callable[[T], R],
+    items: Iterable[T],
+    workers: int = WORKERS,
+    on_done: Callable[[int, int], None] | None = None,
+) -> list[R]:
+    """``[fn(x) for x in items]`` on up to ``workers`` threads, results in input order.
+    ``on_done(done, total)`` is called as each item finishes, one call at a time."""
     items = list(items)
+    lock = threading.Lock()
+    done = 0
+
+    def run(x: T) -> R:
+        nonlocal done
+        out = fn(x)
+        if on_done:
+            with lock:
+                done += 1
+                on_done(done, len(items))
+        return out
+
     if len(items) <= 1:
-        return [fn(x) for x in items]
+        return [run(x) for x in items]
     with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
         # Copy the caller's context once per item, here: a context can run on one thread at a time.
-        futures = [pool.submit(contextvars.copy_context().run, fn, x) for x in items]
+        futures = [pool.submit(contextvars.copy_context().run, run, x) for x in items]
         return [f.result() for f in futures]
 
 

@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from botocore.exceptions import BotoCoreError, ClientError
 
 from . import sso, store
-from .aws_session import caller_identity, make_session, member_session
+from .aws_session import ClientCache, caller_identity, make_session, member_session
 from .collectors import cost, inventory, organizations
 from .config import settings
 from .issues import Issue, describe_exception, is_fatal_auth_error
@@ -260,7 +260,8 @@ def run_scan(job: ScanJob) -> dict:
 
     # 1. Identity. With aws-cli-zsp this is where the Touch ID prompt appears.
     job.update("auth", 5, f"Authenticating with profile '{p.profile or 'default'}' (approve Touch ID if prompted)")
-    session = make_session(p.profile)
+    # Shared by the threads below (tags, cost queries, inventory): clients made one at a time.
+    session = ClientCache(make_session(p.profile))
     try:
         data["identity"] = caller_identity(session)
     except Exception as exc:
@@ -392,6 +393,13 @@ def run_scan(job: ScanJob) -> dict:
 
     # 3b. Spend by region, for the multi-region estimate. Optional: the exit score does not need it.
     ids = [a.id for a in accounts]
+    # Data stored, Direct Connect and commitments are separate queries: read them alongside it.
+    services = {r["service"] for r in data["costs"]}
+    alongside = {
+        "storage": background(lambda: cost.fetch_storage(session, ids, services)),
+        "direct_connect": background(lambda: cost.fetch_direct_connect(session, None)),
+        "commitments": background(lambda: cost.fetch_commitments(session)),
+    }
     job.update("cost", 52, "Querying Cost Explorer for spend by region")
     _optional(
         job,
@@ -420,7 +428,7 @@ def run_scan(job: ScanJob) -> dict:
         "storage",
         "data stored",
         "The resilience view will not size the data to move.",
-        lambda: cost.fetch_storage(session, ids, {r["service"] for r in data["costs"]}),
+        alongside["storage"].result,
     )
     job.update("cost", 58, f"{len(data.get('storage') or [])} storage line(s) collected")
 
@@ -433,7 +441,7 @@ def run_scan(job: ScanJob) -> dict:
         "direct_connect",
         "Direct Connect links",
         "The resilience view will not show the links you have today.",
-        lambda: cost.fetch_direct_connect(session, None),
+        alongside["direct_connect"].result,
     )
 
     # 3d. Savings Plans and reservations with their end dates, to time an exit. Optional.
@@ -445,7 +453,7 @@ def run_scan(job: ScanJob) -> dict:
         "Savings Plans and reservations",
         "Grant ce:GetSavingsPlansUtilizationDetails and ce:GetReservationUtilization "
         "to time the exit against commitments.",
-        lambda: cost.fetch_commitments(session),
+        alongside["commitments"].result,
     )
 
     # Account tags, read in the background since step 2b. Optional, so a refusal is a warning.
