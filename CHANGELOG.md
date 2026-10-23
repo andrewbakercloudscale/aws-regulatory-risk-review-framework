@@ -8,9 +8,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ### Changed
 
-- **Deep scans are about 9 times faster.** Inside each account every service in every region is now read
-  in parallel (24 calls at a time) instead of one call after another: a member account with 18 regions
-  went from 188 s to 21 s. Clients are made one at a time and shared, as boto3 sessions are not thread safe.
+- **Deep scans are about twice as fast.** Inside each account every service in every region is now read
+  in parallel (24 calls at a time) instead of one call after another: one member account with 18 regions
+  went from 188 s to 21 s, and a dependency scan of 166 accounts from 32 to 15 minutes, with the same
+  counts. The console is now limited by its own processing (one CPU core), not by AWS. Clients are made
+  one at a time and shared, as boto3 sessions are not thread safe.
 - **Cost Explorer reads run side by side.** The spend queries for each block of 100 accounts, spend by
   region, data stored, Direct Connect and commitments no longer wait for each other. Account tags are read
   8 at a time.
