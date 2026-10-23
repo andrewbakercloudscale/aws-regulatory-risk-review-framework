@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-23
+
 ### Changed
 
 - **The Agentic Risk Review comes with a deep scan.** Ticking it in New scan switches Scan depth to a
