@@ -263,6 +263,21 @@ def _spend_issues(sp: _Spend, n_months: int) -> list[dict]:
     return out
 
 
+SERVICES_USED_MAX = 40
+
+
+def _services_used(top: list, effort_by_service: dict) -> list[dict]:
+    rows = {}
+    for m, info in top:
+        if m >= 1 or effort_by_service.get(info.service):
+            row = rows.setdefault(info.service, {"service": info.display, "tier": info.tier, "monthly_spend": 0.0})
+            row["monthly_spend"] += m
+    for name, row in rows.items():
+        row["monthly_spend"] = round(row["monthly_spend"], 2)
+        row["effort_weeks"] = round(effort_by_service.get(name, 0), 1)
+    return sorted(rows.values(), key=lambda r: (-r["effort_weeks"], -r["monthly_spend"]))[:SERVICES_USED_MAX]
+
+
 def _service_row(services: dict[str, dict], info, catalog: Catalog) -> dict:
     return services.setdefault(
         info.service,
@@ -389,6 +404,8 @@ def _accounts(
                 "top_services": [
                     {"service": i.display, "tier": i.tier, "monthly_spend": round(m, 2)} for m, i in top[:5]
                 ],
+                # Every service that costs something or carries effort (the AI review reads all of them).
+                "services_used": _services_used(top, eff.by_service),
                 "top_lockin": [
                     {"service": i.display, "tier": i.tier, "monthly_spend": round(m, 2)} for m, i in top if i.tier >= 4
                 ][:3],

@@ -14,6 +14,12 @@ from exitrisk.server import create_app
 H = {"X-ExitRisk": "1"}
 
 
+@pytest.fixture(autouse=True)
+def _known_price(monkeypatch):
+    """No network for prices in tests: every model costs $2 in and $10 out per million tokens."""
+    monkeypatch.setattr(review, "price", lambda s: {"input": 2.0, "output": 10.0, "source": "test"})
+
+
 @pytest.fixture
 def report():
     return build_report(build_demo_scan())
@@ -261,3 +267,48 @@ def test_gateway_settings_are_checked():
     saved = providers.load_settings()
     assert saved.headers == {"x-a": "s3cret"} and saved.base_url == "https://gw.example/v1"
     assert AISettings(**{**saved.__dict__, "provider": "gateway", "model": ""}).model_id() == "gw-model"
+
+
+def test_cut_off_reply_is_asked_again_with_more_room_then_fails_loudly(monkeypatch, report):
+    sizes = []
+
+    def cut(self, system, user, max_tokens=16000):
+        sizes.append(max_tokens)
+        return Reply('{"accounts": [', 10, max_tokens, truncated=True, stop="length")
+
+    monkeypatch.setattr(providers.Client, "complete", cut)
+    s = AISettings(provider="anthropic", keys={"anthropic": "sk-test-123456789"})
+    run = review.Run("scan-t", report, s, {})
+    with pytest.raises(providers.AIError, match="cut off at 64,000"):
+        run._ask(providers.Client(s), "prompt", 16000, "estate view")
+    assert sizes == [16000, 32000, 64000]
+    assert any("asked again with 32,000" in n for n in run.notes)
+
+
+def test_clean_run_has_no_notes_and_a_cost(monkeypatch, report):
+    fake = FakeModel()
+    monkeypatch.setattr(providers.Client, "complete", lambda self, *a, **k: fake(self, *a, **k))
+    s = AISettings(provider="anthropic", keys={"anthropic": "sk-test-123456789"}, mask_names=False)
+    out = review.Run("scan-c", report, s, {}).run()
+    assert out["notes"] == [] and out["accounts_analysed"] == out["accounts_sent"]
+    u = out["usage"]
+    assert out["cost_usd"] == round(u["input_tokens"] / 1e6 * 2 + u["output_tokens"] / 1e6 * 10, 2)
+    # Every service an account uses is sent, with the model's effort for it.
+    big = max(report["accounts"], key=lambda a: len(a["services_used"]))
+    assert len(big["services_used"]) > 5
+    assert any(len(p.split('"services":')) > 1 for p in fake.prompts)
+
+
+def test_openrouter_id_for_price_lookup():
+    f = providers._openrouter_id
+    assert f(AISettings(provider="bedrock", model="global.anthropic.claude-opus-5-5")) == "anthropic/claude-opus-5.5"
+    assert f(AISettings(provider="anthropic", model="claude-fable-5-1")) == "anthropic/claude-fable-5.1"
+    assert f(AISettings(provider="together", model="zai-org/GLM-5.3")) == "z-ai/glm-5.3"
+    assert providers.cost({"input_tokens": 1_000_000, "output_tokens": 500_000}, {"input": 2, "output": 10}) == 7.0
+
+
+def test_show_key_returns_the_saved_key_only_with_the_header():
+    c = TestClient(create_app(), base_url="http://127.0.0.1")
+    c.put("/api/ai/settings", headers=H, json={"provider": "together", "api_key": "tg-show-me-12345678"})
+    assert c.post("/api/ai/key", headers=H, json={"provider": "together"}).json()["key"] == "tg-show-me-12345678"
+    assert c.post("/api/ai/key", json={"provider": "together"}).status_code == 403

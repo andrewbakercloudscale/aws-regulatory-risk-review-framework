@@ -736,3 +736,6 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 .ok-text { color: var(--good); font-size: 13px; }
 .warn-text { color: var(--t4); font-size: 13px; }
 @media print { .ai-more { display: block; } .ai-more > summary { list-style: none; } }
+.key-row { display: flex; gap: 8px; align-items: center; }
+.key-row input { flex: 1; min-width: 0; }
+.ai-cost { margin: 2px 0 4px; font-size: 14px; }

@@ -29,13 +29,15 @@ from datetime import datetime, timezone
 from ..catalog import Catalog, load_catalog
 from ..config import settings
 from ..logging_config import get_logger
-from .providers import PROVIDERS, AIError, AISettings, Client
+from ..scoring import SERVICES_USED_MAX
+from .providers import PROVIDERS, AIError, AISettings, Client, cost, price
 
 log = get_logger("ai")
 
 BATCH_ACCOUNTS = 12  # small enough that the first answers, and the progress, come back quickly
 MAX_ACCOUNTS = 400
 WORKERS = 4  # batches in flight at once
+MAX_OUTPUT_TOKENS = 64000  # a reply cut off at max_tokens is asked again with double, up to this
 PASSES = {"Analysing accounts": 1, "Estate view": 2, "Reviewing for consistency": 3}
 PHASES = ("Before mobilisation", "Mobilise", "Wave 1", "Wave 2", "Wave 3", "Cutover")
 LEVELS = ("Low", "Moderate", "High", "Very high")
@@ -141,10 +143,21 @@ def build_context(report: dict, mask: Masker, catalog: Catalog | None = None) ->
                 "data_tb": _r(a.get("data_tb") or 0, 1),
                 "critical": bool(a.get("critical")),
                 "owner": mask.code(a.get("owner") or a.get("executive") or "", "owner-") or None,
+                # Every service in use, with the model's effort for it: nothing is left out of the evidence.
                 "services": [
-                    {"service": x["service"], "tier": x["tier"], "monthly": _r(x["monthly_spend"])}
-                    for x in (a.get("top_services") or [])[:10]
+                    {
+                        "service": x["service"],
+                        "tier": x["tier"],
+                        "monthly": _r(x["monthly_spend"]),
+                        "model_effort_weeks": x.get("effort_weeks", 0),
+                    }
+                    for x in (a.get("services_used") or a.get("top_services") or [])
                 ],
+                **(
+                    {"services_note": f"the {SERVICES_USED_MAX} services with the most effort or spend are listed"}
+                    if len(a.get("services_used") or []) >= SERVICES_USED_MAX
+                    else {}
+                ),
                 "aws_only_services": [x["service"] for x in (a.get("top_lockin") or [])],
             }
         )
@@ -439,33 +452,56 @@ class Run:
             "provider": s.provider,
             "model": s.model_id(),
         }
-        self.usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
+        self.usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "retries": 0}
+        self.notes: list[str] = []  # anything that went less than perfectly, shown with the result
         self._lock = threading.Lock()
+
+    def _note(self, text: str) -> None:
+        log.warning("AI review of %s: %s", self.scan_id, text)
+        with self._lock:
+            self.notes.append(text)
 
     def _step(self, stage: str, done: int, total: int, message: str = "") -> None:
         with self._lock:
             self.state.update(stage=stage, done=done, total=total, message=message, **{"pass": PASSES.get(stage)})
 
-    def _ask(self, client: Client, prompt: str, max_tokens: int) -> dict:
-        """One call, parsed; one more try if the reply is not valid JSON."""
+    def _ask(self, client: Client, prompt: str, max_tokens: int, what: str) -> dict:
+        """One call, parsed. A reply cut off at max_tokens is asked again with more room, and a reply that
+        is not valid JSON once more; a reply that is still cut off or unreadable fails the run loudly,
+        so a truncated answer is never used as if it were whole."""
         last = ""
-        for attempt in range(2):
+        extra = ""
+        for attempt in range(3):
             if self.cancel.is_set():
                 raise Cancelled()
-            extra = (
-                "" if not attempt else "\n\nYour previous reply was not one valid JSON object. Reply with JSON only."
-            )
             reply = client.complete(SYSTEM, prompt + extra, max_tokens=max_tokens)
             with self._lock:
                 self.usage["calls"] += 1
                 self.usage["input_tokens"] += reply.input_tokens
                 self.usage["output_tokens"] += reply.output_tokens
+                self.usage["retries"] += 1 if attempt else 0
+            log.info(
+                "AI %s: %d tokens in, %d out, stop %r (%d characters of prompt)",
+                what,
+                reply.input_tokens,
+                reply.output_tokens,
+                reply.stop,
+                len(prompt),
+            )
+            if reply.truncated:
+                last = f"the answer was cut off at {max_tokens:,} output tokens"
+                if max_tokens >= MAX_OUTPUT_TOKENS:
+                    break
+                self._note(f"{what}: {last}; asked again with {min(max_tokens * 2, MAX_OUTPUT_TOKENS):,}.")
+                max_tokens = min(max_tokens * 2, MAX_OUTPUT_TOKENS)
+                continue
             try:
                 return parse_json(reply.text)
             except ValueError as exc:
-                last = str(exc)
-                log.warning("AI reply was not valid JSON (%s); %s", exc, "retrying" if not attempt else "giving up")
-        raise AIError(f"The model did not return valid JSON: {last}")
+                last = f"the reply was not valid JSON ({exc})"
+                self._note(f"{what}: {last}; asked again.")
+                extra = "\n\nYour previous reply was not one valid JSON object. Reply with JSON only."
+        raise AIError(f"{what}: {last}. Nothing was saved; try again, or a model with a longer output limit.")
 
     def run(self) -> dict:
         started = time.perf_counter()
@@ -473,6 +509,7 @@ class Run:
         facts, rows = build_context(self.report, mask)
         ids = {r["id"] for r in rows}
         client = Client(self.s)
+        asked_reasoning = client.reasoning
         batches = [rows[i : i + BATCH_ACCOUNTS] for i in range(0, len(rows), BATCH_ACCOUNTS)]
         total = len(batches) + 2
         analyses: list[dict] = []
@@ -482,17 +519,18 @@ class Run:
 
         def one(batch: list[dict]) -> list[dict]:
             want = {a["id"] for a in batch}
+            what = f"accounts {batch[0]['name']} to {batch[-1]['name']}"
             got = [
                 a
-                for a in self._ask(client, _account_prompt(facts, batch), 16000).get("accounts", [])
+                for a in self._ask(client, _account_prompt(facts, batch), 16000, what).get("accounts", [])
                 if a.get("id") in want
             ]
             missing = [a for a in batch if a["id"] not in {g["id"] for g in got}]
             if missing:  # ask once more for any account the model skipped
-                log.info("AI skipped %d account(s) in a batch; asking again", len(missing))
+                self._note(f"{what}: the model skipped {len(missing)} account(s); asked again for them.")
                 got += [
                     a
-                    for a in self._ask(client, _account_prompt(facts, missing), 16000).get("accounts", [])
+                    for a in self._ask(client, _account_prompt(facts, missing), 16000, what).get("accounts", [])
                     if a.get("id") in want
                 ]
             return got
@@ -507,17 +545,37 @@ class Run:
                 )
         by_id = {a["id"]: a for a in analyses}
         analyses = [by_id[r["id"]] for r in rows if r["id"] in by_id]
+        skipped = [r["name"] for r in rows if r["id"] not in by_id]
+        if skipped:
+            self._note(
+                f"{len(skipped)} account(s) still have no analysis after asking twice: {', '.join(skipped[:10])}"
+                + (" and more" if len(skipped) > 10 else "")
+            )
+        if facts["scope"]["accounts_not_analysed"]:
+            self._note(
+                f"Only the {MAX_ACCOUNTS} accounts with the most effort were analysed one by one; "
+                f"{facts['scope']['accounts_not_analysed']} smaller ones are in the estate totals only."
+            )
 
         self._step("Estate view", done, total, "Weighing the whole estate")
-        draft = self._ask(client, _estate_prompt(facts, analyses), 32000)
+        draft = self._ask(client, _estate_prompt(facts, analyses), 32000, "estate view")
         done += 1
         checks = check_estate(draft, facts, ids)
         self._step("Reviewing for consistency", done, total, f"{len(checks)} automated finding(s) to resolve")
-        reviewed = self._ask(client, _review_prompt(facts, analyses, draft, checks), 32000)
-        final = reviewed.get("final") if isinstance(reviewed.get("final"), dict) else draft
+        reviewed = self._ask(client, _review_prompt(facts, analyses, draft, checks), 32000, "review")
+        if isinstance(reviewed.get("final"), dict):
+            final = reviewed["final"]
+        else:
+            final = draft
+            self._note("The review pass returned no corrected view, so the estate view is shown unreviewed.")
         open_checks = check_estate(final, facts, ids)
         done += 1
 
+        if client.reasoning != asked_reasoning:
+            self._note(
+                f"{client.model} refused the {asked_reasoning} reasoning setting, so it ran with "
+                f"{client.reasoning or 'no extended reasoning'}."
+            )
         result = {
             "scan_id": self.scan_id,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -541,6 +599,8 @@ class Run:
                 "currency": facts["spend"]["currency"],
             },
             "usage": dict(self.usage),
+            "notes": mask.unmask(self.notes),
+            "reasoning": client.reasoning,
             "seconds": round(time.perf_counter() - started),
         }
         # The model names accounts by id; readers know them by name. Lists of ids stay ids.
@@ -550,9 +610,18 @@ class Run:
         result["account_names"] = {a["id"]: names.get(a["id"], a["id"]) for a in result["accounts"]}
         for a in result["final"].get("areas_of_focus") or []:
             a["account_names"] = [names.get(x, x) for x in a.get("accounts") or []]
+        add_cost(result, self.s)
         save_result(result)
         self._step("Done", total, total, "")
         return result
+
+
+def add_cost(result: dict, s: AISettings) -> dict:
+    """The approximate dollar cost of a review, from its token counts and the model's list price."""
+    p = price(AISettings(**{**s.__dict__, "provider": result["provider"], "model": result["model"]}))
+    result["price"] = p
+    result["cost_usd"] = cost(result.get("usage") or {}, p)
+    return result
 
 
 def _ids_to_names(obj, names: dict, key: str = ""):

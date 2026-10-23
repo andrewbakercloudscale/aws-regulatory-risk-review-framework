@@ -134,6 +134,10 @@ class AISettingsRequest(BaseModel):
     headers: str | None = Field(None, max_length=4000)  # gateway: "Name: value" lines; None keeps the saved ones
 
 
+class AIKeyRequest(BaseModel):
+    provider: str = Field(..., pattern="^(bedrock|anthropic|together|openrouter|gateway)$")
+
+
 class AIRunRequest(ReportRequest):
     pass
 
@@ -559,10 +563,20 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         except (ValueError, ai_providers.AIError) as exc:
             raise HTTPException(409, str(exc)) from exc
 
+    @app.post("/api/ai/key")
+    def ai_key(req: AIKeyRequest):
+        """The saved key for one provider, for the Show button. The console listens on this computer only
+        and every POST needs the X-ExitRisk header, so another site cannot read it."""
+        s = ai_providers.load_settings()
+        return {"key": s.keys.get(req.provider) or os.environ.get(ai_providers.PROVIDERS[req.provider].key_env, "")}
+
     @app.get("/api/ai/review/{scan_id}")
     def ai_get(scan_id: str):
         try:
-            return {"run": ai_review.status(scan_id), "result": ai_review.load_result(scan_id)}
+            result = ai_review.load_result(scan_id)
+            if result and "cost_usd" not in result:  # reviews saved before the cost was recorded
+                ai_review.save_result(ai_review.add_cost(result, ai_providers.load_settings()))
+            return {"run": ai_review.status(scan_id), "result": result}
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 

@@ -6,6 +6,22 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- AI review shows its approximate cost at the top of the result: tokens in and out at the model's list
+  price (Together AI's price list, or OpenRouter's public list price for the same model).
+- AI review settings: **Show** beside the API key, to check the key you typed or the one saved.
+- AI review: "How the run went" lists anything less than perfect (a reply cut off or unreadable and
+  asked again, accounts skipped, a dropped reasoning setting, accounts beyond the 400 analysed).
+
+### Fixed
+
+- AI review never uses a truncated answer: a reply cut off at its output limit is asked again with
+  twice the room, up to 64,000 tokens, and otherwise fails the run with the reason. Every call is
+  logged with its tokens and stop reason. OpenRouter is told not to compress long prompts.
+- AI review sends every service an account uses (up to 40, with the model's effort for each), not
+  only its five largest.
+
 ## [0.14.3] - 2026-10-23
 
 ### Changed

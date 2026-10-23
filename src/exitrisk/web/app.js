@@ -1417,6 +1417,7 @@
     el.innerHTML = `
       <div class="card-head"><h3><svg class="ai-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>AI review: a second opinion</h3>
         <span class="no-print"><button type="button" class="btn" id="btnAiAgain">Run again</button> <button type="button" class="btn ghost" id="btnAiRemove">Remove</button></span></div>
+      <p class="ai-cost">${res.cost_usd != null ? `AI cost of this review: about <strong>$${res.cost_usd < 10 ? res.cost_usd.toFixed(2) : num(res.cost_usd)}</strong>` : "AI cost of this review: price not known for this model"}<span class="hint"> · ${num((res.usage?.input_tokens || 0) / 1000)}k tokens in at $${res.price ? num(res.price.input, 2) : "?"}/M, ${num((res.usage?.output_tokens || 0) / 1000)}k out at $${res.price ? num(res.price.output, 2) : "?"}/M${res.price ? ` (${esc(res.price.source)})` : ""}; negotiated rates, caching and batch discounts not included</span></p>
       <p class="hint">${esc(res.provider_label)} · ${esc(res.model)} · ${esc(fmtWhen(res.created_at))} · ${plural(res.accounts_analysed, "account")} analysed in three passes${res.masked ? " · names hidden from the model" : ""} · ${num(res.usage?.calls)} calls, ${num((res.usage?.input_tokens || 0) / 1000)}k tokens in, ${num((res.usage?.output_tokens || 0) / 1000)}k out, ${num(res.seconds / 60, 0)} min</p>
       ${sameBasis ? "" : `<p class="warn-text">Run on a different filter (${esc(res.basis?.filter || "unknown")}); run it again for the accounts shown now.</p>`}
       <p class="ai-headline">${esc(f.headline || "")}</p>
@@ -1445,6 +1446,7 @@
       <details class="ai-more"${PRINT ? " open" : ""}><summary>Review pass: ${plural((res.changes || []).length, "correction")}${res.open_checks?.length ? `, ${plural(res.open_checks.length, "check")} still open` : ", all automated checks pass"}</summary>
         ${(res.changes || []).length ? `<ul class="assumptions">${res.changes.map((c) => `<li><strong>${esc(c.issue)}</strong> ${esc(c.fix)}</li>`).join("")}</ul>` : '<p class="hint">The reviewer changed nothing.</p>'}
         ${res.open_checks?.length ? `<p class="warn-text">Still open after the review:</p>${list(res.open_checks)}` : ""}
+        ${res.notes?.length ? `<p class="warn-text">How the run went:</p>${list(res.notes)}` : Array.isArray(res.notes) ? '<p class="hint">Every call came back whole: no answer was cut off, unreadable or missing an account.</p>' : ""}
       </details>
       <details class="ai-more"${PRINT ? " open" : ""}><summary>Every account the AI analysed (${num(accts.length)})</summary>
         <div class="table-wrap"><table class="data compact"><thead><tr><th>Account</th><th>Entrenchment</th><th class="num-cell">AI weeks</th><th class="num-cell">Model weeks</th><th>Phase</th><th>Why, and how to tackle it</th></tr></thead><tbody>
@@ -1499,10 +1501,32 @@
     if (p.key === "gateway" && !model) model = s.gateway_model || "";
     $("#aiKeyLink").href = p.key_url;
     $("#aiKey").value = "";
+    hideAiKey();
     $("#aiKey").placeholder = k.set ? (k.env ? `Using ${p.key_env} from the environment` : `Saved (${k.hint}); type to replace`) : p.key === "bedrock" ? "" : `Paste the key, or set ${p.key_env}`;
     if (p.key !== s.provider && $("#aiMask").dataset.touched !== "1") $("#aiMask").checked = p.third_party;
     fillAiModels(p.recommended.map((x) => ({ ...x, recommended: false })), model ?? "");
     loadAiModels(model);
+  }
+
+  function hideAiKey() {
+    $("#aiKey").type = "password";
+    $("#btnAiShowKey").textContent = "Show";
+    $("#btnAiShowKey").setAttribute("aria-pressed", "false");
+  }
+
+  // Show the key being typed, or fetch the saved one from this computer to check it.
+  async function toggleAiKey() {
+    if ($("#aiKey").type === "text") { hideAiKey(); return; }
+    const p = aiProvider(), k = state.aiCfg.settings.keys[p.key];
+    if (!$("#aiKey").value && k?.set) {
+      try {
+        const { key } = await api("/api/ai/key", { method: "POST", body: { provider: p.key } });
+        $("#aiKey").value = key;
+      } catch (e) { $("#aiError").textContent = e.message; return; }
+    }
+    $("#aiKey").type = "text";
+    $("#btnAiShowKey").textContent = "Hide";
+    $("#btnAiShowKey").setAttribute("aria-pressed", "true");
   }
 
   function fillAiModels(models, want) {
@@ -2713,6 +2737,7 @@
     $("#aiModel").addEventListener("change", () => { $("#aiCustomWrap").hidden = $("#aiModel").value !== AI_CUSTOM; if (!$("#aiCustomWrap").hidden) $("#aiCustom").focus(); });
     $("#aiMask").addEventListener("change", () => { $("#aiMask").dataset.touched = "1"; });
     $("#aiKey").addEventListener("change", () => loadAiModels());
+    $("#btnAiShowKey").addEventListener("click", toggleAiKey);
     $("#aiHeaders").addEventListener("input", () => { $("#aiHeaders").dataset.touched = "1"; });
     for (const id of ["#aiBaseUrl", "#aiKeyHeader", "#aiHeaders"]) $(id).addEventListener("change", () => loadAiModels());
     $("#aiForm").addEventListener("submit", (e) => e.preventDefault());

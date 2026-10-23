@@ -901,9 +901,9 @@
       </div>
       <label>Extra headers <span class="opt">optional, one per line as Name: value</span><textarea name="headers" id="aiHeaders" rows="3" autocomplete="off" spellcheck="false" placeholder="x-portkey-provider: @bedrock-prod"></textarea></label>
     </div>
-    <label><span id="aiKeyLabel">API key</span> <a id="aiKeyLink" class="opt" target="_blank" rel="noopener noreferrer" href="#">Get a key</a><input type="password" name="api_key" id="aiKey" autocomplete="off" spellcheck="false"></label>
+    <label><span id="aiKeyLabel">API key</span> <a id="aiKeyLink" class="opt" target="_blank" rel="noopener noreferrer" href="#">Get a key</a><span class="key-row"><input type="password" name="api_key" id="aiKey" autocomplete="off" spellcheck="false"><button type="button" class="btn" id="btnAiShowKey" aria-pressed="false" aria-controls="aiKey">Show</button></span></label>
     <label class="check"><input type="checkbox" name="mask_names" id="aiMask"> <span>Hide account names and owners from the model. They are swapped for codes and restored in the answer; the model then judges each account by its services only.</span></label>
-    <p class="hint" id="aiPrivacy">Sent: a summary of this report as filtered (per account: name, spend, services, effort, data size and integration counts). Never sent: resource names, ARNs, configuration or your AWS credentials. Keys stay on this computer (<code>~/.exitrisk/ai.json</code>, readable only by you).</p>
+    <p class="hint" id="aiPrivacy">Sent: a summary of this report as filtered (per account: name, spend, services, effort, data size and integration counts). Never sent: resource names, ARNs, configuration or your AWS credentials. Keys stay on this computer (<code>~/.exitrisk/ai.json</code>, readable only by you) and reach this page only when you click Show.</p>
     <div id="aiBusy" class="busy" role="status" aria-live="polite" hidden><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text"></span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar" aria-hidden="true"><i></i></div><div class="busy-sub" id="aiBusySub"></div></div>
     <div id="aiTests" class="table-wrap" hidden><table class="data compact" id="aiTestTable"></table></div>
     <p id="aiOk" class="ok-text" role="status"></p>

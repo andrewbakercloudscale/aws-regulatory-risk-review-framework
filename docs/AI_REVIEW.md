@@ -49,6 +49,20 @@ optional step.
    the facts, the analyses and those findings go back to the model as an independent reviewer, which
    corrects what is wrong and lists each change. The checks run again; anything still open is shown.
 
+**Nothing fails silently.** Every call is logged with its tokens in and out and the provider's stop
+reason. A reply cut off at its output limit is asked again with twice the room (up to 64,000 tokens),
+and a reply that is not valid JSON once more; if it is still cut off or unreadable the run fails with
+the reason and nothing is saved, so a truncated answer is never used. Accounts the model skips twice,
+a dropped reasoning setting, a review that returned no corrected view, and accounts beyond the 400
+analysed one by one are listed under "How the run went" on the result. OpenRouter is told not to
+compress long prompts. Each account carries every service it uses (up to 40), not just the largest.
+
+**Cost.** The top of the result shows the approximate cost of the review: its tokens in and out at the
+model's list price (Together AI's own price list; for other providers OpenRouter's public list price
+for the same model). Negotiated rates, prompt caching and batch discounts are not known, so treat it
+as an order of magnitude. A real Prod OU of 164 accounts on GLM 5.3 used about 150k tokens in and
+100k out: about $0.66, in 7.5 minutes.
+
 A demo estate of 48 accounts takes about 6 minutes on GLM 5.3; a large estate 20 to 40 minutes.
 The result is stored with the scan (`~/.exitrisk/ai/<scan>.json`), appears at the top of section 7,
 and is included in the PDF.
@@ -69,4 +83,6 @@ it in your AWS account.
 ## Keys
 
 Keys are saved in `~/.exitrisk/ai.json`, created readable only by you, or read from the environment
-variables above. The browser only ever sees whether a key is set and its last four characters.
+variables above. The browser sees whether a key is set and its last four characters, and the whole key
+only when you click **Show** beside it (the console listens on this computer only, and that request
+needs the console's own header, so another web page cannot read it).

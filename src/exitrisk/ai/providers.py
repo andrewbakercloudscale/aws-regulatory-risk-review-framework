@@ -288,6 +288,8 @@ class Reply:
     text: str
     input_tokens: int = 0
     output_tokens: int = 0
+    truncated: bool = False  # the model hit max_tokens: the answer is cut off
+    stop: str = ""  # the provider's own stop or finish reason, for the log
 
 
 class Client:
@@ -352,7 +354,8 @@ class Client:
             )
             text = "".join(b.get("text", "") for b in j.get("content", []) if b.get("type") == "text")
             u = j.get("usage", {})
-            return Reply(text, u.get("input_tokens", 0), u.get("output_tokens", 0))
+            stop = j.get("stop_reason") or ""
+            return Reply(text, u.get("input_tokens", 0), u.get("output_tokens", 0), stop == "max_tokens", stop)
         if p == "bedrock":
             return self._bedrock(system, user, max_tokens)
         body = {
@@ -365,13 +368,16 @@ class Client:
                 body["reasoning"] = {"effort": "high"}
             else:
                 body["reasoning_effort"] = "high"
+        if p == "openrouter":
+            body["transforms"] = []  # never let OpenRouter compress ("middle-out") a long prompt
         j = _http("POST", f"{_openai_base(self.s)}/chat/completions", _openai_headers(self.s), body)
         choices = j.get("choices") or []
         if not choices:
             raise AIError(f"The provider returned no answer: {json.dumps(j)[:300]}")
         text = choices[0].get("message", {}).get("content") or ""
         u = j.get("usage", {})
-        return Reply(text, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+        stop = choices[0].get("finish_reason") or ""
+        return Reply(text, u.get("prompt_tokens", 0), u.get("completion_tokens", 0), stop == "length", stop)
 
     def _bedrock(self, system: str, user: str, max_tokens: int) -> Reply:
         body = {
@@ -391,7 +397,8 @@ class Client:
         parts = ((j.get("output") or {}).get("message") or {}).get("content") or []
         text = "".join(c.get("text", "") for c in parts if "text" in c)
         u = j.get("usage", {})
-        return Reply(text, u.get("inputTokens", 0), u.get("outputTokens", 0))
+        stop = j.get("stopReason") or ""
+        return Reply(text, u.get("inputTokens", 0), u.get("outputTokens", 0), stop == "max_tokens", stop)
 
 
 def _openai_base(s: AISettings) -> str:
@@ -489,3 +496,53 @@ def test_connection(s: AISettings) -> dict:
         "reasoning": client.reasoning,
         "tokens": reply.input_tokens + reply.output_tokens,
     }
+
+
+# ---------------------------------------------------------------------------- price (approximate)
+OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"  # public: list prices for most models, no key needed
+
+
+def _openrouter_id(s: AISettings) -> str:
+    """The OpenRouter name of the chosen model, to look up its list price."""
+    m = s.model_id()
+    if s.provider == "openrouter":
+        return m
+    if s.provider in ("anthropic", "bedrock"):
+        m = re.sub(r"^((global|us|eu|apac|jp|au)\.)?anthropic\.", "", m)  # Bedrock inference profile prefix
+        m = re.sub(r"-v\d+(:\d+)?$", "", m)
+        return "anthropic/" + re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", m)  # claude-opus-5-5 -> claude-opus-5.5
+    if s.provider == "together":
+        return m.lower().replace("zai-org/", "z-ai/").replace("deepseek-ai/", "deepseek/")
+    return m.split("/", 1)[-1] if m.startswith("@") else m  # gateway: Portkey's @provider/model
+
+
+def price(s: AISettings) -> dict | None:
+    """US dollars per million input and output tokens for the chosen model: the provider's own price
+    list where it publishes one (Together), else OpenRouter's public list price for the same model. An
+    estimate: negotiated rates, caching and batch discounts are not known."""
+    try:
+        if s.provider == "together" and s.api_key():
+            j = _http("GET", f"{OPENAI_BASE['together']}/models", _openai_headers(s), timeout=30)
+            for m in j if isinstance(j, list) else j.get("data", []):
+                p = m.get("pricing") or {}
+                if m.get("id") == s.model_id() and (p.get("input") or p.get("output")):
+                    return {"input": p["input"], "output": p["output"], "source": "Together AI price list"}
+        want = _openrouter_id(s)
+        j = _http("GET", OPENROUTER_MODELS, {}, timeout=30)
+        for m in j.get("data", []):
+            if m.get("id") == want:
+                p = m.get("pricing") or {}
+                return {
+                    "input": float(p.get("prompt") or 0) * 1e6,
+                    "output": float(p.get("completion") or 0) * 1e6,
+                    "source": "list price" + ("" if s.provider == "openrouter" else f" of {want} on OpenRouter"),
+                }
+    except Exception as exc:  # the price is a nicety: never fail a review over it
+        log.info("could not look up the price of %s: %s", s.model_id(), exc)
+    return None
+
+
+def cost(usage: dict, p: dict | None) -> float | None:
+    if not p:
+        return None
+    return round(usage.get("input_tokens", 0) / 1e6 * p["input"] + usage.get("output_tokens", 0) / 1e6 * p["output"], 2)
