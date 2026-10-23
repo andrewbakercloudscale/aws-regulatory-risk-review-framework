@@ -138,7 +138,8 @@ def build_dimensions(
     empty = estimate.get("empty") or not effort
 
     total_weeks = estimate["effort"]["total_weeks"]
-    days = (total_weeks * DAYS_PER_WEEK * COST_RANGE[0], total_weeks * DAYS_PER_WEEK * COST_RANGE[1])
+    lo_f, hi_f = (estimate.get("range_factors") or {}).get("cost") or COST_RANGE
+    days = (total_weeks * DAYS_PER_WEEK * lo_f, total_weeks * DAYS_PER_WEEK * hi_f)
     effort_range = None if empty else count_range(*days) + " engineer-days"
     measures = {
         "portability": {

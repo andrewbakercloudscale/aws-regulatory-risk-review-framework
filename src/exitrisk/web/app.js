@@ -970,8 +970,8 @@
   // "about 60% engineering, the rest parallel running"; a data-centre exit also names hardware and facility.
   function costSplit(e) {
     const pct = (v) => Math.round(100 * v / Math.max(e.cost.total, 1));
-    if (!e.datacenter) return `about ${pct(e.cost.labour)}% engineering, the rest parallel running`;
-    return `about ${pct(e.cost.labour)}% engineering, ${pct(e.cost.hardware + e.cost.facility)}% hardware and facility, the rest parallel running`;
+    const hw = e.datacenter ? `, ${pct(e.cost.hardware + e.cost.facility)}% hardware and facility` : "";
+    return `about ${pct(e.cost.labour)}% engineering${hw}, the rest parallel running and the target platform`;
   }
 
   function renderEstimate(r) {
@@ -985,7 +985,7 @@
     $("#estTiles").innerHTML = e.empty ? "" : [
       tile("Exit cost (one-off)", e.ranges.cost, `${e.ranges.pct_of_annual_spend ? `${e.ranges.pct_of_annual_spend} of a year's AWS spend · ` : ""}${costSplit(e)}`, prov),
       tile("Exit window (time to leave AWS)", e.ranges.duration, `bound by ${e.duration.constrained_by}`, prov),
-      tile("Engineering effort", e.ranges.effort, plural(e.effort.material_accounts, "material account"), prov),
+      tile("Engineering effort", e.ranges.effort, `${plural(e.effort.material_accounts, "material account")}${e.effort.data_tb ? ` · ${tb(e.effort.data_tb)} of data` : ""} · ${{ quick: "wide range: billing data only", inventory: "range from resource counts", dependency: "narrower range: integrations counted" }[e.range_factors?.scan_depth] || ""}`, prov),
     ].join("");
 
     const WPM = 4.33; // weeks per month
@@ -1002,8 +1002,8 @@
       `<div class="g-axis"><div></div><div class="g-ticks">${ticks.map((t, i) => `<span class="${i === 0 ? "first" : ""}" style="left:${(100 * t * WPM / total).toFixed(2)}%">${tickLabel(t)}</span>`).join("")}</div></div>`;
 
     const parts = [["Landing zone", e.effort.landing_zone_weeks], ["Tier 1 and 2 workloads", e.effort.by_tier[1] + e.effort.by_tier[2]], ["Tier 3 workloads", e.effort.by_tier[3]],
-      ["Tier 4 and 5 workloads", e.effort.by_tier[4] + e.effort.by_tier[5]], ["Account overhead", e.effort.account_weeks * e.factors.combined], ["Programme mgmt", e.effort.pmo_weeks], ["Contingency", e.effort.contingency_weeks]];
-    const pc = [css("--ink-2"), tierColor(1), tierColor(3), tierColor(5), css("--t2"), css("--muted"), css("--axis")];
+      ["Tier 4 and 5 workloads", e.effort.by_tier[4] + e.effort.by_tier[5]], ["Data migration", e.effort.data_weeks || 0], ["Account overhead", e.effort.account_weeks * e.factors.combined], ["Programme mgmt", e.effort.pmo_weeks], ["Contingency", e.effort.contingency_weeks]];
+    const pc = [css("--ink-2"), tierColor(1), tierColor(3), tierColor(5), css("--tone-fact"), css("--t2"), css("--muted"), css("--axis")];
     chart("chEffort", {
       type: "bar",
       data: { labels: parts.map((p) => p[0]), datasets: [{ label: "Person-months", data: parts.map((p) => Math.round(p[1] / WPM)), backgroundColor: pc, borderRadius: 4, borderSkipped: "start", barPercentage: 0.7 }] },

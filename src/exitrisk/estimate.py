@@ -74,9 +74,29 @@ PARALLEL_RUN_OVERLAP = 0.5
 SIZE_MULT_MIN, SIZE_MULT_MAX = 0.25, 8.0
 REFERENCE_MONTHLY_SPEND = 1000.0
 WEEKS_PER_MONTH = 4.33
-# Early-stage estimation cone: the report quotes ranges, never a single figure.
+# Early-stage estimation cone: the report quotes ranges, never a single figure. The cone narrows as the
+# evidence improves: billing only (quick scan), resource counts (inventory), integrations (dependency).
 COST_RANGE = (0.75, 1.5)
 DURATION_RANGE = (0.8, 1.4)
+RANGES_BY_DEPTH = {
+    "quick": ((0.7, 1.7), (0.8, 1.5)),
+    "inventory": (COST_RANGE, DURATION_RANGE),
+    "dependency": ((0.8, 1.35), (0.85, 1.3)),
+}
+# Data migration: planning, change-data capture, validation and reconciliation, per TB moved and per
+# account holding data; the copy itself sets a floor on the calendar (links ordered, then the bulk copy).
+DATA_WEEKS_PER_TB = 0.04
+DATA_ACCOUNT_WEEKS = 1.0
+DATA_ACCOUNT_MIN_TB = 1.0
+DATA_LINK_LEAD_WEEKS = 12  # ordering migration links: carrier lead time
+DATA_LINK_GBPS = 20.0  # two 10 Gbps links (the "Medium" option under Resilience)
+DATA_LINK_USE = 0.8
+DATA_CUTOVER_WEEKS = 8  # final sync, validation and cutover after the bulk copy
+# The target platform (landing zone, network, security tooling, connectivity) runs from the end of
+# mobilisation to the end of the exit, as a share of the AWS bill a month.
+TARGET_PLATFORM_PCT = 0.02
+# A team does not start at full strength: the first weeks run at about half capacity.
+RAMP_UP_WEEKS = 12
 
 
 class Questionnaire(BaseModel):
@@ -216,6 +236,7 @@ class Estimate:
     datacenter: dict | None
     waves: list
     assumptions: list
+    range_factors: dict
     ranges: dict
 
     def to_dict(self) -> dict:
@@ -257,8 +278,16 @@ def _datacenter(q: Questionnaire, monthly_spend: float) -> dict:
     }
 
 
-def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float) -> dict:
-    """``accounts`` are report account rows carrying ``effort_by_tier`` (unadjusted engineer-weeks)."""
+def data_copy_weeks(move_tb: float, gbps: float = DATA_LINK_GBPS) -> float:
+    """Weeks to copy ``move_tb`` over ``gbps`` of links at DATA_LINK_USE: 1 TB at 1 GB/s takes 1,000 s."""
+    seconds = move_tb * 8e12 / (gbps * 1e9 * DATA_LINK_USE)
+    return seconds / (86400 * 7)
+
+
+def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float, scan_depth: str = "inventory") -> dict:
+    """``accounts`` are report account rows carrying ``effort_by_tier`` (unadjusted engineer-weeks) and,
+    when storage usage was read, ``data_tb`` (live and archived data to move)."""
+    cost_range, duration_range_f = RANGES_BY_DEPTH.get(scan_depth, RANGES_BY_DEPTH["inventory"])
     by_tier = {t: 0.0 for t in range(1, 6)}
     for a in accounts:
         for t, w in a["effort_by_tier"].items():
@@ -267,11 +296,14 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
     agentic_saved = sum(a.get("agentic_saved_weeks", 0.0) for a in accounts)
     material_accounts = sum(1 for a in accounts if a["monthly_spend"] >= q.materiality)
     account_weeks = ACCOUNT_OVERHEAD_WEEKS * material_accounts
+    move_tb = sum(a.get("data_tb") or 0 for a in accounts)
+    data_accounts = sum(1 for a in accounts if (a.get("data_tb") or 0) >= DATA_ACCOUNT_MIN_TB)
+    data_weeks = DATA_WEEKS_PER_TB * move_tb + DATA_ACCOUNT_WEEKS * data_accounts
 
     factor = CICD_FACTORS[q.cicd] * IAC_FACTORS[q.iac] * TARGET_FACTORS[q.target]
     if q.regulated:
         factor *= REGULATED_FACTOR
-    delivery = (service_weeks + account_weeks) * factor
+    delivery = (service_weeks + account_weeks + data_weeks) * factor
     lz_base = min(
         LANDING_ZONE_MIN_WEEKS + 12 * math.sqrt(max(monthly_spend, 0) / LANDING_ZONE_REFERENCE_SPEND),
         LANDING_ZONE_MAX_WEEKS,
@@ -284,20 +316,26 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
 
     capacity = q.cloud_team_size * q.cloud_team_allocation_pct / 100 + q.app_engineers_fte
     capacity = max(capacity, 0.5)
-    effort_bound = total / (capacity * PRODUCTIVE_PCT)
+    effort_bound = total / (capacity * PRODUCTIVE_PCT) + RAMP_UP_WEEKS * 0.5
     highest_tier = max((t for t, w in by_tier.items() if w > 0), default=1)
     dc = _datacenter(q, monthly_spend)
-    critical_path = CRITICAL_PATH_WEEKS[highest_tier] + lz_base / 2 + dc["lead_weeks"]
+    copy_weeks = data_copy_weeks(move_tb)
+    service_path = CRITICAL_PATH_WEEKS[highest_tier] + lz_base / 2 + dc["lead_weeks"]
+    data_path = (DATA_LINK_LEAD_WEEKS + copy_weeks + DATA_CUTOVER_WEEKS) if move_tb >= DATA_ACCOUNT_MIN_TB else 0.0
+    critical_path = max(service_path, data_path)
     build_weeks = max(effort_bound, critical_path)
     calendar_weeks = math.ceil(build_weeks + DECOMMISSION_WEEKS)
 
     labour = total * 5 * q.day_rate
     parallel = q.parallel_run_months * monthly_spend * PARALLEL_RUN_OVERLAP * q.fx_per_usd
-    total_cost = labour + parallel + dc["hardware"] + dc["facility"]
 
     # Waves: landing zone first, then easiest to hardest so the team learns on portable workloads.
     mobilise = max(6.0, landing_zone * (1 + PMO_PCT) / (capacity * PRODUCTIVE_PCT))
     mobilise = max(min(mobilise, build_weeks * 0.35), dc["lead_weeks"])
+    # The target platform runs from the end of mobilisation until AWS is switched off.
+    platform_months = max(calendar_weeks - mobilise, 0) / WEEKS_PER_MONTH
+    platform = TARGET_PLATFORM_PCT * monthly_spend * q.fx_per_usd * platform_months
+    total_cost = labour + parallel + platform + dc["hardware"] + dc["facility"]
     remaining = build_weeks - mobilise
     wave_effort = {"w1": by_tier[1] + by_tier[2], "w2": by_tier[3], "w3": by_tier[4] + by_tier[5]}
     wave_total = sum(wave_effort.values()) or 1.0
@@ -346,6 +384,9 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "account_weeks": round(account_weeks, 1),
             "delivery_weeks": round(delivery, 1),
             "landing_zone_weeks": round(landing_zone, 1),
+            "data_weeks": round(data_weeks * factor, 1),
+            "data_tb": round(move_tb, 1),
+            "data_accounts": data_accounts,
             "pmo_weeks": round(pmo, 1),
             "contingency_weeks": round(contingency, 1),
             "total_weeks": round(total, 1),
@@ -364,19 +405,24 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "calendar_months": round(calendar_weeks / WEEKS_PER_MONTH, 1),
             "effort_bound_weeks": round(effort_bound, 1),
             "critical_path_weeks": round(critical_path, 1),
-            "constrained_by": "team capacity" if effort_bound >= critical_path else "critical path",
-            "low_months": round(calendar_weeks * DURATION_RANGE[0] / WEEKS_PER_MONTH, 1),
-            "high_months": round(calendar_weeks * DURATION_RANGE[1] / WEEKS_PER_MONTH, 1),
+            "data_path_weeks": round(data_path, 1),
+            "data_copy_weeks": round(copy_weeks, 1),
+            "constrained_by": "team capacity"
+            if effort_bound >= critical_path
+            else ("the data copy" if data_path > service_path else "critical path"),
+            "low_months": round(calendar_weeks * duration_range_f[0] / WEEKS_PER_MONTH, 1),
+            "high_months": round(calendar_weeks * duration_range_f[1] / WEEKS_PER_MONTH, 1),
         },
         cost={
             "currency": q.currency,
             "labour": round(labour),
             "parallel_run": round(parallel),
+            "target_platform": round(platform),
             "hardware": round(dc["hardware"]),
             "facility": round(dc["facility"]),
             "total": round(total_cost),
-            "low": round(total_cost * COST_RANGE[0]),
-            "high": round(total_cost * COST_RANGE[1]),
+            "low": round(total_cost * cost_range[0]),
+            "high": round(total_cost * cost_range[1]),
             # One-off exit cost against a year of the AWS bill being exited, in the same currency.
             "pct_of_annual_spend": round(100 * total_cost / (monthly_spend * 12 * q.fx_per_usd), 1)
             if monthly_spend > 0
@@ -399,11 +445,19 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             f"Delivery factor {factor:.2f} = CI/CD {CICD_FACTORS[q.cicd]} × IaC {IAC_FACTORS[q.iac]} × target "
             f"{TARGET_FACTORS[q.target]}" + (f" × regulated {REGULATED_FACTOR}" if q.regulated else "") + ".",
             f"Programme management and assurance {PMO_PCT:.0%}; contingency {q.contingency_pct}%.",
-            f"Engineers are {PRODUCTIVE_PCT:.0%} productive on migration work; duration is the longer of effort ÷ "
-            "capacity and the critical path of the hardest tier present, plus decommissioning.",
+            f"Data migration: {DATA_WEEKS_PER_TB:g} engineer-weeks per TB moved (change-data capture, validation, "
+            f"reconciliation) + {DATA_ACCOUNT_WEEKS:g} per account holding {DATA_ACCOUNT_MIN_TB:g} TB or more"
+            + (f": {move_tb:,.0f} TB in {data_accounts} accounts." if move_tb else ": no storage usage read."),
+            f"Engineers are {PRODUCTIVE_PCT:.0%} productive on migration work, and the team runs at half strength for "
+            f"its first {RAMP_UP_WEEKS} weeks. Duration is the longest of effort ÷ capacity, the critical path of the "
+            f"hardest tier present, and the data path ({DATA_LINK_LEAD_WEEKS} weeks to order links, the bulk copy on "
+            f"{DATA_LINK_GBPS:g} Gbps at {DATA_LINK_USE:.0%}, {DATA_CUTOVER_WEEKS} weeks of final sync and cutover), "
+            "plus decommissioning.",
             f"Parallel running: {q.parallel_run_months} months at {PARALLEL_RUN_OVERLAP:.0%} of current AWS spend "
             "(target ramps up as AWS ramps down)"
-            + (f", converted at {q.fx_per_usd:g} {q.currency}/USD." if q.currency != "USD" else "."),
+            + (f", converted at {q.fx_per_usd:g} {q.currency}/USD." if q.currency != "USD" else ".")
+            + f" The target platform (landing zone, network, security tooling) runs at {TARGET_PLATFORM_PCT:.0%} of "
+            f"the AWS bill a month from the end of mobilisation to the end of the exit ({platform_months:.0f} months).",
             *(
                 [
                     "AI coding agents: each service's weeks are cut by its catalog rating: high "
@@ -426,18 +480,22 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float)
             "Connect ports and data-out fees are sized under Resilience, Links for the migration. Since March 2024 "
             "AWS credits internet egress (not Direct Connect) for customers leaving AWS, on request to AWS Support "
             "and subject to approval, for a move completed within about 60 days.",
-            "Figures are quoted as ranges, widened to round numbers: −25% / +50% on cost and effort, "
-            "−20% / +40% on duration (early-stage estimation cone). The model's single figures are "
-            "planning midpoints, not forecasts.",
+            "Figures are quoted as ranges, widened to round numbers: "
+            f"{cost_range[0] - 1:+.0%} / {cost_range[1] - 1:+.0%} on cost and effort, "
+            f"{duration_range_f[0] - 1:+.0%} / {duration_range_f[1] - 1:+.0%} on duration. The "
+            "range narrows as the evidence improves: widest on billing data alone, narrowest once a dependency scan "
+            f"has counted the integrations (this report: {scan_depth} scan). The single figures are planning "
+            "midpoints, not forecasts.",
         ],
+        range_factors={"cost": list(cost_range), "duration": list(duration_range_f), "scan_depth": scan_depth},
         ranges={
-            "cost": money_range(total_cost * COST_RANGE[0], total_cost * COST_RANGE[1], q.currency),
+            "cost": money_range(total_cost * cost_range[0], total_cost * cost_range[1], q.currency),
             "duration": duration_range(
-                calendar_weeks * DURATION_RANGE[0] / WEEKS_PER_MONTH,
-                calendar_weeks * DURATION_RANGE[1] / WEEKS_PER_MONTH,
+                calendar_weeks * duration_range_f[0] / WEEKS_PER_MONTH,
+                calendar_weeks * duration_range_f[1] / WEEKS_PER_MONTH,
             ),
-            "effort": effort_range(total / WEEKS_PER_MONTH * COST_RANGE[0], total / WEEKS_PER_MONTH * COST_RANGE[1]),
-            "pct_of_annual_spend": share_range(total_cost * COST_RANGE[0], total_cost * COST_RANGE[1], annual_fx)
+            "effort": effort_range(total / WEEKS_PER_MONTH * cost_range[0], total / WEEKS_PER_MONTH * cost_range[1]),
+            "pct_of_annual_spend": share_range(total_cost * cost_range[0], total_cost * cost_range[1], annual_fx)
             if annual_fx > 0
             else None,
         },

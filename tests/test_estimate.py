@@ -117,3 +117,31 @@ def test_datacenter_reads_in_the_executive_summary():
     r = build_report(build_demo_scan(), questionnaire=Questionnaire(target="datacenter", confirmed=True))
     text = str(r["summary"]["executive"])
     assert "your own data centre" in text and "hardware" in text
+
+
+def test_data_migration_adds_effort_and_can_set_the_critical_path():
+    from exitrisk.estimate import build_estimate, data_copy_weeks
+
+    rows = [{"monthly_spend": 50_000.0, "effort_by_tier": {1: 10.0}}]
+    q = Questionnaire(cloud_team_size=2000, cloud_team_allocation_pct=100, app_engineers_fte=5000)
+    dry = build_estimate(q, rows, 50_000.0)
+    wet = build_estimate(q, [{**rows[0], "data_tb": 20_000.0}], 50_000.0)
+    assert dry["effort"]["data_weeks"] == 0 and wet["effort"]["data_weeks"] > 0
+    assert wet["effort"]["total_weeks"] > dry["effort"]["total_weeks"]
+    # 20,000 TB on 20 Gbps is about 16 weeks of copy: with links and cutover the data sets the calendar.
+    assert data_copy_weeks(20_000) == pytest.approx(16.5, abs=0.2)
+    assert wet["duration"]["constrained_by"] == "the data copy"
+    assert wet["duration"]["calendar_weeks"] > dry["duration"]["calendar_weeks"]
+
+
+def test_range_narrows_with_scan_depth_and_platform_cost_follows_duration():
+    from exitrisk.estimate import build_estimate
+
+    rows = [{"monthly_spend": 100_000.0, "effort_by_tier": {4: 400.0}}]
+    q = Questionnaire()
+    quick, deep = (build_estimate(q, rows, 100_000.0, d) for d in ("quick", "dependency"))
+    assert quick["cost"]["total"] == deep["cost"]["total"]  # the midpoint does not move
+    assert quick["cost"]["high"] - quick["cost"]["low"] > deep["cost"]["high"] - deep["cost"]["low"]
+    assert "quick scan" in quick["assumptions"][-1]
+    slow = build_estimate(Questionnaire(cloud_team_size=1, app_engineers_fte=0), rows, 100_000.0)
+    assert slow["cost"]["target_platform"] > quick["cost"]["target_platform"] > 0

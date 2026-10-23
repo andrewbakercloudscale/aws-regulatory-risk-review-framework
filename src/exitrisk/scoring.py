@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 from . import __version__
 from .catalog import AGENTIC_FACTORS, Catalog, load_catalog
-from .dimensions import build_dimensions, hard_part
+from .dimensions import build_dimensions, hard_part, scan_depth
 from .estimate import (
     TARGET_LABELS,
     TARGET_PHRASES,
@@ -548,8 +548,9 @@ def build_report(
     tiers = _tiers(accounts_out, services_agg, total_monthly, catalog)
     services_out = _services(services_agg, sp, months_in_data, n_months, total_monthly)
 
-    estimate = build_estimate(questionnaire, accounts_out, total_monthly)
+    # Resilience first: it sets each account's data_tb, which the estimate's data migration uses.
     resilience = build_resilience(scan, accounts_out, questionnaire)
+    estimate = build_estimate(questionnaire, accounts_out, total_monthly, scan_depth(inventory))
     summary = {
         "score": round(ou_score, 1) if ou_score is not None else None,
         "rating": rating(ou_score),

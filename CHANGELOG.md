@@ -21,6 +21,17 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   all providers check each model with a small reasoning question answered as JSON. Keys are stored
   readable only by you and never reach the browser. See docs/AI_REVIEW.md.
 
+### Changed
+
+- The estimate now counts data migration: engineer effort per TB moved and per account holding data,
+  and a data path on the calendar (ordering links, the bulk copy, final sync and cutover), so a large
+  data estate can set the exit window ("bound by the data copy").
+- Cost adds the target platform running during the exit (2% of the AWS bill a month from the end of
+  mobilisation), so a longer exit costs more; the team ramps up over its first 12 weeks.
+- The ranges around cost, effort and duration follow the evidence: widest on a quick (billing-only)
+  scan, narrower on an inventory scan, narrowest once a dependency scan has counted the integrations.
+- The "Commitments written off" chart moves to the top of section 5, beside the exit cost.
+
 ## [0.13.0] - 2026-10-23
 
 ### Added

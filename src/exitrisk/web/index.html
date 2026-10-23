@@ -292,6 +292,10 @@
           <div id="estEmpty" class="card hint" hidden>No spend is in scope, so there is nothing to estimate. Change the account filter or run a scan that covers more accounts.</div>
           <div id="estBody">
           <div class="tiles" id="estTiles"></div>
+          <figure class="card chart-card" id="writeOffCard">
+            <figcaption><h3>Commitments written off, over time</h3><p class="muted" id="writeOffCap"></p></figcaption>
+            <div class="chart-box"><canvas id="chWriteOff" role="img" aria-label="Bars of Savings Plans and reservations billed each month, with a line of what is written off if the exit finishes that month"></canvas></div>
+          </figure>
           <div class="card">
             <h3>Indicative timeline</h3>
             <div id="gantt" class="gantt"></div>
@@ -319,10 +323,6 @@
           </div>
         </div>
       </div>
-      <figure class="card chart-card" id="writeOffCard">
-        <figcaption><h3>Commitments written off, over time</h3><p class="muted" id="writeOffCap"></p></figcaption>
-        <div class="chart-box"><canvas id="chWriteOff" role="img" aria-label="Bars of Savings Plans and reservations billed each month, with a line of what is written off if the exit finishes that month"></canvas></div>
-      </figure>
       <div class="card">
         <h3>Savings Plans and reservations</h3>
         <p class="muted small" id="timeNote"></p>
@@ -427,7 +427,7 @@
         <p>Ratings: Low &lt; 25 ≤ Moderate &lt; 40 ≤ Elevated &lt; 55 ≤ High &lt; 70 ≤ Critical.</p>
         <h3>Estimate</h3>
         <p>The cost and time figures depend on the delivery questions under Exit model. Until they are answered, the report marks the figures provisional and keeps them out of the bottom line.</p>
-        <p>Effort is built bottom-up: each material service in each account contributes the catalog's engineer-weeks for one workload, scaled by the square root of its spend relative to US$1,000/month (and by its resource count where the deep scan ran). Account overhead, a target landing zone, programme management and contingency are added, and the total is adjusted for delivery maturity from the questionnaire. Duration is the longer of effort ÷ available capacity and the critical path of the hardest tier present.</p>
+        <p>Effort is built bottom-up: each material service in each account contributes the catalog's engineer-weeks for one workload, scaled by the square root of its spend relative to US$1,000/month (and by its resource count where the deep scan ran). Data migration effort (per TB moved and per account holding data), account overhead, a target landing zone, programme management and contingency are added, and the total is adjusted for delivery maturity from the questionnaire. Duration is the longest of effort ÷ available capacity (with a ramp-up), the critical path of the hardest tier present, and the data path: ordering links, the bulk copy and the final cutover. Cost adds parallel running and the target platform while the exit runs. The range around each figure is widest on billing data alone and narrows once deep and dependency scans have run.</p>
         <h3>Limitations</h3>
         <ul>
           <li>Spend is a proxy for size; a cheap service can still be hard to move (the deep scan's resource counts partly correct for this).</li>

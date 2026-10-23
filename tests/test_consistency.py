@@ -10,7 +10,7 @@ import re
 import pytest
 
 from exitrisk.demo import build_demo_scan
-from exitrisk.estimate import COST_RANGE, DURATION_RANGE, WEEKS_PER_MONTH, Questionnaire
+from exitrisk.estimate import WEEKS_PER_MONTH, Questionnaire
 from exitrisk.scoring import build_report
 
 CASES = {
@@ -84,9 +84,12 @@ def test_trend_growth_and_product_types_agree(report):
 def test_estimate_ranges_contain_the_model_and_agree_with_each_other(report):
     e, s = report["estimate"], report["summary"]
     c, ef, d, rg = e["cost"], e["effort"], e["duration"], e["ranges"]
-    assert close(c["total"], c["labour"] + c["parallel_run"] + c["hardware"] + c["facility"])
+    cr, dr = e["range_factors"]["cost"], e["range_factors"]["duration"]
+    assert e["range_factors"]["scan_depth"] == s["scan_depth"]
+    parts = c["labour"] + c["parallel_run"] + c["target_platform"] + c["hardware"] + c["facility"]
+    assert close(c["total"], parts)
     lo, hi = money(rg["cost"])
-    assert lo <= c["total"] * COST_RANGE[0] + 1 and hi >= c["total"] * COST_RANGE[1] - 1
+    assert lo <= c["total"] * cr[0] + 1 and hi >= c["total"] * cr[1] - 1
     # The share of annual spend is taken from the rounded cost range, so the two never disagree.
     annual = s["annual_spend"] * e["inputs"]["fx_per_usd"]
     plo, phi = nums(rg["pct_of_annual_spend"])
@@ -98,10 +101,10 @@ def test_estimate_ranges_contain_the_model_and_agree_with_each_other(report):
     )
     elo, ehi = nums(rg["effort"])
     k = 12 if "years" in rg["effort"] else 1
-    assert elo * k <= ef["person_months"] * COST_RANGE[0] + 0.5 and ehi * k >= ef["person_months"] * COST_RANGE[1] - 0.5
+    assert elo * k <= ef["person_months"] * cr[0] + 0.5 and ehi * k >= ef["person_months"] * cr[1] - 0.5
     dlo, dhi = nums(rg["duration"])
     k = 12 if "years" in rg["duration"] else 1
-    assert dlo * k <= d["calendar_months"] * DURATION_RANGE[0] and dhi * k >= d["calendar_months"] * DURATION_RANGE[1]
+    assert dlo * k <= d["calendar_months"] * dr[0] and dhi * k >= d["calendar_months"] * dr[1]
     assert report["timing"]["duration_range"] == rg["duration"]
     last = e["waves"][-1]
     assert abs(last["start"] + last["weeks"] - d["calendar_weeks"]) <= 1.1

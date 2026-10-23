@@ -134,7 +134,9 @@ size multiplier  = clamp( √(monthly spend / 1,000 USD), 0.25, 8 )
 service effort   = Σ resources (days per resource × complexity × repeat discount) ÷ 5 × AI agent factor
 integrations     = Σ integrations (days per integration × repeat discount) ÷ 5   (dependency scan)
 account overhead = 1 week per account with material spend           (network, IAM, decommissioning)
-delivery         = (Σ service effort + account overhead) × CI/CD × IaC × target × regulated
+data migration   = 0.04 weeks per TB moved + 1 week per account holding ≥ 1 TB   (change-data capture,
+                   validation, reconciliation; TB = live + archived storage from Cost Explorer)
+delivery         = (Σ service effort + account overhead + data migration) × CI/CD × IaC × target × regulated
 landing zone     = (clamp(4 + 12 × √(monthly spend / 100,000), 4, 24) + 0.5 × accounts) × target
 programme mgmt   = 12% × (delivery + landing zone)
 contingency      = contingency% × (delivery + landing zone + programme mgmt)
@@ -162,10 +164,11 @@ a month at the top of the report.
 
 ```
 capacity (FTE)   = cloud team × allocation% + application engineers
-effort-bound     = total effort / (capacity × 80% productive)
-critical path    = {tier 5: 26, 4: 16, 3: 10, 2: 8, 1: 6} weeks for the hardest tier present + landing zone / 2
+effort-bound     = total effort / (capacity × 80% productive) + 12 weeks × 50%   (team ramp-up)
+service path     = {tier 5: 26, 4: 16, 3: 10, 2: 8, 1: 6} weeks for the hardest tier present + landing zone / 2
                    + data-centre lead time (physical data centre only)
-calendar         = max(effort-bound, critical path) + 4 weeks decommissioning
+data path        = 12 weeks to order links + bulk copy (TB on 2 × 10 Gbps at 80%) + 8 weeks final sync and cutover
+calendar         = max(effort-bound, service path, data path) + 4 weeks decommissioning
 ```
 
 Adding people shortens the programme only until the critical path binds; the report says which one
@@ -177,7 +180,9 @@ target platform and its patterns on low-risk workloads.
 ```
 labour        = total effort × 5 days × day rate
 parallel run  = parallel-run months × monthly AWS spend × 50% × FX       (target ramps up as AWS ramps down)
-total         = labour + parallel run + hardware + facility;   range −25% / +50%;   duration range −20% / +40%
+platform      = 2% × monthly AWS spend × FX × months from end of mobilisation to end of exit
+                (target landing zone, network, security tooling and connectivity running during the exit)
+total         = labour + parallel run + platform + hardware + facility
 % of annual   = total / (monthly AWS spend × 12 × FX)                    one-off exit cost vs a year of the bill
 ```
 
@@ -198,6 +203,17 @@ Hardware is sized from the bill because it is the only capacity signal the scan 
 the managed-service premium, so treat it as an order of magnitude and replace it with a sizing exercise.
 Running the data centre after exit (power, cooling, facility and hardware staff, maintenance contracts,
 refresh every 4 to 6 years) is not in the one-off cost.
+
+**The range narrows as the evidence improves.**
+
+| Scan depth | Cost and effort | Duration |
+|---|---|---|
+| Quick (billing only) | −30% / +70% | −20% / +50% |
+| Inventory (resource counts) | −25% / +50% | −20% / +40% |
+| Dependency (resources and integrations) | −20% / +35% | −15% / +30% |
+
+Commitments written off (Savings Plans, reservations, EDP shortfall) stay a separate figure beside the
+exit cost, under Timing, so they are never counted twice.
 
 **The report quotes ranges, never single figures.** Cost, effort and duration are shown as the
 range above, widened outward to round numbers (e.g. "$7m to $16m", "2.5 to 5 years", "300 to 700
