@@ -52,12 +52,13 @@ RESOURCES: dict[str, tuple[str, float, str]] = {
     "cognito_user_pools": ("Amazon Cognito", 15.0, "Cognito user pools"),
     "glue_jobs": ("AWS Glue", 3.0, "Glue jobs"),
     "redshift_clusters": ("Amazon Redshift", 20.0, "Redshift clusters"),
-    "cloudformation_stacks": ("AWS CloudFormation", 1.0, "CloudFormation stacks"),
     "eks_clusters": ("Amazon Elastic Kubernetes Service", 10.0, "EKS clusters"),
     "ecs_clusters": ("Amazon Elastic Container Service", 2.0, "ECS clusters"),
     "ecs_services": ("Amazon Elastic Container Service", 2.0, "ECS services"),
     "s3_buckets": ("Amazon Simple Storage Service", 0.5, "S3 buckets"),
 }
+# CloudFormation stacks are counted but carry no effort of their own: a stack is the packaging of
+# resources already counted above, and rewriting the templates is the infrastructure-as-code factor.
 RDS_SERVICE = "Amazon Relational Database Service"
 # Engineer-days per database instance by engine family: open-source engines move like for like,
 # commercial engines carry licensing, Aurora's storage and features have no direct equivalent.

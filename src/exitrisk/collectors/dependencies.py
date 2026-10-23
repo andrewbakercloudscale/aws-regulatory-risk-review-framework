@@ -154,6 +154,8 @@ def _task_targets(definition: dict) -> list[str]:
         for st in (states or {}).values():
             res = st.get("Resource", "")
             params = st.get("Parameters") or st.get("Arguments") or {}
+            if not isinstance(params, dict):  # JSONata Arguments can be one "{% ... %}" expression
+                params = {}
             called = (res, str(params.get("FunctionName") or params.get("FunctionName.$") or ""))
             if st.get("Type") == "Task" and res and called not in seen:
                 seen.add(called)

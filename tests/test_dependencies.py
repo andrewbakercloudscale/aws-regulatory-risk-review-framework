@@ -453,3 +453,13 @@ def test_inventory_counts_leave_out_the_baseline():
         }
     )
     assert stacks(cf) == {"cloudformation_stacks": 1, "baseline_cloudformation_stacks": 1}
+
+
+def test_task_targets_accepts_jsonata_arguments():
+    definition = {
+        "QueryLanguage": "JSONata",
+        "States": {
+            "A": {"Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Arguments": "{% $states.input %}"}
+        },
+    }
+    assert dep._task_targets(definition) == ["lambda"]
