@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-23
+
 ### Changed
 
 - **Deep scans use several CPU cores.** Each account is now read in a worker process (up to 8,
