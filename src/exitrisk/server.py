@@ -29,6 +29,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__, preflight, schedule, sso, store
+from .ai import providers as ai_providers
+from .ai import review as ai_review
 from .aws_session import available_profiles, make_session, profile_accounts
 from .catalog import load_catalog
 from .collectors import organizations
@@ -118,6 +120,19 @@ class ReportRequest(BaseModel):
     filter: FilterModel = FilterModel()
     questionnaire: Questionnaire = Questionnaire()
     weighting: str = Field("spend", pattern=r"^(balanced|spend|equal)$")
+
+
+class AISettingsRequest(BaseModel):
+    provider: str = Field("bedrock", pattern="^(bedrock|anthropic|together|openrouter)$")
+    model: str = Field("", max_length=200)
+    region: str = Field("us-east-1", pattern=r"^[a-z]{2}(-[a-z]+)+-\d$")
+    profile: str = Field("", max_length=200)
+    mask_names: bool = True
+    api_key: str | None = Field(None, max_length=500)  # None keeps the saved key; "" removes it
+
+
+class AIRunRequest(ReportRequest):
+    pass
 
 
 class CompareRequest(BaseModel):
@@ -431,6 +446,95 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         except FilterError as exc:
             raise HTTPException(400, str(exc)) from exc
         return build_multiregion(scan, flt, req.questionnaire, req.multiregion)
+
+    # ------------------------------------------------------------------ AI review (optional)
+    def _ai_settings(req: AISettingsRequest | None = None) -> ai_providers.AISettings:
+        s = ai_providers.load_settings()
+        if req is not None:
+            s.provider, s.model, s.region, s.profile, s.mask_names = (
+                req.provider,
+                req.model.strip(),
+                req.region,
+                req.profile,
+                req.mask_names,
+            )
+            if req.api_key is not None:
+                if req.api_key.strip():
+                    s.keys[req.provider] = req.api_key.strip()
+                else:
+                    s.keys.pop(req.provider, None)
+        return s
+
+    @app.get("/api/ai/settings")
+    def ai_settings():
+        providers = [
+            {
+                "key": p.key,
+                "label": p.label,
+                "note": p.note,
+                "key_url": p.key_url,
+                "key_env": p.key_env,
+                "third_party": p.third_party,
+                "recommended": [{"id": m, "label": label} for m, label in p.recommended],
+            }
+            for p in ai_providers.PROVIDERS.values()
+        ]
+        return {"settings": ai_providers.load_settings().public(), "providers": providers}
+
+    @app.put("/api/ai/settings")
+    def ai_save(req: AISettingsRequest):
+        s = _ai_settings(req)
+        ai_providers.save_settings(s)
+        return {"settings": s.public()}
+
+    @app.post("/api/ai/models")
+    def ai_models(req: AISettingsRequest):
+        return {"models": ai_providers.list_models(_ai_settings(req))}
+
+    @app.post("/api/ai/test")
+    def ai_test(req: AISettingsRequest):
+        try:
+            return ai_providers.test_connection(_ai_settings(req))
+        except ai_providers.AIError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @app.post("/api/ai/review")
+    def ai_start(req: AIRunRequest):
+        try:
+            scan = store.load_scan(req.scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        try:
+            flt = AccountFilter(**req.filter.model_dump())
+        except FilterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        rep = build_report(scan, flt, req.questionnaire, weighting=req.weighting)
+        basis = {
+            "filter": flt.to_dict()["description"],
+            "accounts": rep["summary"]["accounts_in_scope"],
+            "provisional": rep["estimate"].get("provisional"),
+        }
+        try:
+            return ai_review.start(req.scan_id, rep, ai_providers.load_settings(), basis)
+        except (ValueError, ai_providers.AIError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/ai/review/{scan_id}")
+    def ai_get(scan_id: str):
+        try:
+            return {"run": ai_review.status(scan_id), "result": ai_review.load_result(scan_id)}
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.delete("/api/ai/review/{scan_id}")
+    def ai_stop(scan_id: str, remove: bool = False):
+        try:
+            stopped = ai_review.cancel(scan_id)
+            if remove:
+                ai_review.delete_result(scan_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"stopped": stopped, "removed": remove}
 
     @app.get("/api/catalog")
     def catalog():
