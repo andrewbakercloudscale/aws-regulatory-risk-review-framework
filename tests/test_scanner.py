@@ -363,3 +363,54 @@ def test_deep_scan_skips_accounts_once_nobody_signs_in(monkeypatch):
     doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(inventory=True, profile="sso")))
     assert doc["status"] == "partial" and not doc["inventory"]
     assert sum("Not signed in" in i["message"] for i in doc["issues"]) == 2
+
+
+def test_spend_regions_keep_regions_billing_a_dollar_a_month():
+    rows = [
+        {"account_id": "a", "service": "EC2", "region": "eu-west-1", "monthly": 50.0},
+        {"account_id": "a", "service": "Lambda", "region": "af-south-1", "monthly": 0.6},
+        {"account_id": "a", "service": "VPC", "region": "af-south-1", "monthly": 0.6},
+        {"account_id": "a", "service": "Security Hub", "region": "us-east-2", "monthly": 0.2},
+        {"account_id": "a", "service": "Route 53", "region": "global", "monthly": 9.0},
+        {"account_id": "b", "service": "Config", "region": "us-east-1", "monthly": 0.3},
+        {"account_id": "b", "service": "Config", "region": "eu-west-2", "monthly": 0.5},
+        {"account_id": "c", "service": "Route 53", "region": "global", "monthly": 2.0},
+    ]
+    # Spend adds up across services; an account under the bar keeps its busiest region; no regional spend: none.
+    assert scanner.spend_regions(rows) == {"a": ["eu-west-1", "af-south-1"], "b": ["eu-west-2"]}
+
+
+def test_deep_scan_of_regions_with_spend(monkeypatch):
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+    monkeypatch.setattr(scanner, "member_session", lambda s, pr, a, r, j: object())
+    rows = [{"account_id": "222222222222", "service": "AWS Lambda", "region": "eu-west-1", "monthly": 10.0}]
+    monkeypatch.setattr(scanner.cost, "fetch_region_costs", lambda s, ids, m, *_: rows)
+    asked = {}
+
+    def inv(_s, account_id, regions, dependencies=False):
+        asked[account_id] = regions
+        return {"resources": {}}, []
+
+    monkeypatch.setattr(scanner.inventory, "inventory_account", inv)
+    params = ScanParams(inventory=True, role_name="r", region_scope="spend")
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=params))
+    # No regional spend for the second account: it is read in every region, not skipped.
+    assert asked == {"222222222222": ["eu-west-1"], "333333333333": None}
+    assert any("only the regions with spend" in i["message"] for i in doc["issues"])
+    with pytest.raises(ValueError):
+        ScanParams(region_scope="some").validate()
+
+
+def test_regions_with_spend_falls_back_to_all_without_spend_by_region(monkeypatch):
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+    monkeypatch.setattr(scanner, "member_session", lambda s, pr, a, r, j: object())
+    asked = []
+    monkeypatch.setattr(
+        scanner.inventory, "inventory_account", lambda _s, a, regions, **k: (asked.append(regions), ({}, []))[1]
+    )
+    params = ScanParams(inventory=True, role_name="r", region_scope="spend")
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=params))
+    assert asked == [None, None]
+    assert any(i["severity"] == "warning" and "every region" in i["message"] for i in doc["issues"])

@@ -39,6 +39,7 @@ PARAM_KEYS = (
     "dependencies",
     "inventory_scope",
     "regions",
+    "region_scope",
     "target",
 )
 

@@ -9,6 +9,7 @@ Cost Explorer query (without which there is no score) fails the scan.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 import traceback
@@ -30,6 +31,7 @@ log = get_logger("scanner")
 
 
 INVENTORY_SCOPES = ("all", "material")
+REGION_SCOPES = ("all", "spend")
 # A "material" deep scan covers the largest accounts holding this share of spend, plus any account
 # spending at least MATERIAL_LOCKIN_MONTHLY a month on High or Critical (tier 4 to 5) services.
 MATERIAL_SPEND_SHARE = 0.95
@@ -57,6 +59,31 @@ def material_accounts(costs: list[dict], months: int) -> set[str]:
     return out
 
 
+# A deep scan limited to "regions with spend" reads, in each account, the regions billing at least
+# this much a month. Below it sit mostly the landing-zone baseline (Security Hub, CloudTrail, Config
+# rules and their Lambda functions); a resource that costs nothing yet is missed, so "all" stays.
+SPEND_REGION_MONTHLY = 1.0
+_REGION_NAME = re.compile(r"^[a-z]{2}(-[a-z]+)+-\d$")
+
+
+def spend_regions(region_costs: list[dict]) -> dict[str, list[str]]:
+    """Per account, the regions worth a deep scan: those with spend, busiest first.
+
+    An account whose regional spend is all under the bar keeps its busiest region; an account with
+    no regional spend at all is left out, and the caller scans it in every region.
+    """
+    by_account: dict[str, dict[str, float]] = {}
+    for r in region_costs:
+        if _REGION_NAME.match(r["region"]):
+            regions = by_account.setdefault(r["account_id"], {})
+            regions[r["region"]] = regions.get(r["region"], 0.0) + r["monthly"]
+    out = {}
+    for aid, regions in by_account.items():
+        ranked = sorted(regions, key=lambda k: -regions[k])
+        out[aid] = [k for k in ranked if regions[k] >= SPEND_REGION_MONTHLY] or ranked[:1]
+    return out
+
+
 @dataclass
 class ScanParams:
     profile: str | None = None
@@ -71,6 +98,8 @@ class ScanParams:
     # High/Critical services. Deep scans cost time and API calls; selective ones go where it counts.
     inventory_scope: str = "all"
     regions: list[str] | None = None
+    # "all" enabled regions in every account, or only the regions where each account has "spend".
+    region_scope: str = "all"
     label: str = ""
     target: str = "azure"  # exit target asked at scan time; seeds the estimate questionnaire
 
@@ -83,6 +112,8 @@ class ScanParams:
             self.inventory = True
         if self.inventory_scope not in INVENTORY_SCOPES:
             raise ValueError(f"inventory_scope must be one of {', '.join(INVENTORY_SCOPES)}")
+        if self.region_scope not in REGION_SCOPES:
+            raise ValueError(f"region_scope must be one of {', '.join(REGION_SCOPES)}")
         if not 1 <= self.months <= 12:
             raise ValueError("months must be between 1 and 12")
         if self.inventory and not self.role_name and not sso.profile_permission_set(self.profile):
@@ -548,6 +579,38 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
             )
         )
 
+    with_spend = None
+    if p.region_scope == "spend":
+        if job.data.get("region_costs"):
+            with_spend = spend_regions(job.data["region_costs"])
+            per = [len(v) for v in with_spend.values()]
+            job.add_issue(
+                Issue(
+                    "info",
+                    "inventory",
+                    f"This deep scan reads only the regions with spend (US${SPEND_REGION_MONTHLY:g} a month or more): "
+                    f"{sum(per) / max(len(per), 1):.1f} region(s) per account on average. Resources in the other "
+                    "regions, mostly the landing-zone baseline, are not counted.",
+                    "Scan all regions to count everything, including resources that cost nothing yet.",
+                )
+            )
+        else:
+            job.add_issue(
+                Issue(
+                    "warning",
+                    "inventory",
+                    "Spend by region is not available, so the deep scan reads every region instead of only "
+                    "the regions with spend.",
+                    "Grant Cost Explorer access (ce:GetCostAndUsage) to the management account.",
+                )
+            )
+
+    def regions_for(account_id: str) -> list[str] | None:
+        if with_spend is None or account_id not in with_spend:
+            return p.regions
+        mine = with_spend[account_id]
+        return ([r for r in mine if r in p.regions] or p.regions) if p.regions else mine
+
     def one(account):
         try:
             try:
@@ -582,7 +645,9 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
                 ],
             )
         try:
-            inv, issues = inventory.inventory_account(sess, account.id, p.regions, dependencies=p.dependencies)
+            inv, issues = inventory.inventory_account(
+                sess, account.id, regions_for(account.id), dependencies=p.dependencies
+            )
         except Exception as exc:  # one account's odd answer must not lose the other accounts
             if not isinstance(exc, (ClientError, BotoCoreError)):
                 log.exception("inventory of %s failed with an unexpected error", account.id)

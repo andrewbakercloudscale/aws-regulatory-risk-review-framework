@@ -66,6 +66,7 @@ def test_bad_inputs():
     assert c.post("/api/scans", headers=H, json={"inventory": True}).status_code == 400  # role required
     assert c.post("/api/scans", headers=H, json={"dependencies": True}).status_code == 400  # implies the deep scan
     assert c.post("/api/scans", headers=H, json={"inventory_scope": "some"}).status_code == 422
+    assert c.post("/api/scans", headers=H, json={"region_scope": "some"}).status_code == 422
 
 
 def test_catalog_endpoint():

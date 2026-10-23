@@ -292,6 +292,10 @@ machines per region); a capped count is reported as a floor.
 
 **Selective deep scan**: "Only material accounts" deep-scans the accounts that make up 95% of spend plus
 any spending $100 a month or more on High or Critical services; the rest stay sized from spend.
+"Only regions with spend" reads, in each account, only the regions billing $1 a month or more (an account
+under that keeps its busiest region; one with no regional spend is read everywhere). Workloads are counted
+the same; resources that cost nothing yet, and the landing-zone baseline in other regions (Lambda
+functions, EventBridge rules, stacks and their integrations), are not.
 
 ## 5. Limitations
 

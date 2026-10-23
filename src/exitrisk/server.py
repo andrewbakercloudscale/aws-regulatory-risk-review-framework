@@ -88,6 +88,7 @@ class ScanRequest(BaseModel):
     dependencies: bool = False
     inventory_scope: str = Field("all", pattern="^(all|material)$")
     regions: list[REGION] | None = Field(None, max_length=40)
+    region_scope: str = Field("all", pattern="^(all|spend)$")
     label: str = Field("", max_length=120)
     target: str = Field("azure", pattern=TARGET_PATTERN)
     # Set to run the AI review on the finished scan, with the report as the console will show it.

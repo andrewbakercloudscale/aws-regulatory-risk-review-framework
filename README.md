@@ -161,6 +161,7 @@ exitrisk scan --profile mgmt --ou ou-ab12-cdef3456 --months 3          # spend-o
 exitrisk scan --profile mgmt --inventory --role ExitRiskReadOnly        # plus resource counts
 exitrisk scan --profile mgmt --dependencies --role ExitRiskReadOnly     # plus integrations between services
 exitrisk scan --profile mgmt --dependencies --inventory-scope material --role ExitRiskReadOnly  # deep-scan material accounts only
+exitrisk scan --profile mgmt --dependencies --spend-regions --role ExitRiskReadOnly       # only regions with spend: about twice as fast
 exitrisk scan --profile mgmt --target gcp                               # exit target: azure (default), gcp, oci, sovereign, onprem, datacenter
 exitrisk pdf <scan-id> --include prod --questionnaire answers.json --out board-pack.pdf  # PDF without a browser
 exitrisk pdf <scan-id> --include prod --onepage                      # one-page ExCo summary

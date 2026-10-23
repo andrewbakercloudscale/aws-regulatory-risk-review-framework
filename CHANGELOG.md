@@ -6,6 +6,17 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- **Deep scan of only the regions with spend.** New scan option "Only regions with spend" (CLI
+  `--spend-regions`): in each account the deep scan reads only the regions billing US$1 a month or more,
+  from the spend-by-region query the scan already runs. On a 166-account Prod OU it read 3.5 regions per
+  account instead of 18 and took 7.5 minutes instead of 15, with the same counts of EC2, DynamoDB, SQS and
+  EKS; Lambda functions, EventBridge rules, stacks and integrations in the other regions (mostly the
+  landing-zone baseline) are not counted, so integrations counted fell by half. All regions stays the
+  default. An account with no regional spend is read in every region; without spend by region the scan
+  reads every region and says so.
+
 ## [0.16.0] - 2026-10-23
 
 ### Changed

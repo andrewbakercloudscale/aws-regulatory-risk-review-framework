@@ -133,6 +133,7 @@ def _scan(args) -> int:
         dependencies=args.dependencies,
         inventory_scope=args.inventory_scope,
         regions=args.regions.split(",") if args.regions else None,
+        region_scope="spend" if args.spend_regions else "all",
         label=args.label or "",
         target=args.target,
     )
@@ -382,6 +383,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--role", help="role name to assume in member accounts for --inventory")
     p.add_argument("--regions", help="comma-separated regions for --inventory (default: all enabled)")
+    p.add_argument(
+        "--spend-regions",
+        action="store_true",
+        help="deep-scan only the regions where each account has spend (much faster; skips $0 resources)",
+    )
     p.add_argument("--label")
     p.add_argument(
         "--target",

@@ -13,7 +13,9 @@
    default; 6 to 12 shows trend) → optionally tick **Deep scan** and give the member role name.
 3. Watch the progress bar. A spend-only scan of a few hundred accounts takes seconds; a deep scan takes
    about 20 seconds per account with 18 regions enabled (every service in every region read in parallel), with
-   8 accounts at a time (`EXITRISK_MAX_WORKERS`, default 8): about 15 minutes for 166 accounts.
+   8 accounts at a time (`EXITRISK_MAX_WORKERS`, default 8): about 15 minutes for 166 accounts. Tick
+   **Only regions with spend** to read just the regions billing US$1 a month or more (about half the time;
+   resources that cost nothing yet, and the landing-zone baseline elsewhere, are then not counted).
 4. Filter to production in the bar at the top, open **Exit model** in the top bar to answer the delivery questions, the notice period and the critical accounts, check section 9,
    and **Export PDF** (browser print → Save as PDF) or `exitrisk pdf <scan-id> --include prod`.
 

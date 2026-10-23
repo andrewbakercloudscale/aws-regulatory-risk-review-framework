@@ -2198,6 +2198,7 @@
       profile: f.profile.value || null, ou_ids: pickedOus(), months: Number(f.months.value || 12),
       inventory: f.depth.value !== "quick", dependencies: f.depth.value === "dependency",
       inventory_scope: f.material_only.checked ? "material" : "all", role_name: f.role_name.value || null,
+      region_scope: f.spend_regions.checked ? "spend" : "all",
       regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: f.label.value,
       target: f.target.value || "azure",
     };
