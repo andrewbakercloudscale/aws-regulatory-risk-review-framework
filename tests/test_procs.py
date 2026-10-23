@@ -207,3 +207,74 @@ def test_stop_waits_for_ai_reviews_too(monkeypatch):
     finally:
         review.cancel("20261023-000000-aaaa")
     assert "20261023-000000-aaaa" not in review.running_reviews()
+
+
+def test_workers_stop_when_the_console_is_killed(tmp_path):
+    """A console killed outright (SIGKILL, SIGTERM to a CLI scan) leaves no workers reading on."""
+    code = (
+        "import os; from exitrisk import procs\n"
+        "pool = procs.InventoryPool(2)\n"
+        "print(pool.call(os.getpid), flush=True)\n"
+        "os._exit(0)\n"  # no clean-up, as when killed
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, cwd=tmp_path)
+    worker = int(out.stdout.split()[0])
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            os.kill(worker, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    os.kill(worker, 9)
+    pytest.fail("the worker outlived the console")
+
+
+def test_terminated_workers_do_not_fall_back_to_this_process(monkeypatch):
+    seen = []
+    monkeypatch.setattr(procs, "_inventory", lambda *a: time.sleep(30))
+    monkeypatch.setattr(procs.inventory, "inventory_account", lambda *a, **k: seen.append(a) or ({}, []))
+    session = boto3.Session(aws_access_key_id="A", aws_secret_access_key="B", region_name="eu-west-1")
+    with procs.InventoryPool(1) as pool:
+        pool.call(os.getpid)  # workers up
+        threading.Timer(0.5, pool.terminate).start()
+        with pytest.raises(BrokenProcessPool):
+            pool.call(time.sleep, 30)
+        with pytest.raises(BrokenProcessPool):
+            pool.inventory_account(session, "111111111111", None)
+    assert seen == []
+
+
+def test_ctrl_c_drops_the_accounts_not_started_and_stops_the_workers(monkeypatch):
+    from test_scanner import _org
+
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+    monkeypatch.setattr(scanner, "member_session", lambda s, pr, a, r, j: object())
+    monkeypatch.setattr(scanner, "settings", replace(scanner.settings, processes=4, max_workers=1))
+    pools = []
+
+    class Pool:
+        def __init__(self, n):
+            self.read, self.stopped, self.closed = [], False, False
+            pools.append(self)
+
+        def inventory_account(self, sess, account_id, regions, dependencies=False):
+            self.read.append(account_id)
+            raise KeyboardInterrupt
+
+        def terminate(self):
+            self.stopped = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.closed = True
+
+    monkeypatch.setattr(scanner, "InventoryPool", Pool)
+    job = ScanJob(id=store.new_scan_id(), params=ScanParams(inventory=True, role_name="r"))
+    with pytest.raises(KeyboardInterrupt):
+        scanner.run_scan(job)
+    [pool] = pools
+    assert len(pool.read) == 1 and pool.stopped and pool.closed  # the second account never started

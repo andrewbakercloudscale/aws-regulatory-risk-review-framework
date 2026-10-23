@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import multiprocessing
+import multiprocessing.connection
+import os
 import signal
 import threading
 import weakref
@@ -49,9 +51,19 @@ class _KeepRunId(logging.Filter):
         return True
 
 
+def _exit_with(sentinel) -> None:
+    multiprocessing.connection.wait([sentinel])
+    os._exit(1)
+
+
 def _init_worker(queue, level: str) -> None:
     # Ctrl+C reaches the whole process group; the console decides when the workers stop.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    # A console killed outright (SIGKILL, or SIGTERM to a CLI scan) cannot stop its workers, so each
+    # worker stops itself when the console is gone instead of reading on for nobody.
+    parent = multiprocessing.parent_process()
+    if parent is not None:
+        threading.Thread(target=_exit_with, args=(parent.sentinel,), name="exitrisk-parent", daemon=True).start()
     handler = logging.handlers.QueueHandler(queue)
     handler.addFilter(_KeepRunId())
     root = logging.getLogger("exitrisk")
@@ -88,6 +100,7 @@ class InventoryPool:
         self._lock = threading.Lock()
         self._broken = False
         self._closed = False
+        self._stopped = False
         with _live_lock:
             _live.add(self)
 
@@ -112,6 +125,8 @@ class InventoryPool:
             )
         except BrokenProcessPool:
             with self._lock:
+                if self._stopped:  # terminate() killed them: the scan is stopping, not falling back
+                    raise
                 first, self._broken = not self._broken, True
             if first:
                 log.warning("the deep-scan worker processes stopped; reading the remaining accounts in the console")
@@ -131,7 +146,9 @@ class InventoryPool:
         self._queue.join_thread()
 
     def terminate(self) -> None:
-        """Kill the workers now, for a console told to stop at once."""
+        """Kill the workers now, for a scan stopped by Ctrl+C or a console told to stop at once."""
+        with self._lock:
+            self._stopped = True
         for proc in list((getattr(self._pool, "_processes", None) or {}).values()):
             proc.terminate()
 

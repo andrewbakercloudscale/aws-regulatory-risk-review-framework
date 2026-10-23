@@ -693,18 +693,28 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
         InventoryPool(min(settings.processes, len(active))) if settings.processes > 1 and len(active) > 1 else None
     )
     read = workers.inventory_account if workers else inventory.inventory_account
-    with workers or nullcontext(), ThreadPoolExecutor(max_workers=settings.max_workers) as pool:
-        # Each account's thread runs in a copy of this context, so its log lines keep the scan's run id.
-        for fut in as_completed([pool.submit(contextvars.copy_context().run, one, a) for a in active]):
-            account, inv, issues = fut.result()
-            for i in issues:
-                job.add_issue(i)
-            if inv:
-                results[account.id] = inv
-            done += 1
-            job.update(
-                "inventory",
-                60 + int(38 * done / max(len(active), 1)),
-                f"{done} of {len(active)} accounts scanned: {account.name}",
-            )
+    pool = ThreadPoolExecutor(max_workers=settings.max_workers)
+    with workers or nullcontext():
+        try:
+            # Each account's thread runs in a copy of this context, so its log lines keep the scan's run id.
+            for fut in as_completed([pool.submit(contextvars.copy_context().run, one, a) for a in active]):
+                account, inv, issues = fut.result()
+                for i in issues:
+                    job.add_issue(i)
+                if inv:
+                    results[account.id] = inv
+                done += 1
+                job.update(
+                    "inventory",
+                    60 + int(38 * done / max(len(active), 1)),
+                    f"{done} of {len(active)} accounts scanned: {account.name}",
+                )
+        except BaseException:
+            # Ctrl+C or a failure: drop the accounts not yet started and stop the workers now, rather
+            # than reading every remaining account first.
+            pool.shutdown(wait=False, cancel_futures=True)
+            if workers:
+                workers.terminate()
+            raise
+        pool.shutdown()
     return results
