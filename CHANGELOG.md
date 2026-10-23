@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-23
+
 ### Changed
 
 - **Deep scans are about twice as fast.** Inside each account every service in every region is now read
