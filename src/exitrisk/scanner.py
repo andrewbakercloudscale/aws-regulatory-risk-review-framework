@@ -9,11 +9,13 @@ Cost Explorer query (without which there is no score) fails the scan.
 
 from __future__ import annotations
 
+import contextvars
 import re
 import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -26,6 +28,7 @@ from .config import settings
 from .issues import Issue, describe_exception, is_fatal_auth_error
 from .logging_config import get_logger, run_id_var
 from .parallel import background
+from .procs import InventoryPool
 
 log = get_logger("scanner")
 
@@ -147,6 +150,19 @@ class ScanJob:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _sign_in_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _sign_in_gave_up: bool = False
+    finished_at: float | None = field(default=None, repr=False)  # time.monotonic() once finished
+
+    def finish(self, status: str, message: str) -> None:
+        """Status, phase and message in one step, so a poll never sees "complete" with a stale message."""
+        phase = "failed" if status == "failed" else "complete"
+        with self._lock:
+            self.status, self.phase, self.pct, self.message = status, phase, 100, message
+            self.finished_at = time.monotonic()
+        log.info("[%s 100%%] %s", phase, message, extra={"phase": phase})
+
+    def _set_sign_in(self, session_name: str | None) -> None:
+        with self._lock:
+            self.needs_sign_in = session_name
 
     def update(self, phase: str, pct: int, message: str) -> None:
         with self._lock:
@@ -193,7 +209,7 @@ class ScanJob:
                 return False
             with self._lock:
                 phase, pct, message = self.phase, self.pct, self.message
-            self.needs_sign_in = session_name
+            self._set_sign_in(session_name)
             deadline = time.monotonic() + SIGN_IN_WAIT_SECONDS
             try:
                 while time.monotonic() < deadline:
@@ -211,11 +227,14 @@ class ScanJob:
                 self._sign_in_gave_up = True
                 return False
             finally:
-                self.needs_sign_in = None
+                self._set_sign_in(None)
 
 
 _jobs: dict[str, ScanJob] = {}
 _jobs_lock = threading.Lock()
+# A finished scan's job is kept this long for the console's last polls; after that its status comes
+# from the saved scan, so a console left running for months does not hold every scan it ran.
+JOB_KEEP_SECONDS = 3600
 
 
 def get_job(scan_id: str) -> ScanJob | None:
@@ -232,7 +251,10 @@ def running_scans() -> list[str]:
 def start_scan(params: ScanParams) -> ScanJob:
     params.validate()
     job = ScanJob(id=store.new_scan_id(), params=params)
+    now = time.monotonic()
     with _jobs_lock:
+        for old in [k for k, j in _jobs.items() if j.finished_at and now - j.finished_at > JOB_KEEP_SECONDS]:
+            del _jobs[old]
         _jobs[job.id] = job
     threading.Thread(target=_run_safely, args=(job,), name=f"scan-{job.id}", daemon=True).start()
     return job
@@ -257,8 +279,7 @@ def record_failure(job: ScanJob, exc: Exception) -> str:
         log.error("scan failed: %s", msg)
     else:
         log.error("scan failed\n%s", traceback.format_exc())  # a bug: keep the traceback
-    job.status = "failed"
-    job.update("failed", 100, msg)
+    job.finish("failed", msg)
     try:
         store.save_scan(_document(job, job.data, failed=True))
     except Exception:
@@ -417,8 +438,7 @@ def run_scan(job: ScanJob) -> dict:
         job.add_issue(Issue("error", "organizations", "the selected OU contains no accounts"))
         doc = _document(job, data, status="complete")
         store.save_scan(doc)  # saved before the status says complete, so the report is there to load
-        job.status = "complete"
-        job.update("complete", 100, "No accounts to scan")
+        job.finish("complete", "No accounts to scan")
         return doc
     job.update(
         "organizations", 22, f"{len(accounts)} account{'' if len(accounts) == 1 else 's'} in {data['ou']['path']}"
@@ -554,8 +574,7 @@ def run_scan(job: ScanJob) -> dict:
     doc = _document(job, data, status=status)
     # Saved before the status says complete: the console loads the report the moment it sees that.
     store.save_scan(doc)
-    job.status = status
-    job.update("complete", 100, f"Scan {status}: {len(accounts)} account(s), {len(job.issues)} issue(s)")
+    job.finish(status, f"Scan {status}: {len(accounts)} account(s), {len(job.issues)} issue(s)")
     return doc
 
 
@@ -645,9 +664,7 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
                 ],
             )
         try:
-            inv, issues = inventory.inventory_account(
-                sess, account.id, regions_for(account.id), dependencies=p.dependencies
-            )
+            inv, issues = read(sess, account.id, regions_for(account.id), dependencies=p.dependencies)
         except Exception as exc:  # one account's odd answer must not lose the other accounts
             if not isinstance(exc, (ClientError, BotoCoreError)):
                 log.exception("inventory of %s failed with an unexpected error", account.id)
@@ -671,8 +688,14 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
             "selective deep scan: %d of %d account(s) are material", len(keep & {a.id for a in active}), len(active)
         )
         active = [a for a in active if a.id in keep]
-    with ThreadPoolExecutor(max_workers=settings.max_workers) as pool:
-        for fut in as_completed([pool.submit(one, a) for a in active]):
+    # Accounts are read on threads (sign-in and AWS waits) and parsed in worker processes (CPU).
+    workers = (
+        InventoryPool(min(settings.processes, len(active))) if settings.processes > 1 and len(active) > 1 else None
+    )
+    read = workers.inventory_account if workers else inventory.inventory_account
+    with workers or nullcontext(), ThreadPoolExecutor(max_workers=settings.max_workers) as pool:
+        # Each account's thread runs in a copy of this context, so its log lines keep the scan's run id.
+        for fut in as_completed([pool.submit(contextvars.copy_context().run, one, a) for a in active]):
             account, inv, issues = fut.result()
             for i in issues:
                 job.add_issue(i)

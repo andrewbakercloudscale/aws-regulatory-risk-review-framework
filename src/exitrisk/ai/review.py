@@ -20,11 +20,14 @@ names, ids and owners are replaced by codes before sending and restored in the a
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ..catalog import Catalog, load_catalog
 from ..config import settings
@@ -466,6 +469,20 @@ class Run:
         with self._lock:
             self.notes.append(text)
 
+    def snapshot(self) -> dict:
+        """State and usage as one consistent copy: the console polls while worker threads update both."""
+        with self._lock:
+            return {**self.state, "usage": dict(self.usage)}
+
+    def running(self) -> bool:
+        with self._lock:
+            return self.state["status"] == "running"
+
+    def finish(self, **fields) -> None:
+        """The final status, with the final usage, in one step: a poll never sees one without the other."""
+        with self._lock:
+            self.state.update(fields, usage=dict(self.usage))
+
     def _step(self, stage: str, done: int, total: int, message: str = "") -> None:
         with self._lock:
             self.state.update(stage=stage, done=done, total=total, message=message, **{"pass": PASSES.get(stage)})
@@ -653,9 +670,15 @@ def save_result(result: dict) -> None:
     path = _path(result["scan_id"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.parent.chmod(0o700)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(result, indent=1))
-    tmp.replace(path)
+    # A unique name per write: a review that finishes as it is stopped saves twice at once.
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(result, fh, indent=1)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def load_result(scan_id: str) -> dict | None:
@@ -712,7 +735,7 @@ def started(scan_id: str) -> None:
 def start(scan_id: str, report: dict, s: AISettings, basis: dict) -> dict:
     with _RUNS_LOCK:
         cur = _RUNS.get(scan_id)
-        if cur and cur.state["status"] == "running":
+        if cur and cur.running():
             raise ValueError("an AI review of this scan is already running")
         Client(s)  # fail now on a missing key, not in the background
         run = Run(scan_id, report, s, basis)
@@ -721,21 +744,28 @@ def start(scan_id: str, report: dict, s: AISettings, basis: dict) -> dict:
     def work():
         try:
             run.run()
-            run.state["status"] = "complete"
+            run.finish(status="complete")
         except Cancelled:
-            run.state.update(status="cancelled", message="Stopped")
+            run.finish(status="cancelled", message="Stopped")
             log.info("AI review of %s cancelled", scan_id)
         except AIError as exc:
-            run.state.update(status="failed", message=str(exc))
+            run.finish(status="failed", message=str(exc))
             log.warning("AI review of %s failed: %s", scan_id, exc)
         except Exception as exc:
-            run.state.update(status="failed", message=f"Unexpected error: {exc}. See the log.")
+            run.finish(status="failed", message=f"Unexpected error: {exc}. See the log.")
             log.exception("AI review of %s failed", scan_id)
-        run.state["usage"] = dict(run.usage)
 
     log.info("AI review of %s started with %s %s", scan_id, s.provider, s.model_id())
     threading.Thread(target=work, daemon=True, name=f"ai-{scan_id}").start()
-    return dict(run.state)
+    return run.snapshot()
+
+
+def running_reviews() -> list[str]:
+    """Scan ids whose AI review runs, or waits for its scan, in this process; they die with it."""
+    with _RUNS_LOCK:
+        runs = list(_RUNS.values())
+        pending = [k for k, v in _PENDING.items() if v["status"] == "running"]
+    return sorted({*pending, *(r.scan_id for r in runs if r.running())})
 
 
 def status(scan_id: str) -> dict | None:
@@ -744,12 +774,12 @@ def status(scan_id: str) -> dict | None:
         with _RUNS_LOCK:
             pending = _PENDING.get(scan_id)
             return dict(pending) if pending else None
-    return {**run.state, "usage": dict(run.usage)}
+    return run.snapshot()
 
 
 def cancel(scan_id: str) -> bool:
     run = _RUNS.get(scan_id)
-    if run and run.state["status"] == "running":
+    if run and run.running():
         run.cancel.set()
         return True
     with _RUNS_LOCK:

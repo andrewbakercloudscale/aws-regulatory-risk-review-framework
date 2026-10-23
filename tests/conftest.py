@@ -3,6 +3,8 @@ import tempfile
 
 # Isolate every test run from the user's real ~/.exitrisk before exitrisk is imported.
 os.environ["EXITRISK_DATA_DIR"] = tempfile.mkdtemp(prefix="exitrisk-test-")
+# Deep scans read accounts in the test process, where the tests' fakes are; test_procs.py covers workers.
+os.environ["EXITRISK_PROCESSES"] = "1"
 
 import pytest  # noqa: E402
 

@@ -64,21 +64,24 @@ def load_scan(scan_id: str) -> dict:
 # Scan files run to several MB; listing them should not parse every one on each page load.
 # Summaries are kept per file and re-read only when the file changes.
 _summaries: dict[str, tuple[tuple[int, int], dict]] = {}
+_summaries_lock = threading.Lock()  # the console lists scans from several request threads at once
 
 
 def list_scans() -> list[dict]:
     settings.ensure_dirs()
     out = []
     paths = [p for p in sorted(settings.scans_dir.glob("*.json"), reverse=True) if not p.name.startswith(".tmp-")]
-    for gone in set(_summaries) - {str(p) for p in paths}:
-        _summaries.pop(gone, None)
+    with _summaries_lock:
+        for gone in set(_summaries) - {str(p) for p in paths}:
+            _summaries.pop(gone, None)
     for path in paths:
         try:
             st = path.stat()
         except OSError:
             continue
         stamp = (st.st_mtime_ns, st.st_size)
-        hit = _summaries.get(str(path))
+        with _summaries_lock:
+            hit = _summaries.get(str(path))
         if hit and hit[0] == stamp:
             out.append(hit[1])
             continue
@@ -99,7 +102,8 @@ def list_scans() -> list[dict]:
             "label": s.get("label", ""),
             "target": (s.get("params") or {}).get("target"),
         }
-        _summaries[str(path)] = (stamp, summary)
+        with _summaries_lock:
+            _summaries[str(path)] = (stamp, summary)
         out.append(summary)
     return out
 

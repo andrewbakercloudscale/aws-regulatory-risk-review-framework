@@ -234,6 +234,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             "catalog_version": load_catalog().version,
             "pid": os.getpid(),
             "scans_running": running_scans(),
+            "reviews_running": ai_review.running_reviews(),
         }
 
     @app.get("/api/profiles")

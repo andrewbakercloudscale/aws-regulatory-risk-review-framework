@@ -8,6 +8,7 @@ exit job than the spend suggests. It needs a read-only role in each member accou
 
 from __future__ import annotations
 
+import contextvars
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -227,7 +228,9 @@ def inventory_account(
 
     counts_by_region: dict[str, dict] = {r: {} for r in region_list}
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(tasks)))) as pool:
-        for (region, probe), result in zip(tasks, pool.map(work, tasks), strict=True):
+        # Each task runs in a copy of this thread's context, so its log lines keep the scan's run id.
+        futures = [pool.submit(contextvars.copy_context().run, work, t) for t in tasks]
+        for (region, probe), result in zip(tasks, (f.result() for f in futures), strict=True):
             if len(probe) == 3:
                 values, probe_issues = result
                 counts_by_region[region].update(values)

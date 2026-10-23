@@ -57,37 +57,48 @@ def _serve(args) -> int:
     log.info("console at %s  (data: %s, log: %s)", url, settings.data_dir, settings.log_file)
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    _scan_safe_server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning")).run()
+    # A browser keeps connections open; without a limit a stop waits for the user to close the tab.
+    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="warning", timeout_graceful_shutdown=5)
+    _scan_safe_server(config).run()
     return 0
+
+
+def _running_work() -> list[str]:
+    """Scans and AI reviews running in this console; both live in memory and die with it."""
+    from .ai.review import running_reviews
+    from .scanner import running_scans
+
+    return [*running_scans(), *(f"AI review of {s}" for s in running_reviews())]
 
 
 def _scan_safe_server(config):
     import uvicorn
 
-    from .scanner import running_scans
+    from . import procs
 
     class ScanSafeServer(uvicorn.Server):
-        """Scans run in memory, so stopping mid-scan loses them. A stop signal waits for running
-        scans to finish (the console keeps serving meanwhile); a second signal stops at once."""
+        """Scans and AI reviews run in memory, so stopping mid-way loses them. A stop signal waits for
+        them to finish (the console keeps serving meanwhile); a second signal stops at once."""
 
         _waiting = False
 
         def handle_exit(self, sig, frame):
-            running = running_scans()
+            running = _running_work()
             if not running or self._waiting:
                 if self._waiting:
-                    log.warning("stopping now; scan(s) %s are lost", ", ".join(running) or "none")
+                    log.warning("stopping now; %s lost", ", ".join(running) or "nothing")
+                    procs.terminate_all()  # else interpreter exit waits for each worker's account
                 return super().handle_exit(sig, frame)
             self._waiting = True
             log.warning(
-                "stop requested while scan(s) %s run; stopping when they finish (signal again to stop now)",
+                "stop requested while %s run; stopping when they finish (signal again to stop now)",
                 ", ".join(running),
             )
 
             def wait():
-                while running_scans():
+                while _running_work():
                     time.sleep(2)
-                log.info("scans finished; stopping")
+                log.info("scans and reviews finished; stopping")
                 self.should_exit = True
 
             threading.Thread(target=wait, name="stop-after-scans", daemon=True).start()
@@ -109,16 +120,69 @@ def _stop_running_console(port: int) -> bool:
     if not pid:
         log.error("the console on port %d is too old to stop safely; stop it yourself when no scan runs", port)
         return False
-    if health.get("scans_running"):
-        log.warning("waiting for scan(s) %s on the running console to finish", ", ".join(health["scans_running"]))
-    os.kill(pid, signal.SIGTERM)
+    busy = [*health.get("scans_running", []), *health.get("reviews_running", [])]
+    if busy:
+        log.warning("waiting for %s on the running console to finish", ", ".join(busy))
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    # It stops once its scans and reviews are done, which can take an hour; then within seconds.
+    # Past that it is stuck, and a second signal stops it at once, as it would for Ctrl+C twice.
+    idle_since = None
     while True:
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             log.info("stopped the previous console (pid %d)", pid)
             return True
+        if _console_busy(port):
+            idle_since = None
+        elif idle_since is None:
+            idle_since = time.monotonic()
+        elif time.monotonic() - idle_since > REPLACE_STOP_SECONDS:
+            log.warning("the previous console (pid %d) did not stop; stopping it now", pid)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return True
+            if _gone(pid, REPLACE_STOP_SECONDS):
+                return True
+            log.error("the previous console (pid %d) will not stop; stop it yourself", pid)
+            return False
         time.sleep(1)
+
+
+# How long ``serve --replace`` waits for an idle console to stop before signalling it again.
+REPLACE_STOP_SECONDS = 15
+
+
+def _console_busy(port: int) -> bool:
+    """True while the console on ``port`` still runs scans or reviews (or does not answer: it may be busy)."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as resp:
+            health = json.load(resp)
+    except OSError:
+        return False  # no longer listening: shutting down
+    except ValueError:
+        return True
+    return bool(health.get("scans_running") or health.get("reviews_running"))
+
+
+def _gone(pid: int, seconds: float) -> bool:
+    import os
+
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        if time.monotonic() >= deadline:
+            return False  # checked once more after the last wait, so a process that just stopped counts
+        time.sleep(0.25)
 
 
 def _scan(args) -> int:

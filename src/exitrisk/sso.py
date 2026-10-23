@@ -240,10 +240,14 @@ class Login:
 
 
 _LOGINS: dict[str, Login] = {}
+_LOGINS_LOCK = threading.Lock()
+# A sign-in is kept this long after its code expires, for the console's last polls, then dropped.
+LOGIN_KEEP_SECONDS = 3600
 
 
 def get_login(login_id: str) -> Login | None:
-    return _LOGINS.get(login_id)
+    with _LOGINS_LOCK:
+        return _LOGINS.get(login_id)
 
 
 def start_login(session_name: str) -> Login:
@@ -264,7 +268,11 @@ def start_login(session_name: str) -> Login:
         user_code=auth["userCode"],
         expires_at=time.time() + auth["expiresIn"],
     )
-    _LOGINS[login.id] = login
+    now = time.time()
+    with _LOGINS_LOCK:
+        for old in [k for k, v in _LOGINS.items() if now - v.expires_at > LOGIN_KEEP_SECONDS]:
+            del _LOGINS[old]
+        _LOGINS[login.id] = login
     threading.Thread(
         target=_poll, args=(login, client, reg, auth, start_url, region), name=f"sso-{login.id}", daemon=True
     ).start()

@@ -12,7 +12,8 @@ def _default_data_dir() -> Path:
 
 
 def _workers(raw: str, default: int = 8) -> int:
-    """EXITRISK_MAX_WORKERS, read at import: a typo must not stop every command, so fall back to the default."""
+    """EXITRISK_MAX_WORKERS / EXITRISK_PROCESSES, read at import: a typo must not stop every command,
+    so fall back to the default."""
     try:
         return min(max(int(raw), 1), 64) if raw.strip() else default
     except ValueError:
@@ -26,6 +27,10 @@ class Settings:
     # Cost Explorer and Organizations are global services served from us-east-1.
     billing_region: str = "us-east-1"
     max_workers: int = field(default_factory=lambda: _workers(os.environ.get("EXITRISK_MAX_WORKERS", "")))
+    # Worker processes a deep scan reads accounts in (procs.py); 1 reads them in the console process.
+    processes: int = field(
+        default_factory=lambda: _workers(os.environ.get("EXITRISK_PROCESSES", ""), default=min(os.cpu_count() or 1, 8))
+    )
 
     @property
     def scans_dir(self) -> Path:

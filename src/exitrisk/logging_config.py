@@ -34,7 +34,9 @@ def redact(text: str) -> str:
 
 class _RunIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.run_id = run_id_var.get()
+        # A record relayed from a deep-scan worker process (procs.py) already carries its scan id.
+        if not hasattr(record, "run_id"):
+            record.run_id = run_id_var.get()
         return True
 
 
