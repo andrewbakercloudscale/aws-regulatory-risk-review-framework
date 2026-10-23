@@ -356,3 +356,100 @@ def test_inventory_account_counts_resources_and_collapses_repeated_refusals():
     assert "sns_subscription" not in out["dependency_kinds"]
     dep_issues = [i for i in issues if i.category == "dependencies"]
     assert len(dep_issues) == 1 and "2 regions" in dep_issues[0].message
+
+
+def test_the_landing_zone_baseline_is_not_counted_as_integrations():
+    from collections import Counter
+
+    read = []
+    rules = [
+        {"Name": "DO-NOT-DELETE-AmazonInspectorEc2ManagedRule", "ManagedBy": "inspector2.amazonaws.com"},
+        {"Name": "SIRGuardDutyRule", "ManagedBy": "triage.security-ir.amazonaws.com"},
+        {"Name": "aws-controltower-ConfigComplianceChangeEventRule"},
+        {"Name": "orders-to-billing"},
+    ]
+    events = _Client(
+        {"list_rules": [{"Rules": rules}]},
+        {"list_targets_by_rule": lambda Rule, **_: read.append(Rule) or {"Targets": [{"Arn": "arn:aws:sqs:r:1:q"}]}},
+    )
+    edges: Counter = Counter()
+    dep._eventbridge_targets(_Session({"events": events}), "eu-west-1", edges, [])
+    assert edges == {"eventbridge>sqs": 1} and read == ["orders-to-billing"]  # AWS's rules are not even read
+
+    subs = [
+        {
+            "TopicArn": "arn:aws:sns:r:1:aws-controltower-SecurityNotifications",
+            "Protocol": "lambda",
+            "SubscriptionArn": "arn:aws:sns:r:1:x",
+        },
+        {"TopicArn": "arn:aws:sns:r:1:orders", "Protocol": "sqs", "SubscriptionArn": "arn:aws:sns:r:1:y"},
+    ]
+    edges = Counter()
+    dep._sns_subscriptions(
+        _Session({"sns": _Client({"list_subscriptions": [{"Subscriptions": subs}]})}), "r", edges, []
+    )
+    assert edges == {"sns>sqs": 1}
+
+    # Scans saved before: AWS's security wiring is dropped when the report is built.
+    rows = integration_days(
+        {"eventbridge>inspector2": 90, "eventbridge>controltower-eu-west-1": 16, "sqs>lambda": 3}, CATALOG
+    )
+    assert [r["edge"] for r in rows] == ["sqs>lambda"]
+
+
+def test_a_function_called_from_several_states_is_one_integration():
+    fn = "arn:aws:lambda:r:1:function:enrich"
+    definition = {
+        "States": {
+            "A": {"Type": "Task", "Resource": fn},
+            "B": {"Type": "Task", "Resource": fn},
+            "C": {"Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": {"FunctionName": fn}},
+            "D": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "Parameters": {"FunctionName": "other"},
+            },
+            "E": {"Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": {"FunctionName": fn}},
+        }
+    }
+    assert dep._task_targets(definition) == ["lambda", "lambda", "lambda"]
+
+
+def test_inventory_counts_leave_out_the_baseline():
+    from exitrisk.collectors import inventory
+
+    lam = _Client(
+        {
+            "list_functions": [
+                {
+                    "Functions": [
+                        {"FunctionName": "aws-controltower-NotificationForwarder", "Runtime": "python3.12"},
+                        {"FunctionName": "orders", "Runtime": "python3.12"},
+                    ]
+                }
+            ]
+        }
+    )
+    assert inventory._lambda(lam) == {
+        "lambda_functions": 1,
+        "lambda_runtimes": {"python3.12": 1},
+        "baseline_lambda_functions": 1,
+    }
+    rules = _Client(
+        {"list_rules": [{"Rules": [{"Name": "x", "ManagedBy": "inspector2.amazonaws.com"}, {"Name": "y"}]}]}
+    )
+    assert inventory._rules(rules) == {"eventbridge_rules": 1, "baseline_eventbridge_rules": 1}
+    stacks = dict((k, f) for _, k, f in inventory.PROBES)["cloudformation"]
+    cf = _Client(
+        {
+            "list_stacks": [
+                {
+                    "StackSummaries": [
+                        {"StackName": "StackSet-AWSControlTowerBP-BASELINE-CONFIG-1"},
+                        {"StackName": "payments"},
+                    ]
+                }
+            ]
+        }
+    )
+    assert stacks(cf) == {"cloudformation_stacks": 1, "baseline_cloudformation_stacks": 1}

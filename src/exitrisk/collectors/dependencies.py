@@ -24,6 +24,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from ..aws_session import BOTO_CONFIG
 from ..issues import Issue, describe_exception
 from ..logging_config import get_logger
+from . import baseline
 
 log = get_logger("dependencies")
 
@@ -66,6 +67,8 @@ def _lambda_triggers(session, region: str, edges: Counter, notes: list[str]) -> 
     c = session.client("lambda", region_name=region, config=BOTO_CONFIG)
     for page in c.get_paginator("list_event_source_mappings").paginate():
         for m in page.get("EventSourceMappings", []):
+            if baseline.is_baseline(m.get("FunctionArn")):
+                continue
             src = _service_of(m.get("EventSourceArn", "")) if m.get("EventSourceArn") else "kafka"
             edges[f"{src}>lambda"] += 1
 
@@ -75,6 +78,8 @@ def _eventbridge_targets(session, region: str, edges: Counter, notes: list[str])
     seen = 0
     for page in c.get_paginator("list_rules").paginate():
         for rule in page.get("Rules", []):
+            if baseline.managed_rule(rule):  # AWS's own plumbing: no need to read its targets
+                continue
             if seen >= MAX_RULES:
                 notes.append(f"EventBridge: targets read for the first {MAX_RULES} rules only")
                 return
@@ -90,6 +95,8 @@ def _sns_subscriptions(session, region: str, edges: Counter, notes: list[str]) -
         for s in page.get("Subscriptions", []):
             proto = (s.get("Protocol") or "").lower()
             target = {"https": "http", "email-json": "email", "application": "mobile"}.get(proto, proto)
+            if baseline.is_baseline(s.get("TopicArn")):  # Control Tower's notifications
+                continue
             if s.get("SubscriptionArn", "").startswith("arn:"):  # skip PendingConfirmation
                 edges[f"sns>{target}"] += 1
 
@@ -138,13 +145,18 @@ def _apigateway(session, region: str, edges: Counter, notes: list[str]) -> None:
 
 
 def _task_targets(definition: dict) -> list[str]:
-    """The services a state machine's Task states call, walking Parallel and Map branches."""
+    """The services a state machine's Task states call, walking Parallel and Map branches. A function
+    or action called from several states is one integration, not one per state."""
     out = []
+    seen: set[tuple] = set()
 
     def walk(states: dict) -> None:
         for st in (states or {}).values():
             res = st.get("Resource", "")
-            if st.get("Type") == "Task" and res:
+            params = st.get("Parameters") or st.get("Arguments") or {}
+            called = (res, str(params.get("FunctionName") or params.get("FunctionName.$") or ""))
+            if st.get("Type") == "Task" and res and called not in seen:
+                seen.add(called)
                 # arn:aws:states:::dynamodb:putItem, arn:aws:states:::aws-sdk:s3:getObject, or a Lambda ARN
                 parts = res.split(":")
                 if res.startswith("arn:aws:states:::"):

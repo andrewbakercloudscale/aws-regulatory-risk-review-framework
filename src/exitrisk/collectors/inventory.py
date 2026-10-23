@@ -20,6 +20,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from ..aws_session import BOTO_CONFIG, ClientCache
 from ..issues import Issue, describe_exception
 from ..logging_config import get_logger
+from . import baseline
 from . import dependencies as dependencies_mod
 
 log = get_logger("inventory")
@@ -45,13 +46,48 @@ def _rds(client) -> dict:
     return {"rds_engines": dict(engines)}
 
 
+def _named(key: str, op: str, page_key: str, name: Callable[[dict | str], str | None], **kwargs) -> Callable:
+    """Like _count, leaving out the landing-zone baseline (collectors/baseline.py), counted apart."""
+
+    def count(client) -> dict:
+        n = skipped = 0
+        for page in client.get_paginator(op).paginate(**kwargs):
+            for item in page.get(page_key, []):
+                if baseline.is_baseline(name(item)):
+                    skipped += 1
+                else:
+                    n += 1
+        return {key: n, f"baseline_{key}": skipped}
+
+    return count
+
+
 def _lambda(client) -> dict:
     """Function count and runtimes: custom and end-of-support runtimes are more work to move."""
     runtimes: Counter = Counter()
+    skipped = 0
     for page in client.get_paginator("list_functions").paginate():
         for fn in page.get("Functions", []):
+            if baseline.is_baseline(fn.get("FunctionName")):
+                skipped += 1
+                continue
             runtimes[fn.get("Runtime") or ("container" if fn.get("PackageType") == "Image" else "unknown")] += 1
-    return {"lambda_functions": sum(runtimes.values()), "lambda_runtimes": dict(runtimes)}
+    return {
+        "lambda_functions": sum(runtimes.values()),
+        "lambda_runtimes": dict(runtimes),
+        "baseline_lambda_functions": skipped,
+    }
+
+
+def _rules(client) -> dict:
+    n = skipped = 0
+    for page in client.get_paginator("list_rules").paginate():
+        for rule in page.get("Rules", []):
+            if baseline.managed_rule(rule):
+                skipped += 1
+            else:
+                n += 1
+    return {"eventbridge_rules": n, "baseline_eventbridge_rules": skipped}
 
 
 def _ec2(client) -> dict:
@@ -77,8 +113,12 @@ PROBES: list[tuple[str, str, Callable]] = [
     ("AWS Step Functions", "stepfunctions", _count("step_functions", "list_state_machines", "stateMachines")),
     ("Amazon Kinesis", "kinesis", _count("kinesis_streams", "list_streams", "StreamNames")),
     ("Amazon Simple Queue Service", "sqs", _count("sqs_queues", "list_queues", "QueueUrls")),
-    ("Amazon Simple Notification Service", "sns", _count("sns_topics", "list_topics", "Topics")),
-    ("Amazon EventBridge", "events", _count("eventbridge_rules", "list_rules", "Rules")),
+    (
+        "Amazon Simple Notification Service",
+        "sns",
+        _named("sns_topics", "list_topics", "Topics", lambda t: t["TopicArn"]),
+    ),
+    ("Amazon EventBridge", "events", _rules),
     ("Amazon API Gateway", "apigateway", _count("api_gateway_rest", "get_rest_apis", "items")),
     ("Amazon API Gateway", "apigatewayv2", lambda c: {"api_gateway_http": len(c.get_apis().get("Items", []))}),
     ("Amazon Cognito", "cognito-idp", _count("cognito_user_pools", "list_user_pools", "UserPools", MaxResults=60)),
@@ -87,10 +127,11 @@ PROBES: list[tuple[str, str, Callable]] = [
     (
         "AWS CloudFormation",
         "cloudformation",
-        _count(
+        _named(
             "cloudformation_stacks",
             "list_stacks",
             "StackSummaries",
+            lambda st: st.get("StackName"),
             StackStatusFilter=["CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE", "IMPORT_COMPLETE"],
         ),
     ),

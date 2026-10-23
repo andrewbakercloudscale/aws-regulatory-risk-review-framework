@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 
 from .catalog import Catalog
+from .collectors.baseline import platform_edge
 
 DAYS_PER_WEEK = 5.0
 REPEAT_FULL = 20
@@ -176,7 +177,7 @@ def integration_days(edges: dict[str, int], catalog: Catalog) -> list[dict]:
     """One row per kind of integration: {edge, source service, count, tier, days}."""
     rows = []
     for edge, n in sorted(edges.items(), key=lambda kv: -kv[1]):
-        if n <= 0:
+        if n <= 0 or platform_edge(edge):  # AWS's own security wiring, in scans saved before it was left out
             continue
         src, _, dst = edge.partition(">")
         per = INTEGRATION_DAYS_BY_TARGET.get(dst, INTEGRATION_DAYS)
