@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from . import sso, store
+from . import procs, sso, store
 from .aws_session import ClientCache, caller_identity, make_session, member_session
 from .collectors import cost, inventory, organizations
 from .config import settings
@@ -665,6 +665,8 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
             )
         try:
             inv, issues = read(sess, account.id, regions_for(account.id), dependencies=p.dependencies)
+        except procs.Stopped:
+            return account, None, []
         except Exception as exc:  # one account's odd answer must not lose the other accounts
             if not isinstance(exc, (ClientError, BotoCoreError)):
                 log.exception("inventory of %s failed with an unexpected error", account.id)

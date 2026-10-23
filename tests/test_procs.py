@@ -240,7 +240,7 @@ def test_terminated_workers_do_not_fall_back_to_this_process(monkeypatch):
         threading.Timer(0.5, pool.terminate).start()
         with pytest.raises(BrokenProcessPool):
             pool.call(time.sleep, 30)
-        with pytest.raises(BrokenProcessPool):
+        with pytest.raises(procs.Stopped):
             pool.inventory_account(session, "111111111111", None)
     assert seen == []
 

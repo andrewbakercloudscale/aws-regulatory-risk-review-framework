@@ -36,6 +36,10 @@ _live: weakref.WeakSet[InventoryPool] = weakref.WeakSet()
 _live_lock = threading.Lock()
 
 
+class Stopped(Exception):
+    """The workers were stopped on purpose (Ctrl+C): the account is dropped, not reported as failed."""
+
+
 class _Relay(logging.Handler):
     """In the console process: hand a worker's log record to the logger it was made by."""
 
@@ -126,7 +130,7 @@ class InventoryPool:
         except BrokenProcessPool:
             with self._lock:
                 if self._stopped:  # terminate() killed them: the scan is stopping, not falling back
-                    raise
+                    raise Stopped from None
                 first, self._broken = not self._broken, True
             if first:
                 log.warning("the deep-scan worker processes stopped; reading the remaining accounts in the console")
