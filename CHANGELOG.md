@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-23
+
 ### Changed
 
 - AI review reads accounts in batches of 12, four at a time (was 20, three at a time), so a large
