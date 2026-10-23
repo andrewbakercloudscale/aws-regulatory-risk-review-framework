@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-10-23
+
 ### Added
 
 - AI review shows its approximate cost at the top of the result: tokens in and out at the model's list
