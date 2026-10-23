@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-23
+
 ### Changed
 
 - **One journey with an optional Agentic Risk Review.** New scan has a step 4, **Add an Agentic Risk
