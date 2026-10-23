@@ -43,7 +43,7 @@ def main() -> int:
     from exitrisk.demo import create_demo_scan
     from exitrisk.server import create_app
 
-    def example_access_check(profile, role_name=None, on_check=None):
+    def example_access_check(profile, role_name=None, on_check=None, on_progress=None):
         # A canned result (a member account, refused OU access) so the screenshot needs no AWS.
         arn = "arn:aws:sts::222222222222:assumed-role/AWSReservedSSO_ReadOnly_0123456789abcdef/analyst@example.com"
         C = preflight.Check
@@ -66,6 +66,7 @@ def main() -> int:
                 "organizations:ListRoots, organizations:ListOrganizationalUnitsForParent",
             ),
             C("accounts", "List accounts", "skip", "Needs the OU tree."),
+            C("account_tags", "Read account tags", "skip", "No member account found to test against."),
             C(
                 "cost",
                 "Read Cost Explorer",
@@ -73,12 +74,44 @@ def main() -> int:
                 "Spend visible for 1 account (this check cost US$0.01).",
                 "A member account sees only its own spend; use the management account.",
             ),
-            C("deep_scan", "Deep scan role (optional)", "skip", "No member role given."),
+            C("commitments", "Read Savings Plans and reservations", "ok", "Commitment end dates are readable."),
+            C(
+                "deep_scan",
+                preflight.DEEP_LABEL,
+                "ok",
+                "Signed in with permission set ReadOnly in member account 333333333333.",
+            ),
+            C(
+                "inventory_reads",
+                preflight.INV_LABEL,
+                "warn",
+                "1 of 20 calls refused in 333333333333: ecs:ListServices",
+                "Inventory scans will miss these. Grant them (iam/member-account-role-policy.json).",
+                "ecs:ListServices",
+            ),
+            C(
+                "dependency_reads",
+                preflight.DEP_LABEL,
+                "warn",
+                "2 of 4 calls refused in 333333333333: lambda:ListEventSourceMappings, events:ListTargetsByRule",
+                "Dependency scans will miss these. Grant them (iam/member-account-role-policy.json).",
+                "lambda:ListEventSourceMappings, events:ListTargetsByRule",
+            ),
+            C(
+                "assignments",
+                preflight.ASSIGN_LABEL,
+                "warn",
+                "ReadOnly is assigned in 40 of the 42 accounts your sign-in reaches; "
+                "the other 2 will not be deep-scanned.",
+                "Assign ReadOnly in the remaining accounts, or give a member role to assume.",
+                "IAM Identity Center assignment of ReadOnly in 2 more account(s)",
+            ),
         ]
         for check in checks if on_check else ():
             on_check(asdict(check))
         ctx = {"profile": profile, "role_name": None, "account_id": "222222222222", "arn": arn}
         ctx.update(permission_set="ReadOnly", org_id="o-example", management_account_id="111111111111")
+        ctx["member_access"] = "permission set ReadOnly"
         return preflight._result(checks, ctx)
 
     preflight.run_checks = example_access_check

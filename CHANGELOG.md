@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-23
+
 ### Added
 
 - Deep scans with your own sign-in: with an IAM Identity Center profile and no member role, the
