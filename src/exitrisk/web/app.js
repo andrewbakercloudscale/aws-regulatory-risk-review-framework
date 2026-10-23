@@ -1422,7 +1422,7 @@
       const frac = run.total ? run.done / run.total : null;
       const started = Date.parse(run.started_at || "") || state.aiSeen || (state.aiSeen = Date.now());
       el.innerHTML = `
-        <div class="card-head"><h3>${AI_ICON}Agentic Risk Review running</h3><span class="no-print"><button type="button" class="btn ghost" id="btnAiStop">Stop</button></span></div>
+        <div class="card-head ai-head"><h3>${AI_ICON}Agentic Risk Review running</h3><span class="no-print"><button type="button" class="btn danger" id="btnAiStop">Stop</button></span></div>
         <div class="busy" role="status" aria-live="polite" data-started="${started}"><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text">${esc(run.stage)}${run.pass ? ` (pass ${run.pass} of 3)` : ""}</span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar${frac == null ? "" : " det"}" aria-hidden="true"><i${frac == null ? "" : ` style="width:${Math.round(frac * 100)}%"`}></i></div><div class="busy-sub">${esc(run.message || "")}${run.usage?.calls ? ` · ${plural(run.usage.calls, "call")} so far` : ""}</div></div>
         ${state.aiLost ? `<p class="warn-text">${esc(state.aiLost)}</p>` : ""}
         <p class="hint">Keep reading the report: this section fills in when the review finishes, usually 5 to 40 minutes.</p>`;
@@ -1466,8 +1466,8 @@
     const acctRow = (a, full) => `<tr><td class="acct-name"><strong>${esc(res.account_names?.[a.id] || a.id)}</strong></td><td><span class="sev" style="--dot:${tierColor(levelTier(a.entrenchment) || 3)}">${esc(a.entrenchment || EMPTY)}</span></td><td class="num-cell">${range(a.effort_engineer_weeks, (v) => num(v))}</td><td class="num-cell">${num(modelWeeks[a.id], 0)}</td><td>${esc(a.phase || "")}</td><td class="small">${esc(a.why || "")}${full && a.key_risks?.length ? `<div class="hint">Risks: ${esc(a.key_risks.join("; "))}</div>` : ""}</td><td class="small">${esc(a.approach || "")}</td></tr>`;
     const acctHead = '<thead><tr><th>Account</th><th>Entrenchment</th><th class="num-cell">AI weeks</th><th class="num-cell">Model weeks</th><th>Phase</th><th>Why it is hard</th><th>How to tackle it</th></tr></thead>';
     el.innerHTML = `
-      <div class="card-head"><h3>${AI_ICON}Overall AI summary</h3>
-        <span class="no-print"><button type="button" class="btn" id="btnAiAgain">Run again</button> <button type="button" class="btn" id="btnAiCfgHere">AI configuration</button> <button type="button" class="btn ghost" id="btnAiRemove">Remove</button></span></div>
+      <div class="card-head ai-head"><h3>${AI_ICON}Overall AI summary</h3>
+        <span class="no-print ai-actions"><button type="button" class="btn primary" id="btnAiAgain">Run again</button> <button type="button" class="btn outline" id="btnAiCfgHere">AI configuration</button> <button type="button" class="btn danger" id="btnAiRemove">Remove</button></span></div>
       <p class="hint">${esc(res.provider_label)} · ${esc(res.model)} · ${esc(fmtWhen(res.created_at))} · ${plural(res.accounts_analysed, "account")} analysed in three passes${res.masked ? " · names hidden from the model" : ""} · ${num(res.usage?.calls)} calls, ${num(res.seconds / 60, 0)} min · AI cost ${res.cost_usd != null ? `about <strong>$${res.cost_usd < 10 ? res.cost_usd.toFixed(2) : num(res.cost_usd)}</strong> (${num((res.usage?.input_tokens || 0) / 1000)}k tokens in at $${num(res.price.input, 2)}/M, ${num((res.usage?.output_tokens || 0) / 1000)}k out at $${num(res.price.output, 2)}/M, list price)` : "not known for this model"}</p>
       ${sameBasis ? "" : `<p class="warn-text">Run on a different filter (${esc(res.basis?.filter || "unknown")}); run it again for the accounts shown now.</p>`}
       <p class="ai-headline">${esc(f.headline || "")}</p>

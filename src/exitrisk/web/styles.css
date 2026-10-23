@@ -96,6 +96,10 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
 .btn.ghost { border-color: transparent; background: transparent; box-shadow: none; }
 .btn.ghost:hover { background: var(--surface-2); }
 .btn:disabled { opacity: .55; cursor: progress; transform: none; }
+.btn.outline { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.btn.outline:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border-color: var(--accent-hover); }
+.btn.danger { border-color: color-mix(in srgb, var(--sev-critical) 70%, transparent); color: var(--sev-critical); background: color-mix(in srgb, var(--sev-critical) 5%, var(--surface)); }
+.btn.danger:hover { background: color-mix(in srgb, var(--sev-critical) 12%, var(--surface)); border-color: var(--sev-critical); }
 .btn.icon { width: 38px; padding: 0; }
 .btn svg, .vtab svg, .menu-pop svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .btn.icon svg { width: 18px; height: 18px; }
@@ -246,6 +250,12 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .model-col { display: grid; gap: 16px; }
 .model-grid .card { margin: 0; }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* The AI card's title bar: a tinted, bordered band so the heading and its actions read as one control. */
+.card-head.ai-head { margin: -18px -20px 14px; padding: 12px 20px; border-radius: var(--radius) var(--radius) 0 0;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface)); border-bottom: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); }
+.card-head.ai-head h3 { margin: 0; color: var(--accent); }
+.ai-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+@media print { .card-head.ai-head { background: none; border-bottom: 1px solid var(--border); } .card-head.ai-head h3 { color: var(--ink); } }
 .model-strip { display: flex; justify-content: space-between; align-items: center; gap: 12px 20px; flex-wrap: wrap; margin: 0 0 12px; }
 .answers.inline { display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 0; }
 .excl-list { max-height: min(50vh, 420px); }
