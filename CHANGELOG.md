@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-23
+
 ### Added
 
 - **Deep scan of only the regions with spend.** New scan option "Only regions with spend" (CLI
