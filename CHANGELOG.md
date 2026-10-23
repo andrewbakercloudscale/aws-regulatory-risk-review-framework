@@ -6,6 +6,36 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- **Deep scans use several CPU cores.** Each account is now read in a worker process (up to 8,
+  `EXITRISK_PROCESSES`; `1` keeps the old single-process behaviour), so parsing AWS answers is no longer
+  held to one core by Python's GIL. On the same 16 Prod accounts, twice in each order: 168 s against 932 s,
+  and 218 s against 285 s, with the console's own CPU down from 150 to 290 s to under 2 s. The gain is
+  smaller than the 3x the CPU suggests because the scan is now limited by the network: through a
+  TLS-inspecting corporate proxy one handshake took 0.5 s idle and 1 to 80 s under load. Each worker uses
+  200 to 400 MB of memory. Credentials go to the workers in memory only; log lines come back to the console,
+  which alone writes the log file. If the workers die, the remaining accounts are read in the console.
+- **CLI `--months` defaults to 12**, as the console does (was 3).
+
+### Fixed
+
+- **Ctrl+C stops a CLI deep scan at once.** It used to read every remaining account first; now the
+  accounts not started are dropped and the workers stopped.
+- **No worker outlives the console.** A console killed outright (SIGKILL, SIGTERM to a CLI scan) left its
+  workers reading on; each worker now stops itself when the console is gone.
+- **`serve --replace` no longer hangs.** It waits while the running console finishes a scan or AI review,
+  signals it a second time if it is still up 15 seconds after going idle, and gives up with an error
+  instead of waiting for ever. Stopping the console now also waits for a running Agentic Risk Review,
+  not only scans, and a second stop signal stops the workers at once.
+- **Race conditions.** A scan's final status, phase and finish time are set together, so a status poll
+  cannot see "complete" with the old phase; the sign-in prompt flag likewise. The list of scan summaries
+  is guarded (a scan saved while the list was read could fail it with "dictionary changed size"). An AI
+  review's status and token usage are read and finished together, and two reviews saved at once no longer
+  share a temporary file. Finished scans and sign-ins are dropped from memory after an hour.
+- **Small fixes.** The three dialogs are labelled for screen readers; "organisation" is spelt one way in
+  the console, CLI and messages; the stale demo figures in the executive guide and README are corrected.
+
 ## [0.17.0] - 2026-10-23
 
 ### Added

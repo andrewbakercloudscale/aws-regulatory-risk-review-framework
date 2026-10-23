@@ -13,7 +13,9 @@
    shows a year of growth by product type) → optionally tick **Deep scan** and give the member role name.
 3. Watch the progress bar. A spend-only scan of a few hundred accounts takes seconds; a deep scan takes
    about 20 seconds per account with 18 regions enabled (every service in every region read in parallel), with
-   8 accounts at a time (`EXITRISK_MAX_WORKERS`, default 8): about 15 minutes for 166 accounts. Tick
+   8 accounts at a time (`EXITRISK_MAX_WORKERS`, default 8), each in its own worker process
+   (`EXITRISK_PROCESSES`): about 15 minutes for 166 accounts on a quiet network. Behind a TLS-inspecting
+   proxy the proxy sets the pace, and a scan can take twice that. Tick
    **Only regions with spend** to read just the regions billing US$1 a month or more (about half the time;
    resources that cost nothing yet, and the landing-zone baseline elsewhere, are then not counted).
 4. Filter to production in the bar at the top, open **Exit model** in the top bar to answer the delivery questions, the notice period and the critical accounts, check section 9,

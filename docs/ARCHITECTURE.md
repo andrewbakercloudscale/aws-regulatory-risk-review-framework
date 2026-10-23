@@ -50,7 +50,8 @@ database and no cloud deployment: scans are JSON files in a private directory on
    account's temporary credentials and wait out an ended sign-in; the worker gets only those
    credentials and returns counts and issues. Workers are started with spawn, not fork (a fork copies
    locks other threads hold), and send their log lines back through a queue, so only the console
-   writes the log file. If a worker dies, the accounts left are read in the console instead.
+   writes the log file. If a worker dies, the accounts left are read in the console instead. Ctrl+C
+   drops the accounts not started and kills the workers; a worker whose console is gone stops itself.
 
 ## Concurrency
 
