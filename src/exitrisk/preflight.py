@@ -340,6 +340,7 @@ DEP_LABEL = "Read integrations in a member account"
 
 
 ASSIGN_LABEL = "Permission set in every account"
+AI_LABEL = "AI review (optional)"
 
 
 def _member_checks(checks, session, profile, role_name, member_id, ctx, on_progress=None) -> None:
@@ -482,14 +483,33 @@ _LATER = [
     ("inventory_reads", INV_LABEL),
     ("dependency_reads", DEP_LABEL),
     ("assignments", ASSIGN_LABEL),
+    ("ai", AI_LABEL),
 ]
 # Checks a quick scan can do without: a failure there is a warning, not "Not ready".
-OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads", "assignments"}
+OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads", "assignments", "ai"}
 # Every run reports exactly these checks, in this order (skipped ones included).
 STEPS = [("identity", "Sign in to AWS"), *_LATER]
 
 
+def _ai_check() -> Check:
+    """The optional AI review: the saved provider answers the same small reasoning test as in its dialog."""
+    from .ai import providers as ai
+
+    fix = "Open AI review in the top bar to change the provider, model or key."
+    if not ai.settings_saved():
+        return Check("ai", AI_LABEL, "skip", "Not set up. Optional: choose a provider from AI review in the top bar.")
+    s = ai.load_settings()
+    label = ai.PROVIDERS[s.provider].label
+    try:
+        got = ai.test_connection(s)
+    except Exception as exc:  # any failure here is a warning: the scan itself does not need the AI review
+        return Check("ai", AI_LABEL, "warn", f"{label}: {exc}", fix)
+    return Check("ai", AI_LABEL, "ok", f"{got['model']} on {label} answered a reasoning test in {got['seconds']} s.")
+
+
 def _result(checks: list[Check], ctx: dict) -> dict:
+    if not any(c.id == "ai" for c in checks):
+        checks.append(_ai_check())  # last on every path, whatever happened with AWS
     required = [c for c in checks if c.id not in OPTIONAL]
     ready = all(c.status == "ok" for c in required)
     gaps = [c for c in checks if c.id in OPTIONAL and c.status in ("warn", "fail")]

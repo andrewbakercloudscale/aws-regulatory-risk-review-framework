@@ -106,6 +106,12 @@ def main() -> int:
                 "Assign ReadOnly in the remaining accounts, or give a member role to assume.",
                 "IAM Identity Center assignment of ReadOnly in 2 more account(s)",
             ),
+            C(
+                "ai",
+                preflight.AI_LABEL,
+                "ok",
+                "global.anthropic.claude-opus-5-5 on Amazon Bedrock answered a reasoning test in 2.8 s.",
+            ),
         ]
         for check in checks if on_check else ():
             on_check(asdict(check))

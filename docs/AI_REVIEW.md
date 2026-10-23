@@ -32,7 +32,8 @@ Claude, a high reasoning effort elsewhere; a model that refuses the option runs 
 Open **AI review** in the top bar. **Test connection** asks the chosen model a small reasoning
 question that must come back as valid JSON with the right answer, so a bad key, an unknown model or a
 model that cannot follow the format fails in seconds. **Test all providers** does the same for every
-provider with a key.
+provider with a key. Once the AI review is set up, **Check access** runs the same test as its last,
+optional step.
 
 ## How it works
 

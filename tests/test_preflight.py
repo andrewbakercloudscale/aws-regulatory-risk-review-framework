@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import boto3
+import pytest
 import yaml
 from botocore.exceptions import ClientError, NoCredentialsError
 from botocore.stub import Stubber
@@ -9,6 +10,15 @@ from fastapi.testclient import TestClient
 
 from exitrisk import preflight
 from exitrisk.server import create_app
+
+
+@pytest.fixture(autouse=True)
+def _no_ai_settings(monkeypatch, tmp_path):
+    """Each test starts with the AI review not set up, so the access check never calls a model."""
+    from exitrisk.ai import providers as ai
+
+    monkeypatch.setattr(ai, "_settings_path", lambda: tmp_path / "ai.json")
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SSO_ARN = "arn:aws:sts::111111111111:assumed-role/AWSReservedSSO_CTO-Read_0123456789abcdef/me@example.com"
@@ -100,7 +110,7 @@ def test_management_account_with_full_access_is_ready(monkeypatch):
     assert r["ready"] and r["permission_set"] == "CTO-Read"
     assert r["verdict"].startswith("Ready: a scan will cover")
     assert [c["id"] for c in r["checks"]] == [cid for cid, _ in preflight.STEPS]
-    assert [c["status"] for c in r["checks"]] == ["ok"] * 7 + ["skip"] * 4
+    assert [c["status"] for c in r["checks"]] == ["ok"] * 7 + ["skip"] * 5  # deep scan and AI review not set up
     cost = next(c for c in r["checks"] if c["id"] == "cost")
     assert "40 accounts in 1 region " in cost["detail"]  # one call proves the multi-region data too
 
@@ -119,7 +129,7 @@ def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):
     assert status == {
         "identity": "ok", "organization": "warn", "ou_tree": "fail", "accounts": "skip", "account_tags": "skip",
         "cost": "warn", "commitments": "ok", "deep_scan": "skip", "inventory_reads": "skip",
-        "dependency_reads": "skip", "assignments": "skip",
+        "dependency_reads": "skip", "assignments": "skip", "ai": "skip",
     }  # fmt: skip
     org = next(c for c in r["checks"] if c["id"] == "organization")
     assert "111111111111" in org["fix"]
@@ -288,3 +298,21 @@ def test_access_check_streams_each_check(monkeypatch):
     assert [s["id"] for s in lines[0]["steps"]] == [cid for cid, _ in preflight.STEPS]
     assert [x["check"]["id"] for x in lines[1:-1]] == [cid for cid, _ in preflight.STEPS]
     assert lines[-1] == {"result": {"ready": True, "profile": "x"}}
+
+
+def test_ai_review_check_is_optional_and_uses_the_saved_provider(monkeypatch):
+    from exitrisk.ai import providers as ai
+
+    assert preflight._ai_check().status == "skip"  # never set up
+    ai.save_settings(ai.AISettings(provider="together", keys={"together": "tg-key-12345678"}))
+    monkeypatch.setattr(ai, "test_connection", lambda s: {"model": "zai-org/GLM-5.3", "seconds": 1.5})
+    c = preflight._ai_check()
+    assert c.status == "ok" and "GLM-5.3 on Together AI" in c.detail
+
+    def refuse(s):
+        raise ai.AIError("The key was refused (401)")
+
+    monkeypatch.setattr(ai, "test_connection", refuse)
+    c = preflight._ai_check()
+    assert c.status == "warn" and "401" in c.detail and "AI review" in c.fix
+    assert "ai" in preflight.OPTIONAL

@@ -6,6 +6,12 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- Check access ends with an optional **AI review** step: once the AI review is set up, its saved
+  provider and model answer the same small reasoning test as Test connection; a failure is a warning,
+  never "Not ready".
+
 ## [0.14.1] - 2026-10-23
 
 ### Added

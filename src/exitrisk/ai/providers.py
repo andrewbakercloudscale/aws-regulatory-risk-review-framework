@@ -195,6 +195,11 @@ def _settings_path():
     return settings.data_dir / "ai.json"
 
 
+def settings_saved() -> bool:
+    """True once the AI review has been set up (its settings saved at least once)."""
+    return _settings_path().exists()
+
+
 def load_settings() -> AISettings:
     try:
         raw = json.loads(_settings_path().read_text())
