@@ -149,7 +149,7 @@ def main() -> int:
         page.click("#btnAccessRun")
         page.wait_for_selector("#aAdmin:not([hidden])")
         page.wait_for_timeout(200)
-        page.set_viewport_size({"width": 1360, "height": 1500})
+        page.set_viewport_size({"width": 1360, "height": 1700})
         shoot(page, "#accessDialog", "access-check.png")
         page.set_viewport_size({"width": 1360, "height": 900})
         page.keyboard.press("Escape")

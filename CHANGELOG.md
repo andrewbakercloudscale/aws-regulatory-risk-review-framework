@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-23
+
 ### Added
 
 - Check access ends with an optional **AI review** step: once the AI review is set up, its saved
