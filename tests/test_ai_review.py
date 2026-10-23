@@ -35,9 +35,11 @@ class FakeModel:
 
     def __init__(self):
         self.prompts = []
+        self.efforts = []
 
-    def __call__(self, _client, system, user, max_tokens=16000):
+    def __call__(self, _client, system, user, max_tokens=16000, effort="high"):
         self.prompts.append(user)
+        self.efforts.append(effort)
         if user.startswith("Assess each account"):
             ids = _ids(user, "ACCOUNTS:\n")
             body = {
@@ -157,6 +159,7 @@ def test_full_run_three_passes_restores_names_and_records_review(monkeypatch, re
     out = review.Run("scan-x", report, s, {"filter": "all"}).run()
     batches = -(-len(out["accounts"]) // review.BATCH_ACCOUNTS)
     assert len(fake.prompts) == batches + 2
+    assert fake.efforts[-1] == "medium" and set(fake.efforts[:-1]) == {"high"}  # the review pass reasons less
     names = {a["name"] for a in report["accounts"]}
     assert all(a["name"] not in p for p in fake.prompts for a in report["accounts"][:5])  # masked on the wire
     focus = out["final"]["areas_of_focus"]
@@ -325,7 +328,7 @@ def test_gateway_settings_are_checked():
 def test_cut_off_reply_is_asked_again_with_more_room_then_fails_loudly(monkeypatch, report):
     sizes = []
 
-    def cut(self, system, user, max_tokens=16000):
+    def cut(self, system, user, max_tokens=16000, effort="high"):
         sizes.append(max_tokens)
         return Reply('{"accounts": [', 10, max_tokens, truncated=True, stop="length")
 

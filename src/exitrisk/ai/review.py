@@ -40,6 +40,9 @@ log = get_logger("ai")
 BATCH_ACCOUNTS = 12  # small enough that the first answers, and the progress, come back quickly
 MAX_ACCOUNTS = 400
 WORKERS = 16  # batches in flight: all 14 of a 166-account estate go at once; a busy provider's 429 is waited out
+# The consistency review checks a finished draft against the facts: medium reasoning does that in about
+# half the time of high (the slowest call of the run), and the automated checks still run on its answer.
+REVIEW_EFFORT = "medium"
 MAX_OUTPUT_TOKENS = 64000  # a reply cut off at max_tokens is asked again with double, up to this
 PASSES = {"Analysing accounts": 1, "Estate view": 2, "Reviewing for consistency": 3}
 PHASES = ("Before mobilisation", "Mobilise", "Wave 1", "Wave 2", "Wave 3", "Cutover")
@@ -177,6 +180,7 @@ def build_context(report: dict, mask: Masker, catalog: Catalog | None = None) ->
                 "accounts": x["accounts"],
                 "model_effort_weeks": _r(x.get("effort_weeks"), 1),
                 "growth_pct": x.get("change_pct"),
+                **({"migration_tools": x["tools"]} if x.get("tools") else {}),
                 **(
                     {"why_hard": info.why, "migration_path": info.migration, "typical_duration": info.duration}
                     if x["tier"] >= 3 and info.classified
@@ -340,7 +344,8 @@ def _estate_prompt(facts: dict, analyses: list[dict]) -> str:
         "The estimate covers the whole exit programme on the model's basis (all accounts, landing zone, "
         "programme management, contingency, parallel run) in the currency of FACTS.spend.currency. Areas of focus "
         "should be the 6 to 12 things that will decide whether the exit succeeds, each naming the accounts "
-        "concerned; the rule-based list in FACTS is a starting point, not a limit.\n\n"
+        "concerned; the rule-based list in FACTS is a starting point, not a limit. Where a service lists "
+        "migration_tools, name the ones that fit in the guidance and sequencing.\n\n"
         f"FACTS:\n{json.dumps(facts, separators=(',', ':'))}\n\n"
         f"ACCOUNT ANALYSES:\n{json.dumps(analyses, separators=(',', ':'))}\n\n"
         f"Reply with JSON in exactly this shape:\n{ESTATE_SHAPE}"
@@ -489,7 +494,7 @@ class Run:
         with self._lock:
             self.state.update(stage=stage, done=done, total=total, message=message, **{"pass": PASSES.get(stage)})
 
-    def _ask(self, client: Client, prompt: str, max_tokens: int, what: str) -> dict:
+    def _ask(self, client: Client, prompt: str, max_tokens: int, what: str, effort: str = "high") -> dict:
         """One call, parsed. A reply cut off at max_tokens is asked again with more room, and a reply that
         is not valid JSON once more; a reply that is still cut off or unreadable fails the run loudly,
         so a truncated answer is never used as if it were whole."""
@@ -498,7 +503,7 @@ class Run:
         for attempt in range(3):
             if self.cancel.is_set():
                 raise Cancelled()
-            reply = client.complete(SYSTEM, prompt + extra, max_tokens=max_tokens)
+            reply = client.complete(SYSTEM, prompt + extra, max_tokens=max_tokens, effort=effort)
             with self._lock:
                 self.usage["calls"] += 1
                 self.usage["input_tokens"] += reply.input_tokens
@@ -586,7 +591,7 @@ class Run:
         done += 1
         checks = check_estate(draft, facts, ids)
         self._step("Reviewing for consistency", done, total, f"{len(checks)} automated finding(s) to resolve")
-        reviewed = self._ask(client, _review_prompt(facts, analyses, draft, checks), 32000, "review")
+        reviewed = self._ask(client, _review_prompt(facts, analyses, draft, checks), 32000, "review", REVIEW_EFFORT)
         if isinstance(reviewed.get("final"), dict):
             # The reviewer sends back only the fields it changed: a whole second copy of the view would
             # double the slowest call of the review for the same answer.

@@ -25,6 +25,10 @@
 #                 Step Functions, CloudFormation), medium (config and integration rewrites, about 25%),
 #                 low (mostly rehosting or re-pointing, about 10%), none (data moves, hardware, contracts
 #                 and managed-service redesign an agent cannot shorten)
+#   tooling       how much migration tools cut the work when the Exit model says they are used, on the same
+#                 scale as agentic: high (replication or import tools do the move: servers, databases, object
+#                 storage, Kafka, DNS), medium (tools carry part of it), low, none (the default)
+#   tools         migration tools worth naming: all (any target), azure, gcp, other (every other target)
 #   excluded      true for billing lines that are not workloads (tax, support, commitments)
 #
 # Contributions welcome: see CONTRIBUTING.md. Keep `why` factual and `migration` actionable.
@@ -58,6 +62,8 @@ services:
     targets: {azure: Virtual Machines, gcp: Compute Engine, other: VMware / OpenStack / bare metal}
     effort_weeks: 1.5
     agentic: low
+    tooling: high
+    tools: {all: "Block-level server replication copies running machines and cuts over in minutes", azure: "Azure Migrate (server migration)", gcp: "Migrate to Virtual Machines", other: "virt-v2v, qemu-img or a rehost tool such as RiverMeadow"}
     duration: 1-4 weeks per application
 
   - service: EC2 - Other
@@ -69,6 +75,8 @@ services:
     targets: {azure: Managed Disks / NAT Gateway, gcp: Persistent Disk / Cloud NAT, other: SAN / Ceph}
     effort_weeks: 0.5
     agentic: low
+    tooling: medium
+    tools: {all: "Disks move with the servers' replication tool", azure: "Azure Migrate", gcp: "Migrate to Virtual Machines", other: "virt-v2v, qemu-img"}
     duration: Moves with the workload
 
   - service: Amazon Elastic Kubernetes Service
@@ -81,6 +89,8 @@ services:
     targets: {azure: AKS, gcp: GKE, other: OpenShift / Rancher / upstream Kubernetes}
     effort_weeks: 2
     agentic: medium
+    tooling: high
+    tools: {all: "Velero backs up and restores workloads and volumes; Helm and GitOps (Argo CD, Flux) redeploy the same manifests", azure: "AKS", gcp: "GKE", other: "Any conformant Kubernetes"}
     duration: 2-6 weeks per cluster
 
   - service: Amazon Elastic Container Service
@@ -93,6 +103,8 @@ services:
     targets: {azure: Container Apps / AKS, gcp: Cloud Run / GKE, other: Kubernetes / Nomad}
     effort_weeks: 2.5
     agentic: high
+    tooling: medium
+    tools: {all: "Images run unchanged; AI agents convert task definitions to Kubernetes or Container Apps manifests", azure: "Azure Container Apps", gcp: "Cloud Run", other: "Kubernetes"}
     duration: 2-6 weeks per service group
 
   - service: Amazon EC2 Container Registry (ECR)
@@ -105,6 +117,8 @@ services:
     targets: {azure: Azure Container Registry, gcp: Artifact Registry, other: Harbor}
     effort_weeks: 0.5
     agentic: low
+    tooling: high
+    tools: {all: "skopeo, crane or regctl copy every image and tag", azure: "az acr import", gcp: "gcrane"}
     duration: Days
 
   - service: AWS Lambda
@@ -116,6 +130,8 @@ services:
     targets: {azure: Azure Functions / Container Apps, gcp: Cloud Run functions, other: Knative / OpenFaaS on Kubernetes}
     effort_weeks: 6
     agentic: high
+    tooling: medium
+    tools: {all: "AI coding agents translate handlers and AWS SDK calls; Serverless Framework or SST deploy to several clouds", azure: "Azure Functions Core Tools", gcp: "Cloud Run functions", other: "Knative or OpenFaaS"}
     duration: 4-12 weeks per application
 
   - service: AWS App Runner
@@ -127,6 +143,8 @@ services:
     targets: {azure: Container Apps, gcp: Cloud Run, other: Kubernetes}
     effort_weeks: 1
     agentic: high
+    tooling: medium
+    tools: {all: "The container image moves unchanged", azure: "Azure Container Apps", gcp: "Cloud Run"}
     duration: 1-2 weeks
 
   - service: AWS Elastic Beanstalk
@@ -138,6 +156,8 @@ services:
     targets: {azure: App Service, gcp: App Engine / Cloud Run, other: Kubernetes}
     effort_weeks: 2
     agentic: high
+    tooling: medium
+    tools: {all: "The application bundle moves; AI agents convert .ebextensions to the target's config", azure: "Azure App Service", gcp: "Cloud Run"}
     duration: 2-4 weeks
 
   - service: Amazon Lightsail
@@ -160,6 +180,8 @@ services:
     targets: {azure: Azure Batch, gcp: Google Batch, other: Kubernetes Jobs / Slurm}
     effort_weeks: 2
     agentic: high
+    tooling: medium
+    tools: {all: "Container jobs move to Kubernetes Jobs or Argo Workflows", azure: "Azure Batch", gcp: "Google Cloud Batch"}
     duration: 2-4 weeks
 
   - service: AWS Outposts
@@ -184,6 +206,8 @@ services:
     targets: {azure: Blob Storage, gcp: Cloud Storage, other: MinIO / Ceph RGW}
     effort_weeks: 1.5
     agentic: low
+    tooling: high
+    tools: {all: "rclone or MinIO Client (mc) copy and verify objects", azure: "AzCopy, Azure Storage Mover, Azure Data Box for bulk", gcp: "Storage Transfer Service, Transfer Appliance for bulk", other: "rclone, MinIO Client (mc)"}
     duration: 1-8 weeks (data-volume bound)
 
   - service: Amazon Glacier
@@ -196,6 +220,8 @@ services:
     targets: {azure: Blob Archive tier, gcp: Archive Storage, other: Tape / object store}
     effort_weeks: 2
     agentic: none
+    tooling: medium
+    tools: {all: "Restore in bulk, then copy with the object-storage tools", azure: "AzCopy, Azure Data Box", gcp: "Storage Transfer Service"}
     duration: Weeks to months (retrieval bound)
 
   - service: Amazon Elastic File System
@@ -207,6 +233,8 @@ services:
     targets: {azure: Azure Files NFS / NetApp Files, gcp: Filestore, other: NFS appliance}
     effort_weeks: 1
     agentic: none
+    tooling: medium
+    tools: {all: "rsync or fpsync for NFS shares", azure: "Azure Storage Mover", gcp: "Storage Transfer Service"}
     duration: 1-3 weeks
 
   - service: Amazon FSx
@@ -218,6 +246,8 @@ services:
     targets: {azure: Azure Files / NetApp Files, gcp: Filestore / NetApp Volumes, other: NetApp / Windows File Server}
     effort_weeks: 1.5
     agentic: none
+    tooling: medium
+    tools: {all: "robocopy (Windows shares), rsync (Lustre, ONTAP, OpenZFS); NetApp SnapMirror for ONTAP", azure: "Azure File Sync, Azure Storage Mover", gcp: "Storage Transfer Service"}
     duration: 2-4 weeks
 
   - service: AWS Backup
@@ -275,6 +305,8 @@ services:
     targets: {azure: Azure Database for PostgreSQL/MySQL / Azure SQL, gcp: Cloud SQL / AlloyDB, other: Self-managed PostgreSQL (CloudNativePG)}
     effort_weeks: 3
     agentic: low
+    tooling: high
+    tools: {all: "Native replication (PostgreSQL logical replication, MySQL binlog replication, Oracle Data Guard or GoldenGate, SQL Server Always On) for a short cutover", azure: "Azure Database Migration Service", gcp: "Database Migration Service", other: "pgloader, pglogical, Debezium change data capture"}
     duration: 2-8 weeks per database
 
   - service: Amazon Aurora DSQL
@@ -297,6 +329,8 @@ services:
     targets: {azure: Cosmos DB, gcp: Firestore / Bigtable / Spanner, other: ScyllaDB Alternator / Cassandra / PostgreSQL}
     effort_weeks: 10
     agentic: low
+    tooling: medium
+    tools: {all: "Export to S3 plus DynamoDB Streams for the changes since, then a bulk load", azure: "Data Factory or the Cosmos DB Spark connector into Cosmos DB", gcp: "Dataflow into Bigtable or Firestore", other: "ScyllaDB Alternator (DynamoDB-compatible API) and its Spark migrator"}
     duration: 2-6 months per application
 
   - service: Amazon DocumentDB (with MongoDB compatibility)
@@ -309,6 +343,8 @@ services:
     targets: {azure: Cosmos DB for MongoDB, gcp: MongoDB Atlas, other: MongoDB}
     effort_weeks: 3
     agentic: low
+    tooling: high
+    tools: {all: "mongodump and mongorestore, or mongosync for a live copy", azure: "Azure Database Migration Service for Cosmos DB for MongoDB", gcp: "MongoDB Atlas Live Migration", other: "MongoDB Atlas Live Migration"}
     duration: 3-8 weeks
 
   - service: Amazon ElastiCache
@@ -320,6 +356,8 @@ services:
     targets: {azure: Azure Cache for Redis, gcp: Memorystore, other: Redis / Valkey}
     effort_weeks: 0.5
     agentic: low
+    tooling: medium
+    tools: {all: "RIOT or redis-shake copy keys live; most caches can simply be warmed again", azure: "Azure Cache for Redis RDB import", gcp: "Memorystore"}
     duration: Days
 
   - service: Amazon MemoryDB
@@ -332,6 +370,8 @@ services:
     targets: {azure: Azure Managed Redis, gcp: Memorystore for Redis Cluster, other: Redis Enterprise}
     effort_weeks: 2
     agentic: low
+    tooling: medium
+    tools: {all: "RIOT or redis-shake copy keys live", azure: "Azure Cache for Redis RDB import", gcp: "Memorystore"}
     duration: 2-4 weeks
 
   - service: Amazon Keyspaces (for Apache Cassandra)
@@ -344,6 +384,8 @@ services:
     targets: {azure: Cosmos DB for Apache Cassandra / Managed Instance for Cassandra, gcp: Bigtable (CQL) / Astra DB, other: Apache Cassandra / ScyllaDB}
     effort_weeks: 3
     agentic: low
+    tooling: medium
+    tools: {all: "DSBulk or the Spark Cassandra Connector", azure: "Cosmos DB for Apache Cassandra", other: "Apache Cassandra, ScyllaDB"}
     duration: 3-8 weeks
 
   - service: Amazon Neptune
@@ -355,6 +397,8 @@ services:
     targets: {azure: Cosmos DB for Apache Gremlin, gcp: Neo4j AuraDB / Spanner Graph, other: Neo4j / JanusGraph}
     effort_weeks: 5
     agentic: low
+    tooling: low
+    tools: {all: "neptune-export to Gremlin or RDF files, then a bulk load"}
     duration: 1-3 months
 
   - service: Amazon Timestream
@@ -401,6 +445,8 @@ services:
     targets: {azure: Fabric Warehouse / Synapse / Snowflake, gcp: BigQuery, other: Snowflake / Databricks / ClickHouse}
     effort_weeks: 10
     agentic: low
+    tooling: high
+    tools: {all: "SQL translators (BigQuery Migration Service, SnowConvert, sqlglot) and AI agents for stored procedures; data unloads to Parquet", azure: "Fabric Data Warehouse or Databricks SQL", gcp: "BigQuery Data Transfer Service for Redshift", other: "sqlglot, dbt"}
     duration: 3-9 months per warehouse
 
   - service: Amazon Athena
@@ -412,6 +458,8 @@ services:
     targets: {azure: Fabric / Synapse serverless SQL, gcp: BigQuery, other: Trino / Starburst}
     effort_weeks: 3
     agentic: high
+    tooling: medium
+    tools: {all: "Trino runs the same SQL; sqlglot translates it for other engines"}
     duration: 3-8 weeks
 
   - service: AWS Glue
@@ -423,6 +471,8 @@ services:
     targets: {azure: Data Factory + Databricks, gcp: Dataproc / Dataflow + Dataplex, other: Spark + Airflow + Hive Metastore}
     effort_weeks: 6
     agentic: high
+    tooling: medium
+    tools: {all: "AI coding agents port GlueContext and DynamicFrame code to plain Spark; export the Data Catalog to a Hive Metastore", azure: "Databricks or Fabric Spark, Data Factory", gcp: "Dataproc, Dataplex", other: "Apache Spark and Airflow"}
     duration: 1-4 months
 
   - service: Amazon Elastic MapReduce
@@ -435,6 +485,8 @@ services:
     targets: {azure: Databricks / HDInsight, gcp: Dataproc, other: Spark on Kubernetes}
     effort_weeks: 3
     agentic: medium
+    tooling: high
+    tools: {all: "The same Spark and Hive jobs run unchanged; DistCp copies HDFS data", azure: "Databricks, HDInsight", gcp: "Dataproc"}
     duration: 1-2 months
 
   - service: Amazon Kinesis
@@ -447,6 +499,8 @@ services:
     targets: {azure: Event Hubs (Kafka API), gcp: Pub/Sub / Managed Kafka, other: Apache Kafka / Redpanda}
     effort_weeks: 6
     agentic: medium
+    tooling: medium
+    tools: {all: "Kafka Connect Kinesis source connector or Flink to bridge streams during the move", azure: "Azure Event Hubs", gcp: "Pub/Sub"}
     duration: 1-3 months
 
   - service: Amazon Kinesis Firehose
@@ -459,6 +513,8 @@ services:
     targets: {azure: Event Hubs Capture / Stream Analytics, gcp: Dataflow / Pub/Sub subscriptions, other: Kafka Connect / Vector}
     effort_weeks: 3
     agentic: medium
+    tooling: medium
+    tools: {all: "Kafka Connect sinks, Vector or Fluent Bit deliver the same streams"}
     duration: 3-6 weeks
 
   - service: Amazon Kinesis Analytics
@@ -471,6 +527,8 @@ services:
     targets: {azure: Flink on HDInsight on AKS / Stream Analytics, gcp: Dataflow / Flink on GKE, other: Apache Flink}
     effort_weeks: 3
     agentic: high
+    tooling: high
+    tools: {all: "Apache Flink jobs run unchanged on any Flink service", azure: "Confluent Cloud for Apache Flink", gcp: "Dataflow, or Flink on GKE"}
     duration: 1-2 months
 
   - service: Amazon Managed Streaming for Apache Kafka
@@ -483,6 +541,8 @@ services:
     targets: {azure: Event Hubs (Kafka) / Confluent, gcp: Managed Service for Apache Kafka, other: Apache Kafka / Redpanda}
     effort_weeks: 1.5
     agentic: low
+    tooling: high
+    tools: {all: "MirrorMaker 2, Confluent Replicator or Cluster Linking replicate topics live", azure: "Event Hubs Kafka endpoint, Confluent Cloud", gcp: "Managed Service for Apache Kafka"}
     duration: 2-6 weeks
 
   - service: Amazon OpenSearch Service
@@ -495,6 +555,8 @@ services:
     targets: {azure: Elastic Cloud on Azure, gcp: Elastic Cloud on GCP, other: OpenSearch}
     effort_weeks: 1.5
     agentic: low
+    tooling: high
+    tools: {all: "Snapshot and restore, reindex from remote, or the OpenSearch Migration Assistant", other: "OpenSearch, Elasticsearch"}
     duration: 2-4 weeks
 
   - service: Amazon QuickSight
@@ -506,6 +568,8 @@ services:
     targets: {azure: Power BI, gcp: Looker, other: Apache Superset / Tableau}
     effort_weeks: 5
     agentic: medium
+    tooling: low
+    tools: {all: "Datasets re-point; dashboards are rebuilt", azure: "Power BI", gcp: "Looker"}
     duration: 1-3 months
 
   - service: AWS Lake Formation
@@ -529,6 +593,8 @@ services:
     targets: {azure: Data Factory Workflow Orchestration Manager / Astronomer, gcp: Cloud Composer, other: Apache Airflow}
     effort_weeks: 1.5
     agentic: medium
+    tooling: high
+    tools: {all: "DAGs run unchanged on any Airflow", azure: "Airflow in Data Factory, Astronomer", gcp: "Cloud Composer"}
     duration: 2-4 weeks
 
   - service: AWS Data Pipeline
@@ -553,6 +619,8 @@ services:
     targets: {azure: Service Bus / Storage Queues, gcp: Pub/Sub / Cloud Tasks, other: RabbitMQ / NATS}
     effort_weeks: 2
     agentic: high
+    tooling: medium
+    tools: {all: "AI agents swap the SDK calls; Dapr pub/sub, Spring Cloud Stream or MassTransit keep code independent of the broker", azure: "Azure Service Bus", gcp: "Pub/Sub", other: "RabbitMQ"}
     duration: 2-6 weeks
 
   - service: Amazon Simple Notification Service
@@ -565,6 +633,8 @@ services:
     targets: {azure: Event Grid / Service Bus topics, gcp: Pub/Sub, other: NATS / Kafka + Twilio}
     effort_weeks: 2
     agentic: high
+    tooling: medium
+    tools: {all: "AI agents swap the SDK calls; Dapr pub/sub keeps code independent of the broker", azure: "Event Grid, Service Bus topics", gcp: "Pub/Sub", other: "RabbitMQ, NATS"}
     duration: 2-6 weeks
 
   - service: Amazon EventBridge
@@ -577,6 +647,8 @@ services:
     targets: {azure: Event Grid, gcp: Eventarc / Cloud Scheduler, other: Kafka / Argo Events}
     effort_weeks: 4
     agentic: high
+    tooling: medium
+    tools: {all: "AI agents translate rule patterns; CloudEvents and Dapr keep events portable", azure: "Event Grid", gcp: "Eventarc", other: "Knative Eventing, NATS"}
     duration: 1-2 months
 
   - service: Amazon AppFlow
@@ -599,6 +671,8 @@ services:
     targets: {azure: Logic Apps / Durable Functions, gcp: Workflows, other: Temporal / Argo Workflows}
     effort_weeks: 6
     agentic: high
+    tooling: medium
+    tools: {all: "AI agents translate Amazon States Language definitions; Temporal or Argo Workflows as a neutral engine", azure: "Logic Apps, Durable Functions", gcp: "Workflows", other: "Temporal, Argo Workflows"}
     duration: 1-3 months
 
   - service: Amazon Simple Workflow Service
@@ -622,6 +696,8 @@ services:
     targets: {azure: Service Bus (AMQP) / RabbitMQ on AKS, gcp: RabbitMQ on GKE, other: RabbitMQ / ActiveMQ}
     effort_weeks: 1
     agentic: low
+    tooling: high
+    tools: {all: "ActiveMQ network connectors or RabbitMQ shovel and federation move messages live"}
     duration: 1-3 weeks
 
   - service: Amazon API Gateway
@@ -633,6 +709,8 @@ services:
     targets: {azure: API Management, gcp: Apigee / API Gateway, other: Kong / Envoy Gateway}
     effort_weeks: 3
     agentic: high
+    tooling: medium
+    tools: {all: "Export each API as OpenAPI and import it into the target gateway", azure: "API Management OpenAPI import", gcp: "Apigee or API Gateway OpenAPI import", other: "Kong, Tyk"}
     duration: 3-8 weeks
 
   - service: AWS AppSync
@@ -644,6 +722,8 @@ services:
     targets: {azure: API Management (GraphQL) / Hasura, gcp: Apollo on Cloud Run, other: Apollo / Hasura}
     effort_weeks: 5
     agentic: high
+    tooling: low
+    tools: {all: "The GraphQL schema carries over to Apollo or Hasura; resolvers are rewritten"}
     duration: 1-3 months
 
   - service: AWS IoT
@@ -680,6 +760,8 @@ services:
     targets: {azure: Virtual Network, gcp: VPC, other: Data-centre networking}
     effort_weeks: 1
     agentic: medium
+    tooling: medium
+    tools: {all: "Former2 or Terraformer export the current network as code; AI agents rewrite the modules for the target"}
     duration: Part of landing zone
 
   - service: Amazon Elastic Load Balancing
@@ -692,6 +774,8 @@ services:
     targets: {azure: Load Balancer / Application Gateway, gcp: Cloud Load Balancing, other: HAProxy / F5 / Envoy}
     effort_weeks: 0.5
     agentic: medium
+    tooling: medium
+    tools: {all: "Terraform modules for the target's load balancers; Former2 exports the current listeners and rules"}
     duration: Moves with the workload
 
   - service: Amazon Route 53
@@ -703,6 +787,8 @@ services:
     targets: {azure: Azure DNS, gcp: Cloud DNS, other: NS1 / Cloudflare DNS}
     effort_weeks: 0.5
     agentic: medium
+    tooling: high
+    tools: {all: "Export zone files (cli53) or sync with octoDNS; external-dns for Kubernetes records", azure: "Azure DNS zone import", gcp: "Cloud DNS zone import"}
     duration: 1-2 weeks
 
   - service: Amazon CloudFront
@@ -714,6 +800,8 @@ services:
     targets: {azure: Front Door, gcp: Cloud CDN, other: Cloudflare / Akamai / Fastly}
     effort_weeks: 1
     agentic: medium
+    tooling: medium
+    tools: {all: "Terraform for the target CDN; AI agents convert behaviours and CloudFront Functions"}
     duration: 1-3 weeks
 
   - service: AWS Direct Connect
@@ -747,6 +835,8 @@ services:
     targets: {azure: Azure Firewall, gcp: Cloud NGFW, other: Palo Alto / Fortinet}
     effort_weeks: 1.5
     agentic: medium
+    tooling: low
+    tools: {all: "Suricata-compatible rule groups load into Suricata-based firewalls"}
     duration: 2-4 weeks
 
   - service: AWS Cloud Map
@@ -837,6 +927,8 @@ services:
     targets: {azure: Key Vault, gcp: Secret Manager, other: HashiCorp Vault}
     effort_weeks: 0.5
     agentic: medium
+    tooling: high
+    tools: {all: "External Secrets Operator or a short script copies every secret; HashiCorp Vault as a neutral store", azure: "Key Vault", gcp: "Secret Manager"}
     duration: 1-2 weeks
 
   - service: AWS Certificate Manager
@@ -849,6 +941,8 @@ services:
     targets: {azure: Key Vault certificates, gcp: Certificate Authority Service, other: Vault PKI / EJBCA}
     effort_weeks: 1.5
     agentic: low
+    tooling: medium
+    tools: {all: "cert-manager with Let's Encrypt or your CA reissues certificates (ACM public keys cannot be exported)"}
     duration: 2-6 weeks
 
   - service: Amazon Cognito
@@ -860,6 +954,8 @@ services:
     targets: {azure: Entra External ID, gcp: Identity Platform, other: Auth0 / Keycloak / Okta CIC}
     effort_weeks: 6
     agentic: medium
+    tooling: medium
+    tools: {all: "Password hashes cannot be exported: migrate users on first sign-in (just-in-time migration), as Auth0, Keycloak and Entra support", azure: "Entra External ID just-in-time migration", gcp: "Identity Platform", other: "Keycloak"}
     duration: 2-4 months (customer-facing)
 
   - service: AWS Directory Service
@@ -871,6 +967,8 @@ services:
     targets: {azure: Entra Domain Services, gcp: Managed Service for Microsoft AD, other: Active Directory}
     effort_weeks: 2
     agentic: medium
+    tooling: medium
+    tools: {all: "AD trusts and the Active Directory Migration Tool (ADMT)", azure: "Entra Domain Services"}
     duration: 1-2 months
 
   - service: AWS WAF
@@ -882,6 +980,8 @@ services:
     targets: {azure: Azure WAF, gcp: Cloud Armor, other: Cloudflare / Akamai WAF}
     effort_weeks: 1
     agentic: medium
+    tooling: low
+    tools: {all: "OWASP Core Rule Set on the target firewall; custom rules rewritten"}
     duration: 2-4 weeks
 
   - service: AWS Shield
@@ -1016,6 +1116,8 @@ services:
     targets: {azure: Azure Monitor, gcp: Cloud Monitoring / Logging, other: Grafana / Prometheus / Loki / Datadog}
     effort_weeks: 1
     agentic: high
+    tooling: medium
+    tools: {all: "OpenTelemetry Collector sends the same metrics and logs anywhere; AI agents convert alarms and dashboards", azure: "Azure Monitor", gcp: "Cloud Monitoring", other: "Prometheus, Grafana, Loki"}
     duration: 2-4 weeks
 
   - service: AWS X-Ray
@@ -1027,6 +1129,8 @@ services:
     targets: {azure: Application Insights, gcp: Cloud Trace, other: Jaeger / Tempo}
     effort_weeks: 0.5
     agentic: high
+    tooling: high
+    tools: {all: "OpenTelemetry SDKs (AWS Distro for OpenTelemetry) export traces to any backend"}
     duration: 1-2 weeks
 
   - service: Amazon Managed Service for Prometheus
@@ -1038,6 +1142,8 @@ services:
     targets: {azure: Azure Monitor managed Prometheus, gcp: Managed Service for Prometheus, other: Prometheus / Mimir}
     effort_weeks: 0.5
     agentic: medium
+    tooling: high
+    tools: {all: "Prometheus remote_write points at any compatible store"}
     duration: Days
 
   - service: Amazon Managed Grafana
@@ -1049,6 +1155,8 @@ services:
     targets: {azure: Azure Managed Grafana, gcp: Grafana Cloud, other: Grafana}
     effort_weeks: 0.25
     agentic: medium
+    tooling: high
+    tools: {all: "Grafana dashboards export and import as JSON"}
     duration: Days
 
   - service: AWS Systems Manager
@@ -1060,6 +1168,8 @@ services:
     targets: {azure: Update Manager / App Configuration / Bastion, gcp: VM Manager / Secret Manager / IAP, other: Ansible / Teleport}
     effort_weeks: 2
     agentic: high
+    tooling: medium
+    tools: {all: "Ansible for run commands and patching; External Secrets Operator for Parameter Store"}
     duration: 2-6 weeks
 
   - service: AWS CloudFormation
@@ -1072,6 +1182,8 @@ services:
     targets: {azure: Terraform / Bicep, gcp: Terraform / Infrastructure Manager, other: Terraform / OpenTofu / Pulumi}
     effort_weeks: 3
     agentic: high
+    tooling: high
+    tools: {all: "Former2, Terraformer or aws2tf generate Terraform from what is deployed; AI agents rewrite templates for the target", azure: "Terraform (azurerm) or Bicep", gcp: "Terraform (google)", other: "Terraform or OpenTofu"}
     duration: Proportional to IaC estate
 
   - service: AWS CodeBuild
@@ -1084,6 +1196,8 @@ services:
     targets: {azure: Azure Pipelines / GitHub Actions, gcp: Cloud Build, other: GitHub Actions / GitLab CI / Jenkins}
     effort_weeks: 0.5
     agentic: high
+    tooling: medium
+    tools: {all: "AI agents convert buildspec files to the target pipeline YAML", azure: "Azure Pipelines, GitHub Actions", gcp: "Cloud Build", other: "GitHub Actions, GitLab CI"}
     duration: Per pipeline, days
 
   - service: AWS CodePipeline
@@ -1095,6 +1209,8 @@ services:
     targets: {azure: Azure Pipelines / GitHub Actions, gcp: Cloud Deploy, other: GitHub Actions / Argo CD}
     effort_weeks: 0.5
     agentic: high
+    tooling: medium
+    tools: {all: "AI agents convert pipeline definitions to the target pipeline YAML", azure: "Azure Pipelines, GitHub Actions", gcp: "Cloud Deploy", other: "GitHub Actions, GitLab CI"}
     duration: Per pipeline, days
 
   - service: AWS CodeCommit
@@ -1106,6 +1222,8 @@ services:
     targets: {azure: Azure Repos / GitHub, gcp: Secure Source Manager / GitHub, other: GitHub / GitLab}
     effort_weeks: 0.25
     agentic: high
+    tooling: high
+    tools: {all: "git clone --mirror and push, or GitHub Enterprise Importer", azure: "Azure Repos import", other: "GitHub, GitLab"}
     duration: Days
 
   - service: AWS CodeArtifact
@@ -1117,6 +1235,8 @@ services:
     targets: {azure: Azure Artifacts, gcp: Artifact Registry, other: JFrog Artifactory / Nexus}
     effort_weeks: 0.5
     agentic: low
+    tooling: high
+    tools: {all: "Package managers re-publish every package; Artifactory or Nexus remote repositories proxy during the move"}
     duration: Days
 
   - service: AWS CodeDeploy
@@ -1128,6 +1248,8 @@ services:
     targets: {azure: Azure Pipelines, gcp: Cloud Deploy, other: Argo CD / Ansible}
     effort_weeks: 0.5
     agentic: high
+    tooling: medium
+    tools: {all: "AI agents convert appspec files; Argo CD or Spinnaker for deployments"}
     duration: Days
 
   - service: AWS Amplify
@@ -1152,6 +1274,8 @@ services:
     targets: {azure: Azure Machine Learning, gcp: Vertex AI, other: Kubeflow / MLflow / KServe}
     effort_weeks: 5
     agentic: medium
+    tooling: medium
+    tools: {all: "MLflow tracks and moves models; containers and ONNX keep them portable", azure: "Azure Machine Learning", gcp: "Vertex AI"}
     duration: 1-3 months
 
   - service: Amazon Bedrock
@@ -1163,6 +1287,8 @@ services:
     targets: {azure: Azure AI Foundry, gcp: Vertex AI, other: Provider APIs (Anthropic, Mistral) / self-hosted}
     effort_weeks: 3
     agentic: medium
+    tooling: high
+    tools: {all: "A model gateway with an OpenAI-compatible API (LiteLLM, Portkey) switches providers; an evaluation harness (promptfoo) checks prompts on the new models", azure: "Azure AI Foundry (OpenAI and Anthropic models)", gcp: "Vertex AI (Gemini and Anthropic models)"}
     duration: 3-8 weeks
 
   - service: Amazon Bedrock AgentCore
@@ -1325,6 +1451,8 @@ services:
     targets: {azure: Dynamics 365 Contact Center, gcp: Contact Center AI Platform, other: Genesys Cloud / NICE CXone / Five9}
     effort_weeks: 16
     agentic: none
+    tooling: low
+    tools: {all: "Contact flows export as JSON for reference; the new contact-centre vendor's migration service rebuilds them", azure: "Dynamics 365 Contact Center", other: "Genesys Cloud, NICE CXone, Five9"}
     duration: 6-12 months
 
   - service: Amazon Pinpoint
@@ -1349,6 +1477,8 @@ services:
     targets: {azure: Communication Services Email, gcp: SendGrid (partner), other: SendGrid / Postmark / Mailgun}
     effort_weeks: 1
     agentic: medium
+    tooling: high
+    tools: {all: "SMTP: point applications at the new provider's SMTP endpoint and move the sending domains", azure: "Azure Communication Services Email", other: "SendGrid, Mailgun"}
     duration: 2-4 weeks (IP warm-up)
 
   - service: Amazon WorkSpaces Applications
@@ -1372,6 +1502,8 @@ services:
     targets: {azure: Azure Virtual Desktop / Windows 365, gcp: Citrix on Google Cloud, other: Citrix / Omnissa Horizon}
     effort_weeks: 3
     agentic: none
+    tooling: medium
+    tools: {all: "Rebuild images on the target; Nerdio for Azure Virtual Desktop", azure: "Azure Virtual Desktop"}
     duration: 1-3 months
 
   - service: AWS Elemental MediaConvert

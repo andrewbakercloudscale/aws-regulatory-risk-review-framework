@@ -1,5 +1,6 @@
 import pytest
 
+from exitrisk.catalog import TOOLS_FLOOR
 from exitrisk.demo import build_demo_scan
 from exitrisk.estimate import Questionnaire
 from exitrisk.filtering import AccountFilter
@@ -390,3 +391,33 @@ def test_growth_by_tier_adds_up_to_the_change():
     r = build_report(build_demo_scan())
     for c in r["growth"]["by_category"]:
         assert sum(c["by_tier"].values()) == pytest.approx(c["change"], abs=1)
+
+
+def test_migration_tools_and_templates_cut_effort_and_move_in_sits_beside_it():
+    scan = build_demo_scan(3)
+    base = build_report(scan)["estimate"]
+    tools = build_report(scan, questionnaire=Questionnaire(migration_tools=True))["estimate"]
+    templated = build_report(scan, questionnaire=Questionnaire(golden_paths=True))["estimate"]
+    assert tools["effort"]["total_weeks"] < base["effort"]["total_weeks"]
+    assert tools["effort"]["tools_saved_weeks"] > 0 and base["effort"]["tools_saved_weeks"] == 0
+    assert templated["effort"]["total_weeks"] < base["effort"]["total_weeks"]
+    assert base["move_in"] is None
+    moved = build_report(scan, questionnaire=Questionnaire(move_in_months=6, move_in_people=20))["estimate"]
+    assert moved["move_in"]["person_months"] == 120
+    assert moved["effort"]["total_weeks"] == base["effort"]["total_weeks"]  # a sense check, not an input
+
+
+def test_agents_and_tools_together_never_cut_below_the_floor():
+    scan = build_demo_scan(3)
+    both = build_report(scan, questionnaire=Questionnaire(migration_tools=True, ai_agents=True))
+    plain = build_report(scan)
+    for s in both["services"]:
+        before = next(x for x in plain["services"] if x["service"] == s["service"])
+        if before["effort_weeks"] > 1:
+            assert s["effort_weeks"] >= before["effort_weeks"] * TOOLS_FLOOR - 0.01
+
+
+def test_services_name_tools_for_the_chosen_target():
+    gcp = build_report(build_demo_scan(3), questionnaire=Questionnaire(target="gcp"))
+    rds = next(s for s in gcp["services"] if s["service"] == "Amazon Relational Database Service")
+    assert any("Database Migration Service" in t for t in rds["tools"]) and rds["tooling"] == "high"

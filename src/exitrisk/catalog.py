@@ -12,6 +12,9 @@ import yaml
 TIER_RANGE = range(1, 6)
 # How much AI coding agents cut a service's engineering weeks (fraction of the work left).
 AGENTIC_FACTORS = {"high": 0.5, "medium": 0.75, "low": 0.9, "none": 1.0}
+# AI agents and migration tools overlap (an agent drives the tool): together they never cut a service's
+# work below this share of it.
+TOOLS_FLOOR = 0.3
 REQUIRED_FIELDS = ("service", "display", "category", "tier", "why", "migration", "effort_weeks", "duration")
 
 
@@ -30,6 +33,14 @@ class ServiceInfo:
     excluded: bool = False
     classified: bool = True
     agentic: str = "low"
+    tooling: str = "none"
+    tools: dict = field(default_factory=dict)
+
+    def tools_for(self, target: str) -> list[str]:
+        """The migration tools to name for ``target``: the general ones, then the target's own (``other``
+        for every target that is not Azure or Google Cloud)."""
+        own = self.tools.get(target if target in ("azure", "gcp") else "other")
+        return [t for t in (self.tools.get("all"), own) if t]
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +57,8 @@ class ServiceInfo:
             "excluded": self.excluded,
             "classified": self.classified,
             "agentic": self.agentic,
+            "tooling": self.tooling,
+            "tools": dict(self.tools),
         }
 
 
@@ -72,6 +85,11 @@ class Catalog:
                 raise CatalogError(
                     f"catalog entry {entry['service']!r} has agentic {agentic!r}, not one of {list(AGENTIC_FACTORS)}"
                 )
+            tooling = str(entry.get("tooling", "none"))
+            if tooling not in AGENTIC_FACTORS:
+                raise CatalogError(
+                    f"catalog entry {entry['service']!r} has tooling {tooling!r}, not one of {list(AGENTIC_FACTORS)}"
+                )
             info = ServiceInfo(
                 service=entry["service"],
                 display=entry["display"],
@@ -85,6 +103,8 @@ class Catalog:
                 aliases=tuple(entry.get("aliases") or ()),
                 excluded=bool(entry.get("excluded", False)),
                 agentic=agentic,
+                tooling=tooling,
+                tools={k: " ".join(str(v).split()) for k, v in (entry.get("tools") or {}).items()},
             )
             for name in (info.service, *info.aliases):
                 if name in self._index:

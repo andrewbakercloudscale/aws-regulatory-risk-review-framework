@@ -316,6 +316,11 @@
           </div>
         </div>
       </div>
+      <div class="card" id="toolsCard" hidden>
+        <div class="card-head"><h3>Tools that shorten the move</h3></div>
+        <p class="muted small" id="toolsCap"></p>
+        <div class="table-wrap"><table class="data" id="toolsTable"></table></div>
+      </div>
       <div class="card">
         <div class="card-head"><h3>Your answers and the assumptions behind the estimate</h3><button type="button" class="btn no-print" data-model="qForm">Change answers</button></div>
         <dl class="answers" id="answers"></dl>
@@ -660,6 +665,14 @@
         <label>Materiality (USD/month)<input name="materiality" type="number" min="0" step="5"></label>
       </div>
       <label class="check"><input name="ai_agents" type="checkbox"> Teams use AI coding agents to port code and templates (cuts the work on Lambda, API Gateway, Step Functions, CloudFormation and similar; not on data moves)</label>
+      <label class="check"><input name="migration_tools" type="checkbox"> We will use migration tools (server and database replication, storage copy, Kafka mirroring, OpenAPI and DNS import: named per service in the report)</label>
+      <label class="check"><input name="golden_paths" type="checkbox"> Services are built from developer-portal templates (golden paths, for example Backstage): we change the templates once and re-run them for the target</label>
+      <h4 class="q-sub">How did the move into AWS go?</h4>
+      <div class="pair">
+        <label>Months it took<input name="move_in_months" type="number" min="0" max="240" step="1" placeholder="0 = not known"></label>
+        <label>People on it<input name="move_in_people" type="number" min="0" max="5000" step="1" placeholder="0 = not known"></label>
+      </div>
+      <p class="muted small">Shown beside the exit as a sense check; it does not change the estimate. The exit is usually bigger: it moves everything built on AWS since.</p>
       <label class="check"><input name="regulated" type="checkbox"> Regulated entity (exit plan evidence, regulator notification, assurance testing)</label>
       <button type="button" id="btnRecalc" class="btn primary no-print">These answers are right: recalculate</button>
     </form>

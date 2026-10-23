@@ -10,7 +10,9 @@ reached an account, each service's effort is built from what was counted there:
 * **complexity** - observable configuration: custom or end-of-support Lambda runtimes, Aurora or
   commercial database engines (``lambda_complexity``, ``RDS_DAYS``);
 * **repeat discount** - after the first ``REPEAT_FULL`` resources of a type in an account, each
-  further one is mostly repeat work (templated, scripted) and costs ``REPEAT_SHARE`` of the baseline.
+  further one is mostly repeat work (templated, scripted) and costs ``REPEAT_SHARE`` of the baseline,
+  or ``REPEAT_SHARE_TEMPLATED`` when services are built from developer-portal templates (golden paths,
+  for example Backstage): the templates are changed once and every service built from them re-run.
 
 The dependency scan adds **integration redesign**: each AWS-specific integration discovered between
 services (an SQS queue feeding a function, an EventBridge rule starting a state machine) costs
@@ -36,6 +38,7 @@ from .collectors.baseline import platform_edge
 DAYS_PER_WEEK = 5.0
 REPEAT_FULL = 20
 REPEAT_SHARE = 0.35
+REPEAT_SHARE_TEMPLATED = 0.15
 
 # resource key -> (catalog service, baseline engineer-days each, label)
 RESOURCES: dict[str, tuple[str, float, str]] = {
@@ -105,9 +108,10 @@ EDGE_SERVICES = {
 OUTSIDE_AWS = {"http", "email", "sms", "mobile", "kafka", "aws"}
 
 
-def repeat_count(n: float) -> float:
-    """Resources after the first REPEAT_FULL of a type count at REPEAT_SHARE of the work."""
-    return min(n, REPEAT_FULL) + max(n - REPEAT_FULL, 0) * REPEAT_SHARE
+def repeat_count(n: float, templated: bool = False) -> float:
+    """Resources after the first REPEAT_FULL of a type count at REPEAT_SHARE of the work (REPEAT_SHARE_TEMPLATED
+    when they are built from templates)."""
+    return min(n, REPEAT_FULL) + max(n - REPEAT_FULL, 0) * (REPEAT_SHARE_TEMPLATED if templated else REPEAT_SHARE)
 
 
 def lambda_complexity(runtimes: dict[str, int]) -> float:
@@ -139,7 +143,7 @@ def rds_family(engine: str) -> str:
     return "open"
 
 
-def resource_days(totals: dict) -> dict[str, dict]:
+def resource_days(totals: dict, templated: bool = False) -> dict[str, dict]:
     """{catalog service: {"days", "resources", "items": [{label, count, days}]}} from inventory totals."""
     out: dict[str, dict] = {}
 
@@ -156,13 +160,13 @@ def resource_days(totals: dict) -> dict[str, dict]:
         if not isinstance(n, (int, float)):
             continue
         factor = lambda_complexity(totals.get("lambda_runtimes") or {}) if key == "lambda_functions" else 1.0
-        add(service, label, n, repeat_count(n) * base * factor)
+        add(service, label, n, repeat_count(n, templated) * base * factor)
     engines = totals.get("rds_engines") or {}
     by_family: dict[str, int] = {}
     for engine, n in engines.items():
         by_family[rds_family(engine)] = by_family.get(rds_family(engine), 0) + n
     for family, n in sorted(by_family.items()):
-        add(RDS_SERVICE, f"RDS instances ({family})", n, repeat_count(n) * RDS_DAYS[family])
+        add(RDS_SERVICE, f"RDS instances ({family})", n, repeat_count(n, templated) * RDS_DAYS[family])
     return out
 
 
@@ -174,7 +178,7 @@ def edge_tier(edge: str, catalog: Catalog) -> int:
     return max(tiers, default=3)
 
 
-def integration_days(edges: dict[str, int], catalog: Catalog) -> list[dict]:
+def integration_days(edges: dict[str, int], catalog: Catalog, templated: bool = False) -> list[dict]:
     """One row per kind of integration: {edge, source service, count, tier, days}."""
     rows = []
     for edge, n in sorted(edges.items(), key=lambda kv: -kv[1]):
@@ -188,14 +192,15 @@ def integration_days(edges: dict[str, int], catalog: Catalog) -> list[dict]:
                 "service": EDGE_SERVICES.get(src, src),
                 "count": int(n),
                 "tier": edge_tier(edge, catalog),
-                "days": round(repeat_count(n) * per, 2),
+                "days": round(repeat_count(n, templated) * per, 2),
             }
         )
     return rows
 
 
-def assumptions() -> list[str]:
+def assumptions(templated: bool = False) -> list[str]:
     """The coefficients in words, for the estimate's list of assumptions."""
+    share = REPEAT_SHARE_TEMPLATED if templated else REPEAT_SHARE
     per = ", ".join(f"{label} {base:g}" for _, (_, base, label) in RESOURCES.items())
     return [
         "Effort from resources (deep-scanned accounts): engineer-days per resource: "
@@ -203,8 +208,11 @@ def assumptions() -> list[str]:
         f"(Oracle, SQL Server, Db2), {RDS_DAYS['aurora']:g} (Aurora). Lambda functions on a custom runtime "
         f"x{CUSTOM_RUNTIME_FACTOR:g}, on an end-of-support runtime x{OLD_RUNTIME_FACTOR:g}, packaged as "
         f"containers x{CONTAINER_FACTOR:g}. After the first {REPEAT_FULL} of a type in an account, each further "
-        f"one counts {REPEAT_SHARE:.0%} (repeat work). Uncalibrated planning assumptions: challenge them with "
-        "your own migration history.",
+        f"one counts {share:.0%} (repeat work"
+        + (", lower because services are built from developer-portal templates" if templated else "")
+        + "). CloudFormation stacks are counted but carry no effort of their own: they package the resources "
+        "above, and rewriting templates is the infrastructure-as-code factor. Uncalibrated planning "
+        "assumptions: challenge them with your own migration history.",
         f"Integration redesign (dependency scan): {INTEGRATION_DAYS:g} engineer-day per AWS-specific "
         "integration (event source mappings, EventBridge targets, SNS subscriptions, API Gateway integrations, "
         "Step Functions tasks), less for e-mail, SMS and HTTP endpoints, with the same repeat discount; each "

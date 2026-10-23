@@ -313,10 +313,11 @@ class Client:
         elif s.provider != "bedrock" and not s.api_key():
             raise AIError(f"No API key for {PROVIDERS[s.provider].label}. Enter one in Settings, AI configuration.")
 
-    def complete(self, system: str, user: str, max_tokens: int = 16000) -> Reply:
+    def complete(self, system: str, user: str, max_tokens: int = 16000, effort: str = "high") -> Reply:
+        """``effort`` is how hard the model reasons: "high", or "medium" for a quicker check."""
         while True:
             try:
-                return self._call(system, user, max_tokens)
+                return self._call(system, user, max_tokens, effort)
             except AIError as exc:
                 if not self.modes or not re.search(
                     r"think|reason|budget|effort|output_config|unsupported|not support|extra", str(exc), re.I
@@ -329,14 +330,19 @@ class Client:
     def reasoning(self) -> str | None:
         return self.modes[0] if self.modes else None
 
-    def _thinking(self, max_tokens: int) -> dict:
+    def _thinking(self, max_tokens: int, effort: str = "high") -> dict:
         if self.reasoning == "adaptive":
-            return {"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}
+            return {"thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
         if self.reasoning == "budget":
-            return {"thinking": {"type": "enabled", "budget_tokens": max(1024, max_tokens // 2)}}
+            return {
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": max(1024, max_tokens // (2 if effort == "high" else 4)),
+                }
+            }
         return {}
 
-    def _call(self, system: str, user: str, max_tokens: int) -> Reply:
+    def _call(self, system: str, user: str, max_tokens: int, effort: str = "high") -> Reply:
         p = self.s.provider
         if p == "anthropic":
             body = {
@@ -345,7 +351,7 @@ class Client:
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
             }
-            body.update(self._thinking(max_tokens))
+            body.update(self._thinking(max_tokens, effort))
             j = _http(
                 "POST",
                 "https://api.anthropic.com/v1/messages",
@@ -357,7 +363,7 @@ class Client:
             stop = j.get("stop_reason") or ""
             return Reply(text, u.get("input_tokens", 0), u.get("output_tokens", 0), stop == "max_tokens", stop)
         if p == "bedrock":
-            return self._bedrock(system, user, max_tokens)
+            return self._bedrock(system, user, max_tokens, effort)
         body = {
             "model": self.model,
             "max_tokens": max_tokens,
@@ -365,9 +371,9 @@ class Client:
         }
         if self.reasoning == "high":
             if p == "openrouter":
-                body["reasoning"] = {"effort": "high"}
+                body["reasoning"] = {"effort": effort}
             else:
-                body["reasoning_effort"] = "high"
+                body["reasoning_effort"] = effort
         if p == "openrouter":
             body["transforms"] = []  # never let OpenRouter compress ("middle-out") a long prompt
         j = _http("POST", f"{_openai_base(self.s)}/chat/completions", _openai_headers(self.s), body)
@@ -379,14 +385,14 @@ class Client:
         stop = choices[0].get("finish_reason") or ""
         return Reply(text, u.get("prompt_tokens", 0), u.get("completion_tokens", 0), stop == "length", stop)
 
-    def _bedrock(self, system: str, user: str, max_tokens: int) -> Reply:
+    def _bedrock(self, system: str, user: str, max_tokens: int, effort: str = "high") -> Reply:
         body = {
             "system": [{"text": system}],
             "messages": [{"role": "user", "content": [{"text": user}]}],
             "inferenceConfig": {"maxTokens": max_tokens},
         }
         if self.reasoning:
-            body["additionalModelRequestFields"] = self._thinking(max_tokens)
+            body["additionalModelRequestFields"] = self._thinking(max_tokens, effort)
         key = self.s.api_key()
         if key:  # Bedrock API key: plain bearer token on the runtime endpoint
             model = urllib.parse.quote(self.model, safe="")

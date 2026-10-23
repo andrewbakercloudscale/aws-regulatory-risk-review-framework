@@ -16,7 +16,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from .catalog import AGENTIC_FACTORS
+from .catalog import AGENTIC_FACTORS, TOOLS_FLOOR
 from .resource_effort import assumptions as resource_assumptions
 
 CICD_FACTORS = {"standard": 0.85, "partial": 1.0, "manual": 1.3}
@@ -119,6 +119,15 @@ class Questionnaire(BaseModel):
     # AI coding agents translate code and templates: each service's weeks shrink by its catalog
     # ``agentic`` rating (see catalog.AGENTIC_FACTORS). Off until the organisation says it uses them.
     ai_agents: bool = False
+    # Migration tools (replication, import, translation: named per service in the report) do part of the
+    # move: each service's weeks shrink by its catalog ``tooling`` rating. Off until the organisation plans them.
+    migration_tools: bool = False
+    # Services are built and deployed from developer-portal templates (golden paths, for example Backstage):
+    # the templates are changed once for the target and re-run, so repeat resources cost less each.
+    golden_paths: bool = False
+    # How the move into AWS went, to set the exit beside it (0 = not given). Not used in the estimate.
+    move_in_months: int = Field(0, ge=0, le=240)
+    move_in_people: int = Field(0, ge=0, le=5000)
     # AWS products the organisation leaves out of the score and the estimate (catalog service names),
     # for example Marketplace software it re-contracts anyway, or a service it already plans to retire.
     exclude_services: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
@@ -238,6 +247,7 @@ class Estimate:
     assumptions: list
     range_factors: dict
     ranges: dict
+    move_in: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -278,6 +288,21 @@ def _datacenter(q: Questionnaire, monthly_spend: float) -> dict:
     }
 
 
+def _move_in(q: Questionnaire, total_weeks: float) -> dict | None:
+    """The move into AWS beside this exit, when the questions say how it went: a sense check, not an input."""
+    if not (q.move_in_months and q.move_in_people):
+        return None
+    person_months = q.move_in_months * q.move_in_people
+    exit_pm = total_weeks / WEEKS_PER_MONTH
+    return {
+        "months": q.move_in_months,
+        "people": q.move_in_people,
+        "person_months": person_months,
+        "exit_person_months": round(exit_pm, 1),
+        "ratio": round(exit_pm / person_months, 1) if person_months else None,
+    }
+
+
 def data_copy_weeks(move_tb: float, gbps: float = DATA_LINK_GBPS) -> float:
     """Weeks to copy ``move_tb`` over ``gbps`` of links at DATA_LINK_USE: 1 TB at 1 GB/s takes 1,000 s."""
     seconds = move_tb * 8e12 / (gbps * 1e9 * DATA_LINK_USE)
@@ -294,6 +319,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float,
             by_tier[int(t)] += w
     service_weeks = sum(by_tier.values())
     agentic_saved = sum(a.get("agentic_saved_weeks", 0.0) for a in accounts)
+    tools_saved = sum(a.get("tools_saved_weeks", 0.0) for a in accounts)
     material_accounts = sum(1 for a in accounts if a["monthly_spend"] >= q.materiality)
     account_weeks = ACCOUNT_OVERHEAD_WEEKS * material_accounts
     move_tb = sum(a.get("data_tb") or 0 for a in accounts)
@@ -394,6 +420,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float,
             "by_tier": {t: round(w * factor, 1) for t, w in by_tier.items()},
             "material_accounts": material_accounts,
             "agentic_saved_weeks": round(agentic_saved * factor, 1),
+            "tools_saved_weeks": round(tools_saved * factor, 1),
         },
         team={
             "capacity_fte": round(capacity, 1),
@@ -435,7 +462,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float,
             f"√(monthly spend / {REFERENCE_MONTHLY_SPEND:,.0f} USD), clamped to {SIZE_MULT_MIN} to "
             f"{SIZE_MULT_MAX}×. In material deep-scanned accounts effort comes from resource counts instead "
             "(below), so a cheap but complex service weighs more than a large portable one.",
-            *resource_assumptions(),
+            *resource_assumptions(q.golden_paths),
             f"Services under {q.materiality:,.0f} USD/month in an account are scored but not estimated "
             "(immaterial); the cut-off applies per service per account.",
             f"{ACCOUNT_OVERHEAD_WEEKS:g} engineer-week per material account for network, IAM and decommissioning.",
@@ -470,6 +497,18 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float,
                 else []
             ),
             *(
+                [
+                    "Migration tools: each service's weeks are cut by its catalog tooling rating: high "
+                    f"{1 - AGENTIC_FACTORS['high']:.0%} (replication and import tools: servers, databases, object "
+                    f"storage, Kafka, DNS), medium {1 - AGENTIC_FACTORS['medium']:.0%}, low "
+                    f"{1 - AGENTIC_FACTORS['low']:.0%}; not on integration redesign. With AI coding agents too, "
+                    f"a service's work is never cut below {TOOLS_FLOOR:.0%}. Saved {tools_saved:,.0f} "
+                    "engineer-weeks before the delivery factor. The tools are named per service in the report."
+                ]
+                if q.migration_tools
+                else []
+            ),
+            *(
                 [f"Left out of the score and estimate at your request: {', '.join(q.exclude_services)}."]
                 if q.exclude_services
                 else []
@@ -487,6 +526,7 @@ def build_estimate(q: Questionnaire, accounts: list[dict], monthly_spend: float,
             f"has counted the integrations (this report: {scan_depth} scan). The single figures are planning "
             "midpoints, not forecasts.",
         ],
+        move_in=_move_in(q, total),
         range_factors={"cost": list(cost_range), "duration": list(duration_range_f), "scan_depth": scan_depth},
         ranges={
             "cost": money_range(total_cost * cost_range[0], total_cost * cost_range[1], q.currency),

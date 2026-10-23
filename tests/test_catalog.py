@@ -128,3 +128,12 @@ def test_bad_agentic_rating_rejected():
     }
     with pytest.raises(CatalogError, match="agentic"):
         Catalog(raw)
+
+
+def test_migration_tools_are_rated_and_name_a_tool_for_any_target():
+    cat = load_catalog()
+    rated = [s for s in cat.services if s.tools]
+    assert len(rated) >= 50
+    for s in rated:
+        assert s.tooling in ("high", "medium", "low"), s.service
+        assert s.tools_for("azure") and s.tools_for("sovereign"), s.service

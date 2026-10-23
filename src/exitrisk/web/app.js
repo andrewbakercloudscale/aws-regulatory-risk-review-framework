@@ -121,7 +121,8 @@
 
   // ------------------------------------------------------------------ questionnaire
   const Q_NUM = ["cloud_team_size", "cloud_team_allocation_pct", "app_engineers_fte", "day_rate", "fx_per_usd",
-    "contingency_pct", "parallel_run_months", "materiality", "migration_circuit_monthly", "exit_deadline_months", "edp_annual_commit"];
+    "contingency_pct", "parallel_run_months", "materiality", "migration_circuit_monthly", "exit_deadline_months", "edp_annual_commit",
+    "move_in_months", "move_in_people"];
 
   function loadQuestionnaire() {
     let q = { ...(state.options?.defaults || {}) };
@@ -1019,9 +1020,27 @@
       ["Blended day rate", `${num(q.day_rate)} ${q.currency}`],
       ["Contingency", `${q.contingency_pct}%`], ["Parallel running", `${q.parallel_run_months} months`], ["Regulated", q.regulated ? "Yes" : "No"],
       ["AI coding agents", q.ai_agents ? `Yes, about ${num(e.effort.agentic_saved_weeks / 4.33, 0)} person-months less work` : "Not used"],
+      ["Migration tools", q.migration_tools ? `Yes, about ${num((e.effort.tools_saved_weeks || 0) / 4.33, 0)} person-months less work` : "Not planned"],
+      ["Developer-portal templates", q.golden_paths ? "Yes: repeat services cost less each" : "No"],
+      ["Move into AWS", e.move_in ? `${plural(e.move_in.months, "month")} with ${plural(e.move_in.people, "person", "people")} (${num(e.move_in.person_months)} person-months); this exit is about ${num(e.move_in.ratio, 1)} times that` : "Not given"],
       ["Left out", r.summary.excluded_services.length ? `${r.summary.excluded_services.map((s) => s.display).join(", ")} (${money(r.summary.excluded_services_monthly)}/mo)` : "Nothing"]];
     $("#answers").innerHTML = ans.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
     $("#assumptions").innerHTML = e.assumptions.map((a) => `<li>${esc(a)}</li>`).join("");
+    renderTools(r);
+  }
+
+  // The services carrying the most effort, with the tools that move them to the chosen target.
+  function renderTools(r) {
+    const e = r.estimate, rows = r.services.filter((s) => s.effort_weeks > 0 && s.tools?.length)
+      .sort((a, b) => b.effort_weeks - a.effort_weeks).slice(0, 15);
+    $("#toolsCard").hidden = e.empty || !rows.length;
+    if (!rows.length) return;
+    const help = { high: "High", medium: "Medium", low: "Low", none: "None" };
+    $("#toolsCap").textContent = `The ${plural(rows.length, "service")} with the most work, and the tools that do part of it for ${state.options.target[e.inputs.target]}. `
+      + (e.inputs.migration_tools ? "The estimate counts them (Exit model, migration tools)." : "Not counted in the estimate yet: tick migration tools in the Exit model once you plan to use them.");
+    $("#toolsTable").innerHTML = `<thead><tr><th>Service</th><th class="num-cell">Person-months</th><th>Tools</th><th>Tool help</th><th>AI agent help</th></tr></thead><tbody>`
+      + rows.map((s) => `<tr><td>${esc(s.display)}</td><td class="num-cell">${num(s.effort_weeks / 4.33, 0)}</td><td>${s.tools.map((t) => `<div>${esc(t)}</div>`).join("")}</td><td>${help[s.tooling] || "None"}</td><td>${help[s.agentic] || "None"}</td></tr>`).join("")
+      + "</tbody>";
   }
 
   // ------------------------------------------------------------------ resilience

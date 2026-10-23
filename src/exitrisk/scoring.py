@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 from . import __version__
-from .catalog import AGENTIC_FACTORS, Catalog, load_catalog
+from .catalog import AGENTIC_FACTORS, TOOLS_FLOOR, Catalog, load_catalog
 from .dimensions import build_dimensions, hard_part, scan_depth
 from .estimate import (
     TARGET_LABELS,
@@ -278,7 +278,7 @@ def _services_used(top: list, effort_by_service: dict) -> list[dict]:
     return sorted(rows.values(), key=lambda r: (-r["effort_weeks"], -r["monthly_spend"]))[:SERVICES_USED_MAX]
 
 
-def _service_row(services: dict[str, dict], info, catalog: Catalog) -> dict:
+def _service_row(services: dict[str, dict], info, catalog: Catalog, target: str = "azure") -> dict:
     return services.setdefault(
         info.service,
         {
@@ -289,6 +289,8 @@ def _service_row(services: dict[str, dict], info, catalog: Catalog) -> dict:
             "tier_label": catalog.tier_label(info.tier),
             "classified": info.classified,
             "agentic": info.agentic,
+            "tooling": info.tooling,
+            "tools": info.tools_for(target),
             "monthly_spend": 0.0,
             "accounts": 0,
             "effort_weeks": 0.0,
@@ -300,18 +302,24 @@ def _service_row(services: dict[str, dict], info, catalog: Catalog) -> dict:
 class _Effort:
     """One account's unadjusted engineer-weeks, by tier, by basis and by service."""
 
-    def __init__(self, ai_agents: bool):
+    def __init__(self, ai_agents: bool, migration_tools: bool = False):
         self.ai_agents = ai_agents
+        self.migration_tools = migration_tools
+        self.tools_saved = 0.0
         self.by_tier = {t: 0.0 for t in range(1, 6)}
         self.basis = {"resources": 0.0, "spend": 0.0, "integrations": 0.0}
         self.by_service: dict[str, float] = {}
         self.agentic_saved = 0.0
 
     def add(self, info, weeks: float, kind: str) -> None:
-        factor = AGENTIC_FACTORS["medium" if kind == "integrations" else info.agentic]
-        if self.ai_agents:
-            self.agentic_saved += weeks * (1 - factor)
-            weeks *= factor
+        agents = AGENTIC_FACTORS["medium" if kind == "integrations" else info.agentic] if self.ai_agents else 1.0
+        # Integrations are redesign: no migration tool moves an event wiring for you.
+        tools = AGENTIC_FACTORS[info.tooling] if self.migration_tools and kind != "integrations" else 1.0
+        # Agents and tools overlap (an agent drives the tool), so together they never cut more than TOOLS_FLOOR.
+        both = max(agents * tools, TOOLS_FLOOR) if agents * tools < 1 else 1.0
+        self.agentic_saved += weeks * (1 - agents)
+        self.tools_saved += weeks * max(agents - both, 0.0)
+        weeks *= both
         self.by_tier[info.tier] += weeks
         self.basis[kind] += weeks
         self.by_service[info.service] = self.by_service.get(info.service, 0.0) + weeks
@@ -351,13 +359,13 @@ def _accounts(
         score = _weighted_score(svc_totals, catalog)
         weight = weight_fn(monthly) / total_weight if total_weight else 0.0
         tier_spend = {t: 0.0 for t in range(1, 6)}
-        eff = _Effort(q.ai_agents)
+        eff = _Effort(q.ai_agents, q.migration_tools)
         inv = inventory.get(aid) or {}
         inv_totals = inv.get("totals", {})
         material = monthly >= q.materiality
         # Deep-scanned material accounts: services the inventory counted are sized from their resources,
         # whatever they cost. Everything else stays sized from spend, above the materiality cut-off.
-        counted = resource_days(inv_totals) if inv and material else {}
+        counted = resource_days(inv_totals, q.golden_paths) if inv and material else {}
         counted = {k: v for k, v in counted.items() if k not in excluded}
         top = []
         seen = set()
@@ -371,19 +379,19 @@ def _accounts(
                 eff.add(info, service_effort(info.effort_weeks, m), "spend")
             seen.add(info.service)
             top.append((m, info))
-            _service_row(services, info, catalog)["monthly_spend"] += m
+            _service_row(services, info, catalog, q.target)["monthly_spend"] += m
             services[info.service]["accounts"] += 1
         for name, row in counted.items():  # counted but not billed in the period: still work to move
             if name not in seen:
                 eff.add(catalog.lookup(name), row["days"] / DAYS_PER_WEEK, "resources")
         edges = inv.get("dependencies") if material else None
-        integrations = integration_days(edges or {}, catalog)
+        integrations = integration_days(edges or {}, catalog, q.golden_paths)
         for row in integrations:
             info = catalog.lookup(row["service"])
             tiered = replace(info, tier=row["tier"])  # the integration is as hard as its harder end
             eff.add(tiered, row["days"] / DAYS_PER_WEEK, "integrations")
         for name, weeks in eff.by_service.items():
-            _service_row(services, catalog.lookup(name), catalog)["effort_weeks"] += weeks
+            _service_row(services, catalog.lookup(name), catalog, q.target)["effort_weeks"] += weeks
         for name, row in counted.items():
             services[name]["resources"] += row["resources"]
         top.sort(key=lambda x: -x[0])
@@ -414,6 +422,7 @@ def _accounts(
                 "effort_basis": {k: round(v, 2) for k, v in eff.basis.items()},
                 "portability": _portability(eff.by_tier, catalog),
                 "agentic_saved_weeks": round(eff.agentic_saved, 2),
+                "tools_saved_weeks": round(eff.tools_saved, 2),
                 "inventory": inv_totals,
                 "deep_scanned": bool(inv),
                 "dependency_scanned": "dependencies" in inv,
