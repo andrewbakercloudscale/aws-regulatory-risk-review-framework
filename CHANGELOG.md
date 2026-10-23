@@ -6,6 +6,12 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- The filter bar lines up with the report column and the view tabs at every width.
+- With the operating system's Reduce motion setting on, loading panels still show they are busy: the
+  spinner turns slowly and the bar pulses in place instead of sliding.
+
 ## [0.14.2] - 2026-10-23
 
 ### Added

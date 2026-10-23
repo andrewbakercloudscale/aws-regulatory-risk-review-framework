@@ -69,7 +69,8 @@ p { margin: 0 0 .8em; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; color: var(--ink); }
 .topbar-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
 #scanSelect { width: 300px; max-width: 100%; }
-.scopebar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; padding: 12px 24px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+/* Side padding lines the filters up with the report column (1240px less its 24px padding) and the view tabs inside it. */
+.scopebar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; padding: 12px max(30px, calc((100% - 1192px) / 2 + 6px)); background: var(--surface-2); border-bottom: 1px solid var(--border); }
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
 .field.narrow { min-width: 120px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--ink-2); }
@@ -312,7 +313,8 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
   .grid-2, .grid-est, .hero-row, .model-grid { grid-template-columns: minmax(0, 1fr); }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .report { padding: 16px; }
-  .topbar, .scopebar { padding: 10px 16px; }
+  .topbar { padding: 10px 16px; }
+  .scopebar { padding: 10px 22px; }
   .g-row, .g-axis { grid-template-columns: 120px 1fr; }
   .field { min-width: 140px; flex: 1; }
 }
@@ -510,7 +512,9 @@ table.data.accounts td { vertical-align: middle; }
 /* Determinate: app.js sets the width as steps finish. */
 .busy-bar.det i { animation: none; left: 0; transition: width .3s ease; }
 @keyframes busy { from { left: -35%; } to { left: 100%; } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; border-top-color: var(--accent) !important; border-right-color: transparent !important; } .busy-bar i { animation: none; left: 0; width: 100%; } }
+/* Reduced motion: no sliding, but a busy state must still look alive, so the spinner turns slowly and the bar pulses in place. */
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 1.6s; } .busy-bar:not(.det) i { animation: busy-pulse 1.4s ease-in-out infinite; left: 0; width: 100%; } }
+@keyframes busy-pulse { 50% { opacity: .35; } }
 .tile-value .prov-tag { font-size: 10px; vertical-align: 5px; margin-left: 4px; letter-spacing: .03em; }
 .questionnaire label.check input { width: auto; flex: none; }
 .tier-split table.data td, .tier-split table.data th { padding: 6px 6px; }
