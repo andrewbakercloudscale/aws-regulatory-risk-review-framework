@@ -23,6 +23,9 @@ BOTO_CONFIG = Config(
     retries={"max_attempts": 10, "mode": "adaptive"},
     connect_timeout=10,
     read_timeout=60,
+    # One pool per AWS endpoint, shared by every account's clients (ClientCache), so it needs room for
+    # the calls of several accounts at once.
+    max_pool_connections=64,
     user_agent_extra="aws-regulatory-risk-review-framework",
 )
 
@@ -44,8 +47,30 @@ class ClientCache:
         with self._lock:
             key = (service, region_name)
             if key not in self._clients:
-                self._clients[key] = self.session.client(service, region_name=region_name, config=config or BOTO_CONFIG)
+                client = self.session.client(service, region_name=region_name, config=config or BOTO_CONFIG)
+                if config is None:
+                    _share_connections(client)
+                self._clients[key] = client
             return self._clients[key]
+
+
+# The connections of every BOTO_CONFIG client in this process. A deep scan makes new clients for each
+# account (new credentials), and each client would open its own connections: hundreds of TLS handshakes
+# per account, which a TLS-inspecting corporate proxy makes take seconds each. A connection carries no
+# identity (every request is signed on its own), so all accounts share one pool per endpoint instead.
+_http = None
+_http_lock = threading.Lock()
+
+
+def _share_connections(client) -> None:
+    global _http
+    endpoint = getattr(client, "_endpoint", None)
+    if endpoint is None or not hasattr(endpoint, "http_session"):  # a botocore without it: keep its own
+        return
+    with _http_lock:
+        if _http is None:
+            _http = endpoint.http_session  # made from BOTO_CONFIG, the CA bundle and proxy settings
+        endpoint.http_session = _http
 
 
 def available_profiles() -> list[str]:

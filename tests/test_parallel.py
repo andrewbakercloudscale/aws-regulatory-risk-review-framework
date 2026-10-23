@@ -53,3 +53,20 @@ def test_scan_list_rereads_only_changed_files(monkeypatch):
     assert reads == []
     store.delete_scan(scan_id)
     assert not any(s["id"] == scan_id for s in store.list_scans())
+
+
+def test_accounts_share_connections_but_not_clients():
+    """Each account gets its own clients (its own credentials) over one pool of connections per process."""
+    import boto3
+    from botocore.config import Config
+
+    from exitrisk.aws_session import ClientCache
+
+    def cache(key):
+        return ClientCache(boto3.Session(aws_access_key_id=key, aws_secret_access_key="s", region_name="eu-west-1"))
+
+    a, b = cache("A").client("ec2", "eu-west-1"), cache("B").client("sqs", "af-south-1")
+    assert a is not b and a._request_signer._credentials.access_key == "A"
+    assert a._endpoint.http_session is b._endpoint.http_session
+    own = cache("C").client("ec2", "eu-west-1", config=Config(read_timeout=5))
+    assert own._endpoint.http_session is not a._endpoint.http_session  # other settings, other pool
