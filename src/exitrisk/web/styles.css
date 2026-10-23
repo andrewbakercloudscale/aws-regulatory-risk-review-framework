@@ -701,3 +701,18 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 @media (max-width: 1100px) { .dims { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .dims { grid-template-columns: 1fr; } .span-2 { grid-column: auto; } }
 @media print { .dims { grid-template-columns: repeat(5, minmax(0, 1fr)); } .dim-value { font-size: 15px; } }
+
+/* Areas of focus */
+.focus-list { display: grid; gap: 10px; }
+.focus-accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; }
+.focus-acct h4 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.focus-acct .rank { display: inline-grid; place-items: center; min-width: 22px; height: 22px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border); font-size: 12px; }
+.focus-acct > .hint { margin: 2px 0 8px; }
+.focus-item { border-left: 3px solid var(--dot); padding: 6px 0 6px 10px; margin-top: 8px; }
+.focus-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.focus-title .sev { text-transform: none; font-size: 13px; }
+.focus-detail { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+.focus-action { font-size: 12.5px; margin-top: 3px; }
+.chip.phase { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+@media (max-width: 640px) { .focus-accounts { grid-template-columns: 1fr; } }
+@media print { .focus-accounts { grid-template-columns: 1fr 1fr; } .focus-acct, .focus-item { break-inside: avoid; } }

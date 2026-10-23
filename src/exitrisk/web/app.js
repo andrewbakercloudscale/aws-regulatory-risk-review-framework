@@ -392,6 +392,7 @@
       renderEstimate(r);
       renderResilience(r);
       renderTiming(r);
+      renderFocus(r);
       renderIssues(r);
       renderAppendix(r);
       renderOnePager(r);
@@ -1319,6 +1320,63 @@
     list.innerHTML = rows.map((g) => `<li><strong>${esc(g.name)}</strong> ${money(g.spend_at_risk)}/month at risk <span class="muted">· ${plural(g.accounts, "account")}</span></li>`).join("");
   }
 
+  // ------------------------------------------------------------------ areas of focus
+  const FOCUS_LEVEL = { high: 5, medium: 4, low: 2 };
+  const PHASES = ["Before mobilisation", "Mobilise", "Wave 1", "Wave 2", "Wave 3", "Cutover"];
+  const FOCUS_GROUP = {
+    platform: "Decide the target for Critical-tier services",
+    critical: "Rehearsed cutover and fallback",
+    integrations: "Map and decouple AWS-only integrations",
+    data: "Start the bulk data copy",
+    lockin: "Re-architect (mostly AWS-only spend)",
+    effort: "Dedicated squad, split into workloads",
+    evidence: "Dependency scan before committing the plan",
+    owner: "Name an accountable owner",
+  };
+  const phaseChip = (p) => `<span class="chip phase">${esc(p)}</span>`;
+
+  function focusItem(c, who) {
+    return `<div class="focus-item" style="--dot:${tierColor(FOCUS_LEVEL[c.level] || 3)}">
+      <div class="focus-title"><span class="sev">${esc(c.title)}</span>${phaseChip(c.phase)}${who ? `<span class="hint">${esc(who)}</span>` : ""}</div>
+      <div class="focus-detail">${esc(c.detail)}</div>
+      <div class="focus-action"><b>How to tackle:</b> ${esc(c.action)}</div>
+    </div>`;
+  }
+
+  function renderFocus(r) {
+    const f = r.focus;
+    const sec = $("#sec-focus");
+    sec.hidden = !f || (!f.accounts.length && !f.themes.length);
+    if (sec.hidden) return;
+    const n = f.concern_counts || {};
+    $("#focusTiles").innerHTML = [
+      tile("Accounts to focus on", num(f.accounts_total), f.accounts.length < f.accounts_total ? `top ${f.accounts.length} shown below` : "all shown below"),
+      tile("Their share of the effort", pct(f.effort_pct), `and ${pct(f.spend_pct)} of spend (top ${f.accounts.length})`),
+      tile("AWS-only blockers", num(n.platform || 0), "accounts with a Critical-tier service and no like-for-like target"),
+      tile("Critical accounts", num(n.critical || 0), n.critical ? "need a rehearsed cutover and fallback" : "none marked: name them under section 6"),
+    ].join("");
+    $("#focusThemes").innerHTML = f.themes.length ? f.themes.map((t) => focusItem({ ...t, level: "medium" })).join("") : '<p class="hint">No programme-wide themes.</p>';
+    // Plan by phase: every concern, grouped, so the project knows what to start first.
+    const byPhase = new Map(PHASES.map((p) => [p, []]));
+    for (const t of f.themes) byPhase.get(t.phase)?.push(`<strong>${esc(t.title)}</strong>`);
+    const groups = new Map();
+    for (const a of f.accounts) for (const c of a.concerns) {
+      const k = `${c.phase}|${c.key}`;
+      if (!groups.has(k)) groups.set(k, { phase: c.phase, label: FOCUS_GROUP[c.key] || c.title, names: [] });
+      groups.get(k).names.push(a.name);
+    }
+    for (const g of groups.values()) byPhase.get(g.phase)?.push(`${esc(g.label)}: ${esc(g.names.join(", "))}`);
+    $("#focusPlan").innerHTML = `<thead><tr><th>Phase</th><th>Deal with</th></tr></thead><tbody>${[...byPhase].filter(([, xs]) => xs.length).map(([p, xs]) => `<tr><td>${phaseChip(p)}</td><td>${xs.join("<br>")}</td></tr>`).join("")}</tbody>`;
+    $("#focusNote").textContent = f.accounts.length
+      ? `Ranked by share of the effort, spend on AWS-only services and the weight of each concern.${f.accounts_total > f.accounts.length ? ` ${plural(f.accounts_total - f.accounts.length, "more account")} also ${f.accounts_total - f.accounts.length === 1 ? "has" : "have"} concerns; filter the report to see them.` : ""}`
+      : "No single account stands out: the effort is spread evenly.";
+    $("#focusAccounts").innerHTML = f.accounts.map((a, i) => `<article class="card focus-acct">
+      <div class="card-head"><h4><span class="rank">${i + 1}</span>${esc(a.name)}${a.critical ? ' <span class="chip crit">Critical</span>' : ""}</h4><span class="chip phase">${esc(a.wave)}</span></div>
+      <div class="hint">${esc(a.id)} · ${money(a.monthly_spend)} a month · ${num(a.effort_weeks, 0)} engineer-weeks${a.rating ? ` · ${esc(a.rating)} risk` : ""} · ${a.owner ? `Owner: ${esc(a.owner)}` : "No owner"}</div>
+      ${a.concerns.map((c) => focusItem(c)).join("")}
+    </article>`).join("");
+  }
+
   function renderIssues(r) {
     const c = r.issue_counts;
     // Top-bar shortcut: count and colour of the worst severity, so issues are never only at the bottom.
@@ -1326,7 +1384,7 @@
     $("#btnIssues").hidden = !r.issues.length;
     $("#issueBadge").textContent = r.issues.length;
     $("#issueBadge").className = `count-badge sev-${worst || "info"}`;
-    $("#btnIssues").title = `${plural(r.issues.length, "issue")}${worst ? `, worst: ${worst}` : ""} (section 7)`;
+    $("#btnIssues").title = `${plural(r.issues.length, "issue")}${worst ? `, worst: ${worst}` : ""} (section 8)`;
     $("#issueCounts").innerHTML = ["critical", "error", "warning", "info"].map((s) => `<span class="chip"><span class="sev" style="--dot:${css(SEV_COLOR[s])}">${s}: ${c[s] || 0}</span></span>`).join("");
     const names = Object.fromEntries(r.accounts.map((a) => [a.id, a.name]));
     $("#issueTable").innerHTML = r.issues.length
@@ -1836,7 +1894,7 @@
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         $("#btnStartScan").disabled = false;
         if (s.status === "failed") {
-          $("#scanError").textContent = `Scan failed: ${s.message}. See section 7 and the log for details.`;
+          $("#scanError").textContent = `Scan failed: ${s.message}. See section 8 and the log for details.`;
         } else {
           $("#scanDialog").close();
           toast(`Scan ${s.status}${s.issues ? ` with ${plural(s.issues, "issue")}: click Issues in the top bar` : ""}`);

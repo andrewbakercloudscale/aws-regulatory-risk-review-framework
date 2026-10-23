@@ -169,6 +169,7 @@ def main() -> int:
         shoot(page, "#sec-estimate", "estimate.png")
         shoot(page, "#timing", "timing.png")
         shoot(page, "#sec-resilience", "resilience.png")
+        shoot(page, "#sec-focus", "focus.png")
         shoot(page, "#sec-issues", "issues.png")
         page.locator("#sec-appendix .cat-group").first.screenshot(path=str(OUT / "appendix-catalog.png"))
         print("wrote", OUT / "appendix-catalog.png")

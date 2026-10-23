@@ -37,6 +37,7 @@ from .estimate import (
     service_effort,
 )
 from .filtering import AccountFilter
+from .focus import build_focus
 from .issues import Issue
 from .resilience import build_resilience
 from .resource_effort import DAYS_PER_WEEK, integration_days, resource_days
@@ -651,6 +652,7 @@ def build_report(
         "estimate": estimate,
         "resilience": resilience,
         "timing": timing,
+        "focus": build_focus(summary, accounts_out, services_out, resilience, timing, catalog),
         "issues": issues,
         "issue_counts": {s: sum(1 for i in issues if i.get("severity") == s) for s in sev_order},
     }

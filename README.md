@@ -66,7 +66,7 @@ exit" (a fact a board can govern).
 - **Leaves products out** on request: **Exclusions** in the top bar lists every AWS product in the
   scan with its spend; tick any (e.g. Marketplace) and click **Apply and regenerate**. No rescan.
 - **Shows scan issues** up front: **Issues** in the top bar shows the count, coloured by the worst
-  severity, and jumps to section 7.
+  severity, and jumps to section 8.
 - **Costs a second region** (Multi-region tab): extra cost to run, cost and time to achieve, extra
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs

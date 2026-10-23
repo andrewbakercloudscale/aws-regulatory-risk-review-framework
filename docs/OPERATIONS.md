@@ -13,7 +13,7 @@
    default; 6 to 12 shows trend) → optionally tick **Deep scan** and give the member role name.
 3. Watch the progress bar. A spend-only scan of a few hundred accounts takes seconds; a deep scan takes
    roughly 2 to 5 seconds per account per enabled region, in parallel (`EXITRISK_MAX_WORKERS`, default 8).
-4. Filter to production in the bar at the top, open **Exit model** in the top bar to answer the delivery questions, the notice period and the critical accounts, check section 7,
+4. Filter to production in the bar at the top, open **Exit model** in the top bar to answer the delivery questions, the notice period and the critical accounts, check section 8,
    and **Export PDF** (browser print → Save as PDF) or `exitrisk pdf <scan-id> --include prod`.
 
 Scans are kept until deleted (`DELETE /api/scans/<id>` or remove the file). Re-scan quarterly to show
