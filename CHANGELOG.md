@@ -6,7 +6,22 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- **Tools that shorten the move.** The catalog names migration tools for 64 services, for Azure, Google
+  Cloud and any other target (Azure Migrate, Database Migration Service, AzCopy and Storage Transfer
+  Service, MirrorMaker 2, Velero, OpenAPI and DNS zone import, Former2 and Terraformer, model gateways
+  for Bedrock...), with a `tooling` rating. Section 4 lists them for the services with the most work, and
+  the Agentic Risk Review is asked to name the ones that fit.
+- **Exit model: how you will move.** "We will use migration tools" cuts each service's work by its tooling
+  rating (never below 30% together with AI coding agents); "Services are built from developer-portal
+  templates (for example Backstage)" lowers the repeat share from 35% to 15%. "How did the move into AWS
+  go?" (months, people) shows the exit beside it as a sense check, without changing the estimate.
+
 ### Changed
+
+- **Only regions with spend is on by default** in New scan (most accounts bill in 3 or 4 regions).
+- The Agentic Risk Review's consistency pass reasons at medium effort: it was the slowest call of the run.
 
 - **The landing-zone baseline is left out.** AWS Control Tower, Amazon Inspector and AWS Security Incident
   Response put the same EventBridge rules, SNS topics, Lambda functions and stacks into every account and

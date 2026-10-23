@@ -609,7 +609,7 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
                     "inventory",
                     f"This deep scan reads only the regions with spend (US${SPEND_REGION_MONTHLY:g} a month or more): "
                     f"{sum(per) / max(len(per), 1):.1f} region(s) per account on average. Resources in the other "
-                    "regions, mostly the landing-zone baseline, are not counted.",
+                    "regions, which cost nothing yet, are not counted.",
                     "Scan all regions to count everything, including resources that cost nothing yet.",
                 )
             )

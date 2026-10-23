@@ -128,10 +128,10 @@ worse than "Terraform with drift" because the IaC itself must be rewritten.
 ### Effort (engineer-weeks)
 
 ```
-service effort   = catalog effort_weeks × size multiplier × AI agent factor   for every service ≥ materiality, per account
+service effort   = catalog effort_weeks × size multiplier × AI agent factor × tool factor   for every service ≥ materiality, per account
 size multiplier  = clamp( √(monthly spend / 1,000 USD), 0.25, 8 )
   or, in a material deep-scanned account, for every service the inventory counted (whatever it costs):
-service effort   = Σ resources (days per resource × complexity × repeat discount) ÷ 5 × AI agent factor
+service effort   = Σ resources (days per resource × complexity × repeat discount) ÷ 5 × AI agent factor × tool factor
 integrations     = Σ integrations (days per integration × repeat discount) ÷ 5   (dependency scan)
 account overhead = 1 week per account with material spend           (network, IAM, decommissioning)
 data migration   = 0.04 weeks per TB moved + 1 week per account holding ≥ 1 TB   (change-data capture,
@@ -154,6 +154,24 @@ S3, DynamoDB redesign with its data move), none 1.0 (data moves, hardware, contr
 Direct Connect, Marketplace). The factor applies before the delivery factor, so engineers reviewing
 and testing the agents' changes are still counted. It shortens the work, not the lock-in: the score
 does not change. The rating per service is in [SERVICE_CATALOG.md](SERVICE_CATALOG.md).
+
+**Migration tools.** When the Exit model says migration tools will be used, each service's weeks are
+also multiplied by its catalog `tooling` rating, on the same scale: high 0.5 where replication or import
+tools do the move (servers with Azure Migrate or Migrate to Virtual Machines, databases with native
+replication or a Database Migration Service, object storage with AzCopy or Storage Transfer Service,
+Kafka with MirrorMaker 2, DNS zone import), medium 0.75 where they carry part of it (DynamoDB export and
+streams, OpenAPI import for API Gateway), low 0.9. Integration redesign gets no tool factor. Agents and
+tools overlap, so together they never cut a service below 30% of its work. The report names the tools
+for the chosen target for the services with the most work (section 4, Tools that shorten the move), and
+the Agentic Risk Review is asked to name the ones that fit.
+
+**Developer-portal templates.** When services are built from templates (golden paths, for example
+Backstage), the templates are changed once for the target and re-run: the repeat discount on resources
+and integrations drops from 35% to 15% of the work for each one after the first 20 of a type.
+
+**The move into AWS.** The Exit model asks how long the move into AWS took and with how many people.
+It does not change the estimate: the report shows the exit beside it ("about 7 times that") as a sense
+check. An exit is usually bigger than the move in, because it carries everything built on AWS since.
 
 **Products left out.** **Exclusions** in the top bar can leave named AWS products out (for example Marketplace
 software re-contracted anyway, or a service being retired). Their spend is removed from the score,
@@ -246,7 +264,16 @@ each service the inventory counted is sized from its resources instead of its sp
 - **Complexity**: Lambda functions on a custom runtime ×1.5, on an end-of-support runtime ×1.3, packaged
   as containers ×0.7. RDS by engine family, as in the table.
 - **Repeat discount**: after the first 20 of a type in an account, each further one counts 35% (templated,
-  scripted work).
+  scripted work), or 15% when services are built from developer-portal templates.
+- **CloudFormation stacks** are counted but carry no effort of their own: a stack packages resources
+  already counted, and rewriting templates is the infrastructure-as-code factor.
+- **The landing-zone baseline is left out.** AWS Control Tower, Amazon Inspector and AWS Security
+  Incident Response put the same rules, topics, functions and stacks into every account and region
+  (names starting `aws-controltower-`, `AWSControlTower`, `StackSet-AWSControlTower`,
+  `DO-NOT-DELETE-AmazonInspector`, or rules marked `ManagedBy` an AWS service). They are counted apart
+  (`baseline_*`) and carry no effort, and integrations into AWS-run security and governance services
+  (Inspector, Security Incident Response, Control Tower, GuardDuty, Security Hub, Config, Auto Scaling)
+  are not counted: the target platform's own landing zone replaces them.
 - **Integrations** (Dependency scan only): 1 engineer-day per AWS-specific integration (0.25 for e-mail
   and SMS subscriptions, 0.5 for HTTP and mobile targets), with the same repeat discount. Each integration
   is its own line, rated by the harder end (SQS to Lambda is High; DynamoDB streams to Lambda is
@@ -294,8 +321,9 @@ machines per region); a capped count is reported as a floor.
 any spending $100 a month or more on High or Critical services; the rest stay sized from spend.
 "Only regions with spend" reads, in each account, only the regions billing $1 a month or more (an account
 under that keeps its busiest region; one with no regional spend is read everywhere). Workloads are counted
-the same; resources that cost nothing yet, and the landing-zone baseline in other regions (Lambda
-functions, EventBridge rules, stacks and their integrations), are not.
+the same; resources in regions that cost nothing yet are not. It is on by default in the console (most
+accounts bill in 3 or 4 regions); untick it, or leave out `--spend-regions` on the command line, to read
+every enabled region.
 
 ## 5. Limitations
 
