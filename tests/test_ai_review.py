@@ -61,6 +61,7 @@ class FakeModel:
         first = re.search(r'"id":"([^"]+)"', user.split("ACCOUNT ANALYSES:", 1)[1]).group(1)
         view = {
             "headline": f"Hard. {first} decides it.",
+            "key_points": ["Score 62 of 100.", "Exit cost about 7 million."],
             "entrenchment": {"level": "High", "summary": "x"},
             "estimate": {
                 "effort_engineer_days": [10000, 16000],
@@ -201,6 +202,53 @@ def test_review_endpoint_runs_in_background(monkeypatch):
     assert got["result"]["provider"] == "openrouter"
     assert c.delete(f"/api/ai/review/{scan['id']}?remove=true", headers=H).json()["removed"]
     assert c.get(f"/api/ai/review/{scan['id']}").json()["result"] is None
+
+
+def test_scan_can_ask_for_the_ai_review_and_it_starts_when_the_scan_finishes(monkeypatch):
+    import time
+
+    from exitrisk import scanner, server
+
+    fake = FakeModel()
+    monkeypatch.setattr(providers.Client, "complete", lambda self, *a, **k: fake(self, *a, **k))
+    jobs = []
+
+    def fake_start(params):
+        scan = create_demo_scan()
+        job = scanner.ScanJob(id=scan["id"], params=params)  # still running: the review must wait
+        scanner._jobs[job.id] = job
+        jobs.append(job)
+        return job
+
+    monkeypatch.setattr(server, "start_scan", fake_start)
+    c = TestClient(create_app(), base_url="http://127.0.0.1")
+    body = {"profile": None, "ai_review": {"filter": {"include": ""}}}
+    providers._settings_path().unlink(missing_ok=True)
+    r = c.post("/api/scans", headers=H, json=body)
+    assert r.status_code == 400 and "not set up" in r.json()["detail"] and not jobs  # no scan started
+
+    c.put("/api/ai/settings", headers=H, json={"provider": "openrouter", "api_key": "or-key-12345678"})
+    r = c.post("/api/scans", headers=H, json=body)
+    assert r.status_code == 200, r.text
+    sid = r.json()["id"]
+    run = c.get(f"/api/ai/review/{sid}").json()["run"]
+    assert run["status"] == "running" and run["stage"] == "Waiting for the scan"
+    jobs[0].status = "complete"
+    for _ in range(200):
+        got = c.get(f"/api/ai/review/{sid}").json()
+        if got["result"]:
+            break
+        time.sleep(0.05)
+    assert got["result"]["final"]["key_points"][0] == "Score 62 of 100."
+
+
+def test_review_asked_for_with_a_failed_scan_says_why():
+    review.expect("scan-f")
+    assert review.waiting("scan-f")
+    review.give_up("scan-f", "the scan failed")
+    assert review.status("scan-f")["status"] == "failed" and not review.waiting("scan-f")
+    review.expect("scan-g")
+    assert review.cancel("scan-g") and review.status("scan-g")["status"] == "cancelled"
 
 
 def test_missing_key_fails_fast():

@@ -66,7 +66,7 @@ exit" (a fact a board can govern).
 - **Leaves products out** on request: **Exclusions** in the top bar lists every AWS product in the
   scan with its spend; tick any (e.g. Marketplace) and click **Apply and regenerate**. No rescan.
 - **Shows scan issues** up front: **Issues** in the top bar shows the count, coloured by the worst
-  severity, and jumps to section 8.
+  severity, and jumps to section 9.
 - **Costs a second region** (Multi-region tab): extra cost to run, cost and time to achieve, extra
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs
@@ -78,23 +78,23 @@ exit" (a fact a board can govern).
 - **Compares scans** (Settings → Compare scans): score, spend, tiers, accounts added, removed or
   re-rated, and services that grew or appeared between two scans. A **monthly scan** (Settings) repeats a scan each
   month so the comparison shows a trend.
-- **Times the exit** (section 5): whether it fits a regulator or board notice period you enter under **Exit model**, which
+- **Times the exit** (section 6): whether it fits a regulator or board notice period you enter under **Exit model**, which
   Savings Plans and reservations run off before it finishes, and what would be **written off**: still
   owed after the exit for capacity no longer used. That total (with any EDP shortfall) is a key figure
   in the executive summary, and a chart shows each month's commitments with the exit window shaded and
   what would be written off if the exit finished in that month. It also gives the last date a 3-year
   term stays inside the window.
-- **Tests resilience** (section 6): which accounts are critical (from account tags such as
+- **Tests resilience** (section 7): which accounts are critical (from account tags such as
   `Criticality = Tier1`, or names you give), how much of the critical estate one regional event would
   take down, whether tier 1 channels are isolated from each other (anti-affinity), what could move in
   weeks under a stressed exit, and how many terabytes an exit has to move. It counts the Direct
   Connect links you have today (from Cost Explorer port-hours) and prices three options for new 10 Gbps
   links dedicated to the migration, kept apart from production: Cheap (1 link), Medium (2) and Urgent
   (4), each with time to copy, AWS port cost, data out and total at AWS list price.
-- **Names the areas of focus** (section 7): the accounts whose complexity or risk will decide the
+- **Names the areas of focus** (section 8): the accounts whose complexity or risk will decide the
   exit (AWS-only services with no like-for-like target, critical services, AWS-only integrations, data
   to move, share of the effort, evidence and owner gaps), how to tackle each, and in which phase.
-- **Optional AI review**: a second opinion from Claude (Bedrock, Claude Enterprise/API, OpenRouter) or
+- **Optional Agentic Risk Review** (section 2): tick it in New scan and it runs when the scan finishes; an overall AI summary of what matters most, the accounts to focus on and how to tackle them, as a second opinion from Claude (Bedrock, Claude Enterprise/API, OpenRouter) or
   GLM (Together AI) on entrenchment, cost, time and focus, in three passes with an independent review
   for inconsistencies. See [AI_REVIEW.md](docs/AI_REVIEW.md).
 - **Exports a board-ready PDF** with charts, an executive narrative, a data-quality section, and an
@@ -204,7 +204,7 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 
 ![Resilience](docs/images/resilience.png)
 
-**Areas of focus**: The accounts that will decide the exit, why, how to tackle each and in which phase, with programme themes and a plan by phase. The optional AI review adds its second opinion at the top of this section.
+**Areas of focus**: The accounts that will decide the exit, why, how to tackle each and in which phase, with programme themes and a plan by phase. The optional Agentic Risk Review in section 2 gives the AI's view.
 
 ![Areas of focus](docs/images/focus.png)
 

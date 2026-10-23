@@ -305,13 +305,13 @@ class Client:
         self.modes = ["adaptive", "budget"] if s.provider in ("anthropic", "bedrock") else ["high"]
         if s.provider == "gateway":
             if not s.base_url.startswith("https://"):
-                raise AIError("Enter the gateway's base URL (https://...) in AI review settings.")
+                raise AIError("Enter the gateway's base URL (https://...) in Settings, AI configuration.")
             if not self.model:
                 raise AIError("Enter the model id the gateway should call.")
             if not s.api_key() and not s.headers:
                 raise AIError("Enter the gateway's API key, or the headers it authenticates with.")
         elif s.provider != "bedrock" and not s.api_key():
-            raise AIError(f"No API key for {PROVIDERS[s.provider].label}. Enter one in AI review settings.")
+            raise AIError(f"No API key for {PROVIDERS[s.provider].label}. Enter one in Settings, AI configuration.")
 
     def complete(self, system: str, user: str, max_tokens: int = 16000) -> Reply:
         while True:

@@ -1018,7 +1018,7 @@ def _resilience_action(r: dict) -> dict | None:
     if not crit.get("critical_accounts"):
         return {
             "lead": "Tag critical accounts",
-            "text": "(Criticality = Tier1 in AWS Organizations, or name them in section 6) so the resilience "
+            "text": "(Criticality = Tier1 in AWS Organizations, or name them in section 7) so the resilience "
             "view measures the critical estate, not all of it.",
         }
     if none and none["pct"] >= 10:

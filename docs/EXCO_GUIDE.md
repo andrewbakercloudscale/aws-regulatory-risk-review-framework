@@ -38,14 +38,14 @@ Figures below are from the synthetic demo organisation (made-up numbers, 12 mont
 
 | Question | Answer in the report |
 |---|---|
-| "Is this number reliable?" | Section 6 lists every gap in the data; the methodology appendix shows every formula. The score comes straight from our bill. |
+| "Is this number reliable?" | Section 9 lists every gap in the data; the methodology appendix shows every formula. The score comes straight from our bill. |
 | "How do we raise the confidence?" | Under the confidence rating in section 1, **To raise confidence** lists one step per reason, with a button for each: answer the delivery questions under Exit model, and deploy the read-only `ExitRiskReadOnly` role to every member account (one CloudFormation StackSet, see [IAM_PERMISSIONS.md](IAM_PERMISSIONS.md#2-deep-scan-member-accounts)) then run a deep scan. Both done gives High, provided the scan finished without errors, the deep scan reached accounts holding at least 90% of spend, and services missing from the catalog are under 2% of spend. Services you leave out under Exclusions do not lower confidence. |
-| "Why is a small account red but the score fine?" | Section 3: inherent risk vs contribution. Small high-risk accounts are visible but do not dominate. |
-| "Is lock-in growing?" | Section 2 trend chart: spend by tier per month. |
-| "What would reduce the risk cheapest?" | Section 4 and Appendix A: the top tier 4 to 5 services and their recommended migration paths. Standardising pipelines and bringing Terraform up to date lowers the estimate directly, change the questionnaire answers live to show it. |
+| "Why is a small account red but the score fine?" | Section 4: inherent risk vs contribution. Small high-risk accounts are visible but do not dominate. |
+| "Is lock-in growing?" | Section 3 trend chart: spend by tier per month. |
+| "What would reduce the risk cheapest?" | Section 5 and Appendix A: the top tier 4 to 5 services and their recommended migration paths. Standardising pipelines and bringing Terraform up to date lowers the estimate directly, change the questionnaire answers live to show it. |
 | "Why not just stop using Lambda/DynamoDB?" | Exit risk is a trade-off with speed and cost today. The decision is how much risk to hold, documented and reviewed, not zero. |
-| "What would we still owe AWS if we left?" | Section 1 key figure **Commitments written off**, and section 5's chart: Savings Plans, reservations and any EDP still running once the exit finishes. A planned exit lets them run off; buy new terms that end inside the window. |
-| "How long to copy the data, and does it touch production?" | Section 6, **Links for the migration**: Cheap, Medium and Urgent options for new Direct Connect links used only for the copy, with time and cost. Data out per GB is the same for every option; the links buy speed. |
+| "What would we still owe AWS if we left?" | Section 1 key figure **Commitments written off**, and section 6's chart: Savings Plans, reservations and any EDP still running once the exit finishes. A planned exit lets them run off; buy new terms that end inside the window. |
+| "How long to copy the data, and does it touch production?" | Section 7, **Links for the migration**: Cheap, Medium and Urgent options for new Direct Connect links used only for the copy, with time and cost. Data out per GB is the same for every option; the links buy speed. |
 | "Does the regulator accept this?" | It evidences the *assessment* part of an exit plan (dependency mapping, feasibility, cost and time). A full plan also needs triggers, governance, testing and a stressed-exit scenario. |
 
 ## Decisions the committee can take

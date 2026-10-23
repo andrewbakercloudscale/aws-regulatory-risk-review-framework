@@ -8,7 +8,19 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ### Changed
 
-- When an AI review finishes, the AI review dialog closes and the page scrolls to section 7 so the result is in view.
+- **One journey with an optional Agentic Risk Review.** New scan has a step 4, **Add an Agentic Risk
+  Review to the report**: the review starts by itself when the scan finishes, on the report as the
+  console shows it, and the choice is remembered. A review asked for with a scan is checked before the
+  scan starts (a missing key fails at once) and shows as waiting while the scan runs.
+- **Section 2, Agentic Risk Review**, right after the executive summary (later sections renumber 3 to
+  9). It opens with the overall AI summary: the headline and a new list of the 5 to 8 points that
+  matter most across the whole report, then the AI's entrenchment, effort, time and cost, the
+  **accounts to focus on** (most entrenched first, why each is hard and how to tackle it), what will
+  decide the exit, risks, sequencing and questions. Progress shows in the section while it runs, with
+  Stop; a scan without a review has a Run button there. An **Agentic Risk Review** button above the
+  report jumps to it.
+- **Settings, AI configuration** replaces the AI review button in the top bar: provider, model, key
+  and tests, saved once.
 
 ## [0.14.4] - 2026-10-23
 

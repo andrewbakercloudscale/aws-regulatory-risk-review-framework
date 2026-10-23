@@ -11,6 +11,7 @@
   const LS_Q = "exitrisk.questionnaire.v1";
   const LS_THEME = "exitrisk.theme";
   const LS_ORG_PROFILE = "exitrisk.orgProfile"; // last profile that could read the OU tree
+  const LS_AI_SCAN = "exitrisk.aiWithScan"; // tick Agentic Risk Review in New scan again next time
   const MGMT_RE = /mgmt|management|payer|master|org/i;
   const state = { exclude: new Set(), scanId: null, report: null, catalog: null, options: null, charts: {}, pollTimer: null };
 
@@ -160,7 +161,7 @@
 
   function readQuestionnaire() {
     const q = {};
-    // The resilience (section 6) and timing inputs travel with the delivery answers but do not confirm them.
+    // The resilience (section 7) and timing inputs travel with the delivery answers but do not confirm them.
     for (const el of [...$("#qForm").elements, ...$("#resForm").elements, ...$("#timeForm").elements]) {
       if (!el.name) continue;
       if (el.type === "checkbox") q[el.name] = el.checked;
@@ -918,7 +919,7 @@
     $("#lockinLegend").innerHTML = common.length ? `<span class="muted small">Most common lock-in:</span> ${common.map(([svc, n]) => lockChip(svc, n)).join("")}` : "";
     const rows = shown.map((a, i) => `<tr>
       <td class="num-cell muted">${i + 1}</td>
-      <td class="acct"><strong>${esc(a.name)}</strong>${a.critical ? ` <span class="chip crit" title="${a.critical_source === "tag" ? "Criticality tag on the account" : "Matches a critical name in section 6"}">Critical</span>` : ""}<div class="hint">${esc(a.id)}${a.channel ? ` · ${esc(a.channel)}` : ""}${multiOu ? ` · ${esc(a.ou_path)}` : ""}${perOwner && a.owner ? ` · Owner: ${esc(a.owner)}` : ""}</div></td>
+      <td class="acct"><strong>${esc(a.name)}</strong>${a.critical ? ` <span class="chip crit" title="${a.critical_source === "tag" ? "Criticality tag on the account" : "Matches a critical name in section 7"}">Critical</span>` : ""}<div class="hint">${esc(a.id)}${a.channel ? ` · ${esc(a.channel)}` : ""}${multiOu ? ` · ${esc(a.ou_path)}` : ""}${perOwner && a.owner ? ` · Owner: ${esc(a.owner)}` : ""}</div></td>
       <td class="num-cell">${money(a.monthly_spend)}</td>
       <td class="risk">${a.score == null ? EMPTY : `<span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span><div class="hint">${pct(a.high_risk_pct)} High/Crit spend</div>`}</td>
       <td><div class="contrib"><div class="bar"><i style="width:${(100 * a.spend_at_risk / maxC).toFixed(1)}%"></i></div><span class="num-cell">${money(a.spend_at_risk)}</span></div></td>
@@ -1357,7 +1358,7 @@
       tile("Accounts to focus on", num(f.accounts_total), f.accounts.length < f.accounts_total ? `top ${f.accounts.length} shown below` : "all shown below"),
       tile("Their share of the effort", pct(f.effort_pct), `and ${pct(f.spend_pct)} of spend (top ${f.accounts.length})`),
       tile("AWS-only blockers", num(n.platform || 0), "accounts with a Critical-tier service and no like-for-like target"),
-      tile("Critical accounts", num(n.critical || 0), n.critical ? "need a rehearsed cutover and fallback" : "none marked: name them under section 6"),
+      tile("Critical accounts", num(n.critical || 0), n.critical ? "need a rehearsed cutover and fallback" : "none marked: name them under section 7"),
     ].join("");
     $("#focusThemes").innerHTML = f.themes.length ? f.themes.map((t) => focusItem({ ...t, level: "medium" })).join("") : '<p class="hint">No programme-wide themes.</p>';
     // Plan by phase: every concern, grouped, so the project knows what to start first.
@@ -1390,18 +1391,61 @@
     return Math.abs(d) < 10 ? "close to the model" : `${d > 0 ? "+" : ""}${d}% against the model`;
   };
   const LEVEL_TIER = { Low: 1, Moderate: 3, High: 4, "Very high": 5 };
+  // Models write "Very High" as often as "Very high".
+  const levelTier = (x) => LEVEL_TIER[Object.keys(LEVEL_TIER).find((k) => k.toLowerCase() === String(x || "").toLowerCase())] || 0;
   const list = (xs) => (xs?.length ? `<ul class="assumptions">${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : '<p class="hint">None.</p>');
+
+  const AI_ICON = '<svg class="ai-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>';
+  const currentFilter = () => ({ include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value });
+  const aiAsk = () => ({ filter: currentFilter(), questionnaire: readQuestionnaire(), weighting: $("#fWeighting").value || "spend" });
+
+  // The configured model in a few words, or null while the AI review is not set up.
+  function aiReady(cfg = state.aiCfg) {
+    if (!cfg?.configured) return null;
+    const s = cfg.settings, p = cfg.providers.find((x) => x.key === s.provider);
+    if (!p || !(s.provider === "bedrock" || s.provider === "gateway" || s.keys[s.provider]?.set)) return null;
+    const model = (p.recommended.find((x) => x.id === s.model)?.label || "").replace(/ \(recommended\)$/i, "") || s.model || p.recommended[0]?.label || "its default model";
+    return `${p.label}, ${model}; account names ${s.mask_names ? "hidden from" : "sent to"} the model`;
+  }
+
+  async function loadAiCfg() {
+    try { state.aiCfg = await api("/api/ai/settings"); } catch { /* the section says it is not set up */ }
+  }
 
   function renderAi(r) {
     const el = $("#aiPanel");
     const res = state.ai?.result, run = state.ai?.run;
-    $("#aiDot").hidden = !(run?.status === "running" || res);
-    $("#aiDot").classList.toggle("running", run?.status === "running");
-    $("#focusRulesHead").hidden = !res;
-    if (!res && run?.status !== "running") { el.hidden = true; el.innerHTML = ""; return; }
-    el.hidden = false;
+    const running = run?.status === "running";
+    $("#aiDot").hidden = !(running || res);
+    $("#aiDot").classList.toggle("running", running);
+    if (running) {
+      const frac = run.total ? run.done / run.total : null;
+      const started = Date.parse(run.started_at || "") || state.aiSeen || (state.aiSeen = Date.now());
+      el.innerHTML = `
+        <div class="card-head"><h3>${AI_ICON}Agentic Risk Review running</h3><span class="no-print"><button type="button" class="btn ghost" id="btnAiStop">Stop</button></span></div>
+        <div class="busy" role="status" aria-live="polite" data-started="${started}"><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text">${esc(run.stage)}${run.pass ? ` (pass ${run.pass} of 3)` : ""}</span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar${frac == null ? "" : " det"}" aria-hidden="true"><i${frac == null ? "" : ` style="width:${Math.round(frac * 100)}%"`}></i></div><div class="busy-sub">${esc(run.message || "")}${run.usage?.calls ? ` · ${plural(run.usage.calls, "call")} so far` : ""}</div></div>
+        ${state.aiLost ? `<p class="warn-text">${esc(state.aiLost)}</p>` : ""}
+        <p class="hint">Keep reading the report: this section fills in when the review finishes, usually 5 to 40 minutes.</p>`;
+      tickBusy();
+      $("#btnAiStop").addEventListener("click", () => api(`/api/ai/review/${encodeURIComponent(state.scanId)}`, { method: "DELETE" }).catch((e) => toast(e.message)));
+      return;
+    }
+    if (!res && PRINT) {
+      el.innerHTML = `<h3>${AI_ICON}Not run for this report</h3><p class="small">The Agentic Risk Review is optional: an AI second opinion on what matters most, the accounts to focus on and how to tackle them. Tick it in New scan, or run it on the report in the console.</p>`;
+      return;
+    }
     if (!res) {
-      el.innerHTML = `<h3>AI review running</h3><p class="muted small">${esc(run.stage)}${run.message ? `: ${esc(run.message)}` : ""}. Open <strong>AI review</strong> in the top bar for progress.</p>`;
+      const ready = aiReady();
+      const last = run?.status === "failed" ? `<p class="warn-text">The last review did not finish: ${esc(run.message)}</p>` : run?.status === "cancelled" ? '<p class="warn-text">The last review was stopped.</p>' : "";
+      el.innerHTML = `
+        <h3>${AI_ICON}No Agentic Risk Review for this report</h3>
+        ${last}
+        <p class="small">${ready
+          ? `Run it now on the report as shown, with ${esc(ready)}. It takes 5 to 40 minutes and you can keep reading meanwhile. Next time, tick <strong>Agentic Risk Review</strong> when you start the scan.`
+          : "Set up the AI model once under <strong>Settings, AI configuration</strong>; then tick <strong>Agentic Risk Review</strong> when you start a scan, or run it here on any report."}</p>
+        <p class="no-print">${ready ? '<button type="button" class="btn primary" id="btnAiRun">Run Agentic Risk Review</button> ' : ""}<button type="button" class="btn" id="btnAiCfgHere">AI configuration</button></p>`;
+      $("#btnAiRun")?.addEventListener("click", runAi);
+      $("#btnAiCfgHere").addEventListener("click", openAiConfig);
       return;
     }
     const f = res.final || {}, e = f.estimate || {}, ref = res.model_reference || {};
@@ -1412,16 +1456,22 @@
       level: a.priority === "high" ? "high" : "medium", title: a.title, phase: PHASES.includes(a.phase) ? a.phase : "Mobilise",
       detail: a.concern, action: a.how_to_tackle,
     }, (a.account_names || []).join(", "))).join("");
-    const accts = (res.accounts || []).slice().sort((a, b) => (LEVEL_TIER[b.entrenchment] || 0) - (LEVEL_TIER[a.entrenchment] || 0));
+    const weeksHi = (a) => (Array.isArray(a.effort_engineer_weeks) ? a.effort_engineer_weeks[1] : 0);
+    const accts = (res.accounts || []).slice().sort((a, b) => levelTier(b.entrenchment) - levelTier(a.entrenchment) || weeksHi(b) - weeksHi(a));
+    // The accounts to focus on: the most entrenched, largest first; the rest are in the full list below.
+    const hard = accts.filter((a) => levelTier(a.entrenchment) >= 4);
+    const top = (hard.length ? hard : accts).slice(0, 12);
     const modelWeeks = Object.fromEntries(r.accounts.map((a) => [a.id, a.effort_weeks]));
+    const acctRow = (a, full) => `<tr><td class="acct-name"><strong>${esc(res.account_names?.[a.id] || a.id)}</strong></td><td><span class="sev" style="--dot:${tierColor(levelTier(a.entrenchment) || 3)}">${esc(a.entrenchment || EMPTY)}</span></td><td class="num-cell">${range(a.effort_engineer_weeks, (v) => num(v))}</td><td class="num-cell">${num(modelWeeks[a.id], 0)}</td><td>${esc(a.phase || "")}</td><td class="small">${esc(a.why || "")}${full && a.key_risks?.length ? `<div class="hint">Risks: ${esc(a.key_risks.join("; "))}</div>` : ""}</td><td class="small">${esc(a.approach || "")}</td></tr>`;
+    const acctHead = '<thead><tr><th>Account</th><th>Entrenchment</th><th class="num-cell">AI weeks</th><th class="num-cell">Model weeks</th><th>Phase</th><th>Why it is hard</th><th>How to tackle it</th></tr></thead>';
     el.innerHTML = `
-      <div class="card-head"><h3><svg class="ai-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>AI review: a second opinion</h3>
-        <span class="no-print"><button type="button" class="btn" id="btnAiAgain">Run again</button> <button type="button" class="btn ghost" id="btnAiRemove">Remove</button></span></div>
-      <p class="ai-cost">${res.cost_usd != null ? `AI cost of this review: about <strong>$${res.cost_usd < 10 ? res.cost_usd.toFixed(2) : num(res.cost_usd)}</strong>` : "AI cost of this review: price not known for this model"}<span class="hint"> · ${num((res.usage?.input_tokens || 0) / 1000)}k tokens in at $${res.price ? num(res.price.input, 2) : "?"}/M, ${num((res.usage?.output_tokens || 0) / 1000)}k out at $${res.price ? num(res.price.output, 2) : "?"}/M${res.price ? ` (${esc(res.price.source)})` : ""}; negotiated rates, caching and batch discounts not included</span></p>
-      <p class="hint">${esc(res.provider_label)} · ${esc(res.model)} · ${esc(fmtWhen(res.created_at))} · ${plural(res.accounts_analysed, "account")} analysed in three passes${res.masked ? " · names hidden from the model" : ""} · ${num(res.usage?.calls)} calls, ${num((res.usage?.input_tokens || 0) / 1000)}k tokens in, ${num((res.usage?.output_tokens || 0) / 1000)}k out, ${num(res.seconds / 60, 0)} min</p>
+      <div class="card-head"><h3>${AI_ICON}Overall AI summary</h3>
+        <span class="no-print"><button type="button" class="btn" id="btnAiAgain">Run again</button> <button type="button" class="btn" id="btnAiCfgHere">AI configuration</button> <button type="button" class="btn ghost" id="btnAiRemove">Remove</button></span></div>
+      <p class="hint">${esc(res.provider_label)} · ${esc(res.model)} · ${esc(fmtWhen(res.created_at))} · ${plural(res.accounts_analysed, "account")} analysed in three passes${res.masked ? " · names hidden from the model" : ""} · ${num(res.usage?.calls)} calls, ${num(res.seconds / 60, 0)} min · AI cost ${res.cost_usd != null ? `about <strong>$${res.cost_usd < 10 ? res.cost_usd.toFixed(2) : num(res.cost_usd)}</strong> (${num((res.usage?.input_tokens || 0) / 1000)}k tokens in at $${num(res.price.input, 2)}/M, ${num((res.usage?.output_tokens || 0) / 1000)}k out at $${num(res.price.output, 2)}/M, list price)` : "not known for this model"}</p>
       ${sameBasis ? "" : `<p class="warn-text">Run on a different filter (${esc(res.basis?.filter || "unknown")}); run it again for the accounts shown now.</p>`}
       <p class="ai-headline">${esc(f.headline || "")}</p>
-      <div class="tiles">
+      ${f.key_points?.length ? `<h4>What matters most</h4><ol class="ai-points">${f.key_points.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}
+      <div class="tiles ai-tiles">
         ${tile("Entrenchment", f.entrenchment?.level || EMPTY, "AI judgement")}
         ${tile("AI effort", range(e.effort_engineer_days, (v) => num(v)), `engineer-days, ${versus(e.effort_engineer_days, ref.effort_engineer_days)}`)}
         ${tile("AI time", range(e.duration_months, (v) => num(v)), `months, ${versus(e.duration_months, ref.duration_months)}`)}
@@ -1436,7 +1486,11 @@
         <div><h4>Why: entrenchment</h4><p class="small">${esc(f.entrenchment?.summary || "")}</p>
           <h4>Not included</h4>${list(e.not_included)}</div>
       </div>
-      <h4>AI areas of focus</h4><div class="focus-list">${focus || '<p class="hint">None.</p>'}</div>
+      <h3 class="sub-head">Accounts to focus on</h3>
+      <p class="hint">${hard.length ? `The ${plural(top.length, "account")} the AI rates most entrenched${hard.length > top.length ? ` (of ${num(hard.length)} rated High or Very high)` : ""}, hardest first.` : "No account is rated High or Very high; these have the most effort."} Every account is in the full list at the end of this section.</p>
+      <div class="table-wrap"><table class="data compact">${acctHead}<tbody>${top.map((a) => acctRow(a, true)).join("")}</tbody></table></div>
+      <h3 class="sub-head">What will decide the exit</h3>
+      <div class="focus-list">${focus || '<p class="hint">None.</p>'}</div>
       ${f.programme_risks?.length ? `<h4>Programme risks</h4><div class="table-wrap"><table class="data compact"><thead><tr><th>Risk</th><th>Impact</th><th>Mitigation</th></tr></thead><tbody>${f.programme_risks.map((x) => `<tr><td>${esc(x.risk)}</td><td>${esc(x.impact)}</td><td>${esc(x.mitigation)}</td></tr>`).join("")}</tbody></table></div>` : ""}
       ${f.sequencing?.length ? `<h4>Sequencing</h4><div class="table-wrap"><table class="data compact"><tbody>${f.sequencing.map((x) => `<tr><td>${phaseChip(x.phase)}</td><td>${esc(x.what)}</td></tr>`).join("")}</tbody></table></div>` : ""}
       <div class="grid-2">
@@ -1449,22 +1503,69 @@
         ${res.notes?.length ? `<p class="warn-text">How the run went:</p>${list(res.notes)}` : Array.isArray(res.notes) ? '<p class="hint">Every call came back whole: no answer was cut off, unreadable or missing an account.</p>' : ""}
       </details>
       <details class="ai-more"${PRINT ? " open" : ""}><summary>Every account the AI analysed (${num(accts.length)})</summary>
-        <div class="table-wrap"><table class="data compact"><thead><tr><th>Account</th><th>Entrenchment</th><th class="num-cell">AI weeks</th><th class="num-cell">Model weeks</th><th>Phase</th><th>Why, and how to tackle it</th></tr></thead><tbody>
-        ${accts.map((a) => `<tr><td><strong>${esc(res.account_names?.[a.id] || a.id)}</strong></td><td><span class="sev" style="--dot:${tierColor(LEVEL_TIER[a.entrenchment] || 3)}">${esc(a.entrenchment || EMPTY)}</span></td><td class="num-cell">${range(a.effort_engineer_weeks, (v) => num(v))}</td><td class="num-cell">${num(modelWeeks[a.id], 0)}</td><td>${esc(a.phase || "")}</td><td class="small">${esc(a.why || "")}${a.approach ? `<div class="hint">${esc(a.approach)}</div>` : ""}</td></tr>`).join("")}
-        </tbody></table></div>
+        <div class="table-wrap"><table class="data compact">${acctHead}<tbody>${accts.map((a) => acctRow(a, false)).join("")}</tbody></table></div>
       </details>`;
-    $("#btnAiAgain").addEventListener("click", openAi);
+    $("#btnAiAgain").addEventListener("click", runAi);
+    $("#btnAiCfgHere").addEventListener("click", openAiConfig);
     $("#btnAiRemove").addEventListener("click", async () => {
       await api(`/api/ai/review/${encodeURIComponent(state.scanId)}?remove=true`, { method: "DELETE" });
       state.ai = null;
       renderAi(state.report);
-      toast("AI review removed");
+      toast("Agentic Risk Review removed");
     });
   }
 
+  function jumpToAi() {
+    $("#sec-ai").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  }
+
+  // Run on the open report, as filtered, with the saved AI configuration.
+  async function runAi() {
+    if (!aiReady()) { openAiConfig(); return; }
+    try {
+      const run = await api("/api/ai/review", { method: "POST", body: { scan_id: state.scanId, ...aiAsk() } });
+      state.ai = { ...(state.ai || {}), run };
+      renderAi(state.report);
+      pollAi();
+    } catch (e) { toast(e.message, 6000); }
+  }
+
+  async function pollAi() {
+    if (state.aiPolling) return;
+    state.aiPolling = true;
+    const scan = state.scanId;
+    let misses = 0;
+    try {
+      for (;;) {
+        let got;
+        try {
+          got = await api(`/api/ai/review/${encodeURIComponent(scan)}`);
+          misses = 0;
+          state.aiLost = "";
+        } catch (e) {
+          // The review runs on in the console: ride out a blip before saying so.
+          state.aiLost = ++misses > 3 ? `Lost contact with the console (${e.message}); still trying.` : "";
+        }
+        if (scan !== state.scanId) return;
+        if (got) {
+          const run = got.run;
+          const was = state.ai?.run?.status;
+          state.ai = got;
+          if (!run || run.status !== "running") {
+            if (run?.status === "complete" && was === "running") toast("Agentic Risk Review ready: section 2", 6000);
+            else if (run?.status === "failed") toast(`Agentic Risk Review did not finish: ${run.message}`, 8000);
+            renderAi(state.report);
+            break;
+          }
+        }
+        renderAi(state.report);
+        await new Promise((ok) => setTimeout(ok, 3000));
+      }
+    } finally { state.aiPolling = false; }
+  }
+
   const AI_CUSTOM = "__custom";
-  async function openAi() {
-    if (!state.report) { toast("Load a scan first"); return; }
+  async function openAiConfig() {
     $("#aiError").textContent = "";
     $("#aiOk").textContent = "";
     $("#aiTests").hidden = true;
@@ -1482,8 +1583,28 @@
       $("#aiKeyHeader").value = s.key_header || "authorization";
       aiProviderChanged(s.model);
     } catch (e) { $("#aiError").textContent = e.message; }
-    $("#aiDialog").showModal();
-    if (state.ai?.run?.status === "running") pollAi();
+    if (!$("#aiDialog").open) $("#aiDialog").showModal();
+  }
+
+  async function saveAiAndClose() {
+    $("#aiError").textContent = "";
+    if (!aiModelId()) { $("#aiError").textContent = "Enter the custom model id."; return; }
+    try {
+      await saveAi();
+      state.aiCfg = await api("/api/ai/settings");
+      $("#aiDialog").close();
+      toast(aiReady() ? `AI configuration saved: ${aiReady()}` : "Saved. Add a key to use the Agentic Risk Review.", 5000);
+    } catch (e) { $("#aiError").textContent = e.message; }
+  }
+
+  // The new-scan dialog's Agentic Risk Review option follows the saved configuration.
+  function syncScanAi() {
+    const ready = aiReady();
+    $("#sAi").disabled = !ready;
+    if (!ready) $("#sAi").checked = false;
+    else { try { $("#sAi").checked = localStorage.getItem(LS_AI_SCAN) === "1"; } catch { /* ignore */ } }
+    $("#sAiInfo").textContent = ready ? `With ${ready}. A second opinion in section 2: what matters most, the accounts to focus on and how to tackle them.`
+      : "Not set up yet: choose the AI model under AI configuration first.";
   }
 
   function aiProvider() { return state.aiCfg.providers.find((p) => p.key === $("#aiProvider").value); }
@@ -1595,61 +1716,6 @@
     finally { busy("#aiBusy", ""); }
   }
 
-  async function runAi() {
-    $("#aiError").textContent = "";
-    $("#aiOk").textContent = "";
-    if (!aiModelId()) { $("#aiError").textContent = "Enter the custom model id."; return; }
-    try {
-      await saveAi();
-      const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
-      const run = await api("/api/ai/review", { method: "POST", body: { scan_id: state.scanId, filter, questionnaire: readQuestionnaire(), weighting: $("#fWeighting").value || "spend" } });
-      state.ai = { ...(state.ai || {}), run };
-      pollAi();
-    } catch (e) { $("#aiError").textContent = e.message; }
-  }
-
-  async function pollAi() {
-    if (state.aiPolling) return;
-    state.aiPolling = true;
-    const scan = state.scanId;
-    $("#btnAiRun").disabled = true;
-    $("#btnAiStop").hidden = false;
-    busy("#aiBusy", "Starting the AI review…");
-    try {
-      for (;;) {
-        const got = await api(`/api/ai/review/${encodeURIComponent(scan)}`);
-        if (scan !== state.scanId) return;
-        const run = got.run;
-        if (!run) break;
-        // Passes, not calls: "step 1 of 11" read as if only 11 accounts were being analysed.
-        $("#aiBusy .busy-text").textContent = `${run.stage}${run.pass ? ` (pass ${run.pass} of 3)` : ""}`;
-        $("#aiBusySub").textContent = `${run.message || ""}${run.usage?.calls ? ` · ${run.usage.calls} calls so far` : ""}`;
-        if (run.total) busyProgress("#aiBusy", run.done / run.total);
-        if (run.status !== "running") {
-          state.ai = got;
-          if (run.status === "complete") { $("#aiOk").textContent = "Done: the AI review is in section 7."; toast("AI review ready: section 7"); }
-          else $("#aiError").textContent = run.status === "cancelled" ? "Stopped." : run.message;
-          renderAi(state.report);
-          // A finished run should land on the result, not leave the dialog sitting over it.
-          if (run.status === "complete") {
-            if ($("#aiDialog").open) $("#aiDialog").close();
-            $("#sec-focus").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-          }
-          break;
-        }
-        state.ai = { ...got };
-        renderAi(state.report);
-        await new Promise((ok) => setTimeout(ok, 3000));
-      }
-    } catch (e) { $("#aiError").textContent = `Lost track of the AI review: ${e.message}`; }
-    finally {
-      state.aiPolling = false;
-      busy("#aiBusy", "");
-      $("#btnAiRun").disabled = false;
-      $("#btnAiStop").hidden = true;
-    }
-  }
-
   function renderIssues(r) {
     const c = r.issue_counts;
     // Top-bar shortcut: count and colour of the worst severity, so issues are never only at the bottom.
@@ -1657,7 +1723,7 @@
     $("#btnIssues").hidden = !r.issues.length;
     $("#issueBadge").textContent = r.issues.length;
     $("#issueBadge").className = `count-badge sev-${worst || "info"}`;
-    $("#btnIssues").title = `${plural(r.issues.length, "issue")}${worst ? `, worst: ${worst}` : ""} (section 8)`;
+    $("#btnIssues").title = `${plural(r.issues.length, "issue")}${worst ? `, worst: ${worst}` : ""} (section 9)`;
     $("#issueCounts").innerHTML = ["critical", "error", "warning", "info"].map((s) => `<span class="chip"><span class="sev" style="--dot:${css(SEV_COLOR[s])}">${s}: ${c[s] || 0}</span></span>`).join("");
     const names = Object.fromEntries(r.accounts.map((a) => [a.id, a.name]));
     $("#issueTable").innerHTML = r.issues.length
@@ -2047,6 +2113,8 @@
       const profiles = await fillProfiles($("#sProfile"), typeof selectProfile === "string" ? selectProfile : null);
       if (profiles.length) loadOus();
     } catch (e) { $("#scanError").textContent = e.message; }
+    await loadAiCfg();
+    syncScanAi();
     dlg.showModal();
   }
 
@@ -2127,6 +2195,8 @@
     $("#qForm").target.value = body.target;
     syncDatacenter();
     readQuestionnaire();
+    // The review runs on the report as this console will show it: today's filter and Exit model answers.
+    if ($("#sAi").checked) body.ai_review = aiAsk();
     $("#scanError").textContent = "";
     $("#btnStartScan").disabled = true;
     // Show the bar at once: the first AWS calls can take a few seconds before any progress comes back.
@@ -2167,7 +2237,7 @@
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         $("#btnStartScan").disabled = false;
         if (s.status === "failed") {
-          $("#scanError").textContent = `Scan failed: ${s.message}. See section 8 and the log for details.`;
+          $("#scanError").textContent = `Scan failed: ${s.message}. See section 9 and the log for details.`;
         } else {
           $("#scanDialog").close();
           toast(`Scan ${s.status}${s.issues ? ` with ${plural(s.issues, "issue")}: click Issues in the top bar` : ""}`);
@@ -2732,12 +2802,16 @@
     });
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));
     $("#btnLogs").addEventListener("click", openLog);
-    $("#btnAi").addEventListener("click", openAi);
+    $("#btnAiConfig").addEventListener("click", openAiConfig);
+    $("#lnkAiConfig").addEventListener("click", openAiConfig);
+    $("#btnJumpAi").addEventListener("click", jumpToAi);
     $("#btnAiClose").addEventListener("click", () => $("#aiDialog").close());
+    $("#btnAiSave").addEventListener("click", saveAiAndClose);
     $("#btnAiTest").addEventListener("click", testAi);
     $("#btnAiTestAll").addEventListener("click", testAllAi);
-    $("#btnAiRun").addEventListener("click", runAi);
-    $("#btnAiStop").addEventListener("click", () => api(`/api/ai/review/${encodeURIComponent(state.scanId)}`, { method: "DELETE" }).catch(() => {}));
+    // Tests save too, so whatever closes the dialog, the scan option and section 2 follow what is saved.
+    $("#aiDialog").addEventListener("close", () => { syncScanAi(); if (state.report) renderAi(state.report); });
+    $("#sAi").addEventListener("change", () => { try { localStorage.setItem(LS_AI_SCAN, $("#sAi").checked ? "1" : "0"); } catch { /* ignore */ } });
     $("#aiProvider").addEventListener("change", () => aiProviderChanged(""));
     $("#aiModel").addEventListener("change", () => { $("#aiCustomWrap").hidden = $("#aiModel").value !== AI_CUSTOM; if (!$("#aiCustomWrap").hidden) $("#aiCustom").focus(); });
     $("#aiMask").addEventListener("change", () => { $("#aiMask").dataset.touched = "1"; });
@@ -2794,6 +2868,7 @@
     let scans;
     try { scans = await refreshScans(); } catch (e) { failed(e); return; }
     state.scanId = params.get("scan") || scans.find((s) => s.status !== "failed")?.id || null;
+    if (!PRINT) await loadAiCfg();
     if (state.scanId) { $("#scanSelect").value = state.scanId; await loadReport(); }
     else document.body.dataset.ready = "1";
 

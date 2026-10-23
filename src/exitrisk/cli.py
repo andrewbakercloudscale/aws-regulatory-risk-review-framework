@@ -416,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         p.add_argument(
             "--questionnaire",
-            help="JSON file with the delivery answers (section 5); without it cost and time are marked provisional",
+            help="JSON file with the delivery answers (section 6); without it cost and time are marked provisional",
         )
         p.add_argument(
             "--view",

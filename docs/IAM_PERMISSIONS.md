@@ -14,7 +14,7 @@ profile uses in the **management (payer) account**:
 | `organizations:ListRoots`, `ListOrganizationalUnitsForParent` | Build the OU tree for the OU picker (with `ListAccountsForParent` for the account count per OU) |
 | `organizations:ListAccountsForParent` | Accounts under the chosen OU, recursively, with names (for the name filter) |
 | `organizations:ListTagsForResource` | Account tags, for business criticality and channel in the resilience view. Optional: without it, name the critical accounts in the console |
-| `ce:GetSavingsPlansUtilizationDetails`, `ce:GetReservationUtilization` | Savings Plans and reservations with their end dates, to time an exit against commitments (section 5). Optional: a refusal is a warning |
+| `ce:GetSavingsPlansUtilizationDetails`, `ce:GetReservationUtilization` | Savings Plans and reservations with their end dates, to time an exit against commitments (section 6). Optional: a refusal is a warning |
 | `ce:GetCostAndUsage` | Amortised spend by account × service × month, by region (multi-region view), storage usage in GB-months (data held, resilience view), and Direct Connect port-hours and data out (links for the migration) |
 
 Cost Explorer must be enabled in the management account (Billing console → Cost Explorer). Each

@@ -283,6 +283,9 @@ ACCOUNT_SHAPE = """{"accounts": [{
 
 ESTATE_SHAPE = """{
   "headline": "<two sentences for the executive committee: how entrenched we are and what decides the exit>",
+  "key_points": ["<the 5 to 8 most important points of the whole report for the executive committee, most important \
+first, each one sentence carrying its number: risk score, spend on AWS-only services, cost and time, critical \
+accounts, data to move, commitments and the deadline, and how far the evidence can be trusted>"],
   "entrenchment": {"level": "Low | Moderate | High | Very high", "summary": "<why, in three or four sentences>"},
   "estimate": {
     "effort_engineer_days": [<low>, <high>],
@@ -425,6 +428,8 @@ def check_estate(view: dict, facts: dict, ids: set[str]) -> list[str]:
             out.append(f"areas_of_focus[{i}] ({a.get('title')}) has phase {a.get('phase')!r}, not one of {PHASES}.")
     if not view.get("areas_of_focus"):
         out.append("areas_of_focus is empty.")
+    if not view.get("key_points"):
+        out.append("key_points is empty: give the most important points of the whole report.")
     if (view.get("entrenchment") or {}).get("level") not in LEVELS:
         out.append(f"entrenchment.level must be one of {LEVELS}.")
     return out
@@ -666,6 +671,42 @@ def delete_result(scan_id: str) -> None:
 
 _RUNS: dict[str, Run] = {}
 _RUNS_LOCK = threading.Lock()
+# Reviews asked for with a new scan, shown as running until the scan finishes and the review starts.
+_PENDING: dict[str, dict] = {}
+
+
+def expect(scan_id: str) -> None:
+    """Show a review as on its way while the scan it was asked for with is still running."""
+    with _RUNS_LOCK:
+        _PENDING[scan_id] = {
+            "scan_id": scan_id,
+            "status": "running",
+            "stage": "Waiting for the scan",
+            "done": 0,
+            "total": 0,
+            "message": "The review starts when the scan finishes",
+            "pass": None,
+            "usage": {"calls": 0},
+        }
+
+
+def waiting(scan_id: str) -> bool:
+    """True while a review asked for with this scan is still wanted (not stopped)."""
+    with _RUNS_LOCK:
+        return (_PENDING.get(scan_id) or {}).get("status") == "running"
+
+
+def give_up(scan_id: str, message: str) -> None:
+    """The review asked for with a scan could not start: say why where the console looks."""
+    log.warning("AI review of %s not started: %s", scan_id, message)
+    with _RUNS_LOCK:
+        if scan_id in _PENDING:
+            _PENDING[scan_id].update(status="failed", stage="Not started", message=message)
+
+
+def started(scan_id: str) -> None:
+    with _RUNS_LOCK:
+        _PENDING.pop(scan_id, None)
 
 
 def start(scan_id: str, report: dict, s: AISettings, basis: dict) -> dict:
@@ -700,7 +741,9 @@ def start(scan_id: str, report: dict, s: AISettings, basis: dict) -> dict:
 def status(scan_id: str) -> dict | None:
     run = _RUNS.get(scan_id)
     if not run:
-        return None
+        with _RUNS_LOCK:
+            pending = _PENDING.get(scan_id)
+            return dict(pending) if pending else None
     return {**run.state, "usage": dict(run.usage)}
 
 
@@ -709,4 +752,9 @@ def cancel(scan_id: str) -> bool:
     if run and run.state["status"] == "running":
         run.cancel.set()
         return True
+    with _RUNS_LOCK:
+        pending = _PENDING.get(scan_id)
+        if pending and pending["status"] == "running":
+            pending.update(status="cancelled", stage="Stopped", message="Stopped")
+            return True
     return False

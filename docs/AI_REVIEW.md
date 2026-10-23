@@ -1,9 +1,25 @@
-# AI review (optional)
+# Agentic Risk Review (optional)
 
 The report's figures come from a deterministic model: the same scan always gives the same score,
-estimate and areas of focus. The **AI review** adds a second opinion from a large reasoning model on
-how entrenched the estate is, what the exit will cost and take, and where the project should focus.
-It is off until you run it, and it never changes the report's own figures.
+estimate and areas of focus. The **Agentic Risk Review** (the AI review) adds a second opinion from a
+large reasoning model on how entrenched the estate is, what the exit will cost and take, and where the
+project should focus. It is off until you ask for it, and it never changes the report's own figures.
+
+## One journey
+
+1. Once: **Settings, AI configuration** to choose the provider, model and key (below).
+2. **New scan**, step 4: tick **Add an Agentic Risk Review to the report**. The review starts by itself
+   when the scan finishes, on the report as the console shows it (the account filter and Exit model
+   answers at the time), and the choice is remembered for the next scan.
+3. Read the report while it runs. It lands in **section 2, Agentic Risk Review**, right after the
+   executive summary; the **Agentic Risk Review** button above the report jumps there and shows a dot
+   while it runs.
+
+Section 2 opens with the **overall AI summary** (the headline and the 5 to 8 points that matter most
+across the whole report), the AI's entrenchment, effort, time and cost against the model, then the
+**accounts to focus on** (the most entrenched, with why each is hard and how to tackle it), what will
+decide the exit, programme risks, sequencing, quick wins and questions for owners. For a scan made
+without it, section 2 has a **Run Agentic Risk Review** button for the open report.
 
 ## Providers
 
@@ -29,7 +45,7 @@ Any other model the provider offers can be picked from the list (read from the p
 or typed in as a custom model. Each call asks for deep reasoning: adaptive thinking at high effort for
 Claude, a high reasoning effort elsewhere; a model that refuses the option runs without it.
 
-Open **AI review** in the top bar. **Test connection** asks the chosen model a small reasoning
+In **AI configuration**, **Test connection** asks the chosen model a small reasoning
 question that must come back as valid JSON with the right answer, so a bad key, an unknown model or a
 model that cannot follow the format fails in seconds. **Test all providers** does the same for every
 provider with a key. Once the AI review is set up, **Check access** runs the same test as its last,
@@ -64,7 +80,7 @@ as an order of magnitude. A real Prod OU of 164 accounts on GLM 5.3 used about 1
 100k out: about $0.66, in 7.5 minutes.
 
 A demo estate of 48 accounts takes about 6 minutes on GLM 5.3; a large estate 20 to 40 minutes.
-The result is stored with the scan (`~/.exitrisk/ai/<scan>.json`), appears at the top of section 7,
+The result is stored with the scan (`~/.exitrisk/ai/<scan>.json`), appears in section 2,
 and is included in the PDF.
 
 ## What is sent

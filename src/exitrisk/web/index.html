@@ -23,8 +23,7 @@
     <span class="tb-sep" aria-hidden="true"></span>
     <button id="btnExcl" class="btn" title="AWS products left out of the score and estimate">Exclusions<span id="exclCount" class="count-badge" hidden></span></button>
     <button id="btnModel" class="btn" title="Your answers behind the cost, time, deadline and resilience figures">Exit model</button>
-    <button id="btnAi" class="btn" title="Optional: a second opinion from an AI model on the estimate and the areas of focus"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>AI review<span id="aiDot" class="dot" hidden></span></button>
-    <button id="btnIssues" class="btn" title="Data quality and scan issues (section 8)" hidden>Issues<span id="issueBadge" class="count-badge"></span></button>
+    <button id="btnIssues" class="btn" title="Data quality and scan issues (section 9)" hidden>Issues<span id="issueBadge" class="count-badge"></span></button>
     <span class="tb-sep" aria-hidden="true"></span>
     <div class="menu">
       <button id="btnSettings" class="btn icon" aria-haspopup="menu" aria-expanded="false" aria-controls="settingsMenu" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
@@ -35,6 +34,8 @@
           <button type="button" data-theme-pick="dark" aria-pressed="false">Dark</button>
           <button type="button" data-theme-pick="" aria-pressed="false">System</button>
         </div>
+        <hr>
+        <button id="btnAiConfig" role="menuitem"><b>AI configuration</b><span>Provider, model and key for the optional Agentic Risk Review</span></button>
         <hr>
         <button id="btnDemo" role="menuitem"><b>Load demo data</b><span>Synthetic organisation, no AWS access needed</span></button>
         <button id="btnCompare" role="menuitem"><b>Compare scans</b><span>What changed since an earlier scan</span></button>
@@ -117,6 +118,7 @@
       <button type="button" class="vtab" data-view="exit" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></svg><span><b>Exit risk</b><small>How hard it is to leave AWS</small></span></button>
       <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-region</b><small>Cost of a second AWS region</small></span></button>
     </nav>
+    <button type="button" id="btnJumpAi" class="btn ai-jump" title="Go to the Agentic Risk Review (section 2)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>Agentic Risk Review<span id="aiDot" class="dot" hidden></span></button>
     <div class="menu">
       <button id="btnExport" class="btn" aria-haspopup="menu" aria-expanded="false" aria-controls="exportMenu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>Export PDF<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>
       <div id="exportMenu" class="menu-pop right" role="menu" hidden>
@@ -201,9 +203,16 @@
       </div>
     </section>
 
-    <!-- 2. Risk profile -->
+    <!-- 2. Agentic Risk Review (optional) -->
+    <section class="section" id="sec-ai">
+      <h2><span class="num">2</span>Agentic Risk Review</h2>
+      <p class="muted section-lede">An AI model reads the whole report in three passes (every material account, the whole estate, then an independent consistency review) and gives a second opinion: what matters most, which accounts to focus on and how to tackle them. Optional; the report's own figures do not change.</p>
+      <div id="aiPanel" class="card ai-panel"></div>
+    </section>
+
+    <!-- 3. Risk profile -->
     <section class="section" id="sec-profile">
-      <h2><span class="num">2</span>Where the exit risk sits</h2>
+      <h2><span class="num">3</span>Where the exit risk sits</h2>
       <div class="grid-2">
         <figure class="card chart-card">
           <figcaption><h3>Monthly spend by exit-risk tier</h3><p class="muted">Share of in-scope spend by how hard it is to move.</p></figcaption>
@@ -232,9 +241,9 @@
       </div>
     </section>
 
-    <!-- 3. Accounts -->
+    <!-- 4. Accounts -->
     <section class="section" id="sec-accounts">
-      <h2><span class="num">3</span>Accounts: how many are at risk, and how big</h2>
+      <h2><span class="num">4</span>Accounts: how many are at risk, and how big</h2>
       <div class="grid-2">
         <figure class="card chart-card">
           <figcaption><h3>Accounts by exit-risk rating</h3><p class="muted">Share of accounts (top) against share of spend (bottom). Few accounts holding a lot of spend is a concentration to manage, not an estate-wide problem.</p></figcaption>
@@ -264,9 +273,9 @@
       </div>
     </section>
 
-    <!-- 4. Services -->
+    <!-- 5. Services -->
     <section class="section" id="sec-services">
-      <h2><span class="num">4</span>Services driving lock-in</h2>
+      <h2><span class="num">5</span>Services driving lock-in</h2>
       <div class="grid-2">
         <figure class="card chart-card">
           <figcaption><h3>Top services by spend</h3><p class="muted">Coloured by exit-risk tier.</p></figcaption>
@@ -284,9 +293,9 @@
       </div>
     </section>
 
-    <!-- 5. Estimate -->
+    <!-- 6. Estimate -->
     <section class="section" id="sec-estimate">
-      <h2><span class="num">5</span>Exit cost &amp; time estimate</h2>
+      <h2><span class="num">6</span>Exit cost &amp; time estimate</h2>
       <div class="est-full">
         <div class="est-results">
           <div id="estEmpty" class="card hint" hidden>No spend is in scope, so there is nothing to estimate. Change the account filter or run a scan that covers more accounts.</div>
@@ -331,9 +340,9 @@
       </div>
     </section>
 
-    <!-- 6. Resilience -->
+    <!-- 7. Resilience -->
     <section class="section" id="sec-resilience">
-      <h2><span class="num">6</span>Resilience: critical accounts, data and a stressed exit</h2>
+      <h2><span class="num">7</span>Resilience: critical accounts, data and a stressed exit</h2>
       <p class="muted section-lede">A planned exit is one question. Regulators also ask what happens to critical services if AWS, or one region, fails, and what could move in weeks rather than years. These figures inform; they do not change the score or the estimate.</p>
       <div class="model-strip"><dl class="answers inline" id="resAnswers"></dl><button type="button" class="btn no-print" data-model="resForm">Change critical accounts</button></div>
       <div class="est-full">
@@ -372,12 +381,10 @@
       </div>
     </section>
 
-    <!-- 7. Areas of focus -->
+    <!-- 8. Areas of focus -->
     <section class="section" id="sec-focus">
-      <h2><span class="num">7</span>Areas of focus: where the exit will be won or lost</h2>
-      <p class="muted section-lede">The accounts whose complexity or risk needs attention, why, and how to tackle each one during the project. Derived from this scan with fixed rules, so the same scan always gives the same list; it does not change the score or the estimate.</p>
-      <div id="aiPanel" class="card ai-panel" hidden></div>
-      <h3 class="sub-head" id="focusRulesHead" hidden>Rule-based view</h3>
+      <h2><span class="num">8</span>Areas of focus: where the exit will be won or lost</h2>
+      <p class="muted section-lede">The accounts whose complexity or risk needs attention, why, and how to tackle each one during the project. Derived from this scan with fixed rules, so the same scan always gives the same list; it does not change the score or the estimate. The AI's view is in the Agentic Risk Review, section 2.</p>
       <div class="tiles" id="focusTiles"></div>
       <div class="card">
         <h3>Programme themes</h3>
@@ -394,9 +401,9 @@
       <div id="focusAccounts" class="focus-accounts"></div>
     </section>
 
-    <!-- 8. Data quality -->
+    <!-- 9. Data quality -->
     <section class="section" id="sec-issues">
-      <h2><span class="num">8</span>Data quality &amp; scan issues</h2>
+      <h2><span class="num">9</span>Data quality &amp; scan issues</h2>
       <div class="card">
         <p class="muted small">What this report does <em>not</em> cover. Every API error during the scan is recorded here and in the log.</p>
         <div id="issueCounts" class="issue-counts"></div>
@@ -740,6 +747,11 @@
         </div>
         <label><span>Label <span class="opt">optional</span></span><input name="label" maxlength="120" placeholder="e.g. Q4 board pack"></label>
       </section>
+      <section class="fd-sec">
+        <h3><span class="step">4</span>Agentic Risk Review <span class="opt">optional</span></h3>
+        <label class="check fd-check"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Add an Agentic Risk Review to the report</strong><br><span class="fd-hint" id="sAiInfo"></span></span></label>
+        <p class="fd-hint">Starts when the scan finishes and takes 5 to 40 minutes; the report is ready to read meanwhile and the review appears in section 2. <button type="button" class="link-btn" id="lnkAiConfig">AI configuration</button></p>
+      </section>
     </div>
     <footer class="fd-foot">
       <!-- In the footer, so the progress and any error stay in view however far the form is scrolled. -->
@@ -875,8 +887,8 @@
 <dialog id="aiDialog" class="dialog form-dialog" aria-labelledby="aiTitle">
   <form method="dialog" id="aiForm">
   <header class="fd-head">
-    <h2 id="aiTitle">AI review <span class="opt">optional</span></h2>
-    <p>A model reads this report and gives a second opinion on how entrenched the estate is, what the exit will cost and take, and where to focus. It works in three passes: every material account, then the whole estate, then an independent review that checks the result for inconsistencies. A large estate takes 20 to 40 minutes. The report's own figures do not change.</p>
+    <h2 id="aiTitle">AI configuration</h2>
+    <p>The model behind the optional Agentic Risk Review. Choose it here once; then tick Agentic Risk Review when you start a scan, or run it on an open report from section 2.</p>
   </header>
   <div class="fd-body">
     <div class="fd-grid">
@@ -911,10 +923,9 @@
   </div>
   <footer class="fd-foot">
     <button type="button" class="btn" id="btnAiClose">Close</button>
-    <button type="button" class="btn ghost push-right" id="btnAiStop" hidden>Stop</button>
-    <button type="button" class="btn" id="btnAiTestAll" title="Test every provider that has a key">Test all providers</button>
+    <button type="button" class="btn push-right" id="btnAiTestAll" title="Test every provider that has a key">Test all providers</button>
     <button type="button" class="btn" id="btnAiTest" title="Ask the chosen model a small reasoning question, answered as JSON">Test connection</button>
-    <button type="button" class="btn primary" id="btnAiRun">Run AI review</button>
+    <button type="button" class="btn primary" id="btnAiSave">Save</button>
   </footer>
   </form>
 </dialog>

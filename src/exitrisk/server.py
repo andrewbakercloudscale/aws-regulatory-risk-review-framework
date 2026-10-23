@@ -90,6 +90,8 @@ class ScanRequest(BaseModel):
     regions: list[REGION] | None = Field(None, max_length=40)
     label: str = Field("", max_length=120)
     target: str = Field("azure", pattern=TARGET_PATTERN)
+    # Set to run the AI review on the finished scan, with the report as the console will show it.
+    ai_review: AIAfterScanRequest | None = None
 
 
 class SSOSessionRequest(BaseModel):
@@ -140,6 +142,15 @@ class AIKeyRequest(BaseModel):
 
 class AIRunRequest(ReportRequest):
     pass
+
+
+class AIAfterScanRequest(BaseModel):
+    filter: FilterModel = FilterModel()
+    questionnaire: Questionnaire = Questionnaire()
+    weighting: str = Field("spend", pattern=r"^(balanced|spend|equal)$")
+
+
+ScanRequest.model_rebuild()
 
 
 class CompareRequest(BaseModel):
@@ -342,11 +353,46 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
 
     @app.post("/api/scans")
     def create_scan(req: ScanRequest):
+        if req.ai_review is not None:
+            # Fail before the scan, not half an hour later, if the AI review is not set up.
+            if not ai_providers.settings_saved():
+                raise HTTPException(400, "the AI review is not set up yet: open Settings, AI configuration")
+            try:
+                ai_providers.Client(ai_providers.load_settings())
+            except (ValueError, ai_providers.AIError) as exc:
+                raise HTTPException(400, f"AI review: {exc}") from exc
         try:
-            job = start_scan(ScanParams(**req.model_dump()))
+            job = start_scan(ScanParams(**req.model_dump(exclude={"ai_review"})))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        if req.ai_review is not None:
+            ai_review.expect(job.id)
+            threading.Thread(
+                target=contextvars.copy_context().run,
+                args=(_ai_after_scan, job.id, req.ai_review),
+                daemon=True,
+                name=f"ai-wait-{job.id}",
+            ).start()
         return job.snapshot()
+
+    def _ai_after_scan(scan_id: str, want: AIAfterScanRequest) -> None:
+        """Wait for the scan, then start the AI review it was asked for with."""
+        while (job := get_job(scan_id)) and job.status == "running":
+            time.sleep(2)
+        if not ai_review.waiting(scan_id):
+            return  # stopped from the console while the scan ran
+        if not job or job.status == "failed":
+            ai_review.give_up(scan_id, "the scan failed, so there is no report to review")
+            return
+        try:
+            _start_ai(scan_id, want)
+        except HTTPException as exc:
+            ai_review.give_up(scan_id, str(exc.detail))
+        except Exception as exc:
+            log.exception("AI review after scan %s could not start", scan_id)
+            ai_review.give_up(scan_id, f"could not start: {exc}")
+        else:
+            ai_review.started(scan_id)
 
     @app.post("/api/scans/demo")
     def demo():
@@ -497,7 +543,11 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             }
             for p in ai_providers.PROVIDERS.values()
         ]
-        return {"settings": ai_providers.load_settings().public(), "providers": providers}
+        return {
+            "settings": ai_providers.load_settings().public(),
+            "providers": providers,
+            "configured": ai_providers.settings_saved(),
+        }
 
     @app.put("/api/ai/settings")
     def ai_save(req: AISettingsRequest):
@@ -542,10 +592,9 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         with ThreadPoolExecutor(max_workers=len(ai_providers.PROVIDERS)) as pool:
             return {"results": list(pool.map(one, ai_providers.PROVIDERS))}
 
-    @app.post("/api/ai/review")
-    def ai_start(req: AIRunRequest):
+    def _start_ai(scan_id: str, req: AIAfterScanRequest) -> dict:
         try:
-            scan = store.load_scan(req.scan_id)
+            scan = store.load_scan(scan_id)
         except store.ScanNotFound as exc:
             raise HTTPException(404, "scan not found") from exc
         try:
@@ -559,9 +608,13 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             "provisional": rep["estimate"].get("provisional"),
         }
         try:
-            return ai_review.start(req.scan_id, rep, ai_providers.load_settings(), basis)
+            return ai_review.start(scan_id, rep, ai_providers.load_settings(), basis)
         except (ValueError, ai_providers.AIError) as exc:
             raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/ai/review")
+    def ai_start(req: AIRunRequest):
+        return _start_ai(req.scan_id, req)
 
     @app.post("/api/ai/key")
     def ai_key(req: AIKeyRequest):

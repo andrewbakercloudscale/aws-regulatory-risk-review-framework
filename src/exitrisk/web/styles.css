@@ -550,6 +550,7 @@ table.data.accounts td { vertical-align: middle; }
 .report-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 18px; }
 .report-bar > .menu { margin-left: auto; }
 .report-bar #btnExport svg:first-child { width: 16px; height: 16px; }
+body[data-view="multiregion"] #btnJumpAi { display: none; }
 .viewtabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; flex: 0 1 640px; min-width: 0; padding: 5px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; }
 .vtab { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); border-radius: 10px;
@@ -722,13 +723,21 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 @media print { .focus-accounts { grid-template-columns: 1fr 1fr; } .focus-acct, .focus-item { break-inside: avoid; } }
 
 /* AI review */
-#btnAi svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
-#btnAi .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-left: 6px; }
-#btnAi .dot.running { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.ai-jump { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.ai-jump svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.ai-jump .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-left: 6px; }
+.ai-jump .dot.running { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 .ai-panel { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .ai-panel h3 { display: flex; align-items: center; gap: 8px; margin: 0; }
 .ai-panel h4 { margin: 16px 0 6px; font-size: 13.5px; }
+.ai-panel h3.sub-head { margin: 22px 0 6px; }
+.ai-panel > h3 + p, .ai-panel > h3 + .warn-text { margin-top: 8px; }
+.ai-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 900px) { .ai-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ai-panel td.acct-name { white-space: nowrap; }
+.ai-points { margin: 4px 0 14px; padding-left: 22px; }
+.ai-points li { margin: 4px 0; font-size: 14px; line-height: 1.45; }
 .ai-icon { width: 18px; height: 18px; fill: color-mix(in srgb, var(--accent) 25%, transparent); stroke: var(--accent); stroke-width: 1.6; }
 .ai-headline { font-size: 15px; font-weight: 600; margin: 10px 0 12px; }
 .ai-more { margin-top: 14px; }
@@ -738,4 +747,3 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 @media print { .ai-more { display: block; } .ai-more > summary { list-style: none; } }
 .key-row { display: flex; gap: 8px; align-items: center; }
 .key-row input { flex: 1; min-width: 0; }
-.ai-cost { margin: 2px 0 4px; font-size: 14px; }

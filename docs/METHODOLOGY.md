@@ -81,7 +81,7 @@ which view drives the per-account weights, contributions and bubble sizes; both 
 always reported.
 
 **Breadth view.** Alongside the scores, the report counts accounts per rating and sets the share of
-accounts against the share of spend (section 3). *Portable* accounts are those rated Low or Moderate;
+accounts against the share of spend (section 4). *Portable* accounts are those rated Low or Moderate;
 *higher-risk* accounts are High or Critical. "10 of 145 accounts are High/Critical but hold 25% of
 spend" is a concentration to manage, not an estate-wide problem, and the chart makes that visible.
 
@@ -319,7 +319,7 @@ Each scan is stored as JSON (`~/.exitrisk/scans/<id>.json`) with the raw Cost Ex
 inventory and issues. `exitrisk report <id> --include prod --questionnaire answers.json` regenerates
 the full report deterministically; the report footer carries the tool version, catalog version and scan id.
 
-## Timing (report section 5)
+## Timing (report section 6)
 
 The estimate gives an exit window; this part asks whether the window fits, and what AWS is still owed
 when it closes. None of it changes the score or the estimate.
@@ -349,14 +349,14 @@ and count towards the commitment, so the shortfall is only the part of each mont
 the same dollars are never counted twice. Real agreements often allow the shortfall to roll forward or be
 renegotiated; treat the figure as the opening position for that discussion.
 
-## Resilience (report section 6)
+## Resilience (report section 7)
 
-The exit score answers how hard a *planned* exit is. Section 6 answers the regulator's harder
+The exit score answers how hard a *planned* exit is. Section 7 answers the regulator's harder
 questions: what one failure would take down, and what could move under stress. None of it changes
 the score or the estimate.
 
 **Which accounts are critical.** An account is critical when a tag says so, or when its name contains
-one of the patterns typed in section 6 (`critical_accounts` in the answers file). Tag keys are matched
+one of the patterns typed in section 7 (`critical_accounts` in the answers file). Tag keys are matched
 ignoring case, spaces, dashes and underscores: `Criticality`, `BusinessCriticality`, `Tier`,
 `ServiceTier`, `WorkloadTier`, `Critical`. Values that mark an account critical: Tier 1 / T1 / 1,
 Tier 0, Critical, Mission critical, Business critical, CIF, Critical or important, P1, High, Gold,
