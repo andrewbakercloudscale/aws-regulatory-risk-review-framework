@@ -354,6 +354,11 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
     @app.post("/api/scans")
     def create_scan(req: ScanRequest):
         if req.ai_review is not None:
+            # On billing alone the model sees spend, not resources or integrations: not worth a review.
+            if not req.inventory:
+                raise HTTPException(
+                    400, "the Agentic Risk Review needs a deep scan: choose a dependency (or inventory) scan"
+                )
             # Fail before the scan, not half an hour later, if the AI review is not set up.
             if not ai_providers.settings_saved():
                 raise HTTPException(400, "the AI review is not set up yet: open Settings, AI configuration")

@@ -342,12 +342,13 @@ def list_accounts(session_name: str) -> dict:
     return {"accounts": accounts, "management_account_id": mgmt}
 
 
-# Bulk portal reads (one ListAccountRoles per account): the portal allows roughly 8 calls a second,
-# so more threads only earn 429s. Adaptive retries pace the calls instead of failing them.
+# Bulk portal reads (one ListAccountRoles per account). Measured on 338 accounts: 16 threads with standard
+# retries read about 19 accounts a second with no throttling; 32 threads earn 429s. Adaptive retries
+# were the bottleneck, not the portal: their client-side limiter held it to about 6 a second.
 PORTAL_BULK = Config(
-    signature_version=botocore.UNSIGNED, retries={"max_attempts": 10, "mode": "adaptive"}, max_pool_connections=16
+    signature_version=botocore.UNSIGNED, retries={"max_attempts": 10, "mode": "standard"}, max_pool_connections=20
 )
-PORTAL_WORKERS = 12
+PORTAL_WORKERS = 16
 ROLE_COUNT_SECONDS = 900
 _role_counts: dict[tuple[str, str], tuple[float, list[str], list[str]]] = {}
 _role_count_lock = threading.Lock()
@@ -365,7 +366,7 @@ def accounts_with_role(
     """(account ids where ``role`` is assigned to the analyst, all account ids the portal shows them).
 
     ``progress(done, total)`` is called as each account is checked. The answer is kept for
-    ROLE_COUNT_SECONDS: at ~8 portal calls a second a large estate takes a minute or more to count.
+    ROLE_COUNT_SECONDS: at about 19 portal calls a second a large estate still takes 20 seconds or more.
     """
     key = (session_name, role)
     with _role_count_lock:

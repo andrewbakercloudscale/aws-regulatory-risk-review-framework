@@ -10,7 +10,9 @@ project should focus. It is off until you ask for it, and it never changes the r
 1. Once: **Settings, AI configuration** to choose the provider, model and key (below).
 2. **New scan**, step 4: tick **Add an Agentic Risk Review to the report**. The review starts by itself
    when the scan finishes, on the report as the console shows it (the account filter and Exit model
-   answers at the time), and the choice is remembered for the next scan.
+   answers at the time), and the choice is remembered for the next scan. It needs a deep scan, so
+   ticking it switches Scan depth to a dependency scan (choosing Quick unticks it): on billing alone
+   the model would see spend, not the resources and integrations that make an account hard to move.
 3. Read the report while it runs. It lands in **section 2, Agentic Risk Review**, right after the
    executive summary; the **Agentic Risk Review** button above the report jumps there and shows a dot
    while it runs.
@@ -19,7 +21,8 @@ Section 2 opens with the **overall AI summary** (the headline and the 5 to 8 poi
 across the whole report), the AI's entrenchment, effort, time and cost against the model, then the
 **accounts to focus on** (the most entrenched, with why each is hard and how to tackle it), what will
 decide the exit, programme risks, sequencing, quick wins and questions for owners. For a scan made
-without it, section 2 has a **Run Agentic Risk Review** button for the open report.
+without it, section 2 has a **Run Agentic Risk Review** button for the open report; on a quick scan it
+warns that the view will be thin.
 
 ## Providers
 

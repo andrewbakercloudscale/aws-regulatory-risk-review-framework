@@ -223,6 +223,9 @@ def test_scan_can_ask_for_the_ai_review_and_it_starts_when_the_scan_finishes(mon
     monkeypatch.setattr(server, "start_scan", fake_start)
     c = TestClient(create_app(), base_url="http://127.0.0.1")
     body = {"profile": None, "ai_review": {"filter": {"include": ""}}}
+    r = c.post("/api/scans", headers=H, json=body)
+    assert r.status_code == 400 and "needs a deep scan" in r.json()["detail"] and not jobs  # quick scan
+    body |= {"inventory": True, "dependencies": True}
     providers._settings_path().unlink(missing_ok=True)
     r = c.post("/api/scans", headers=H, json=body)
     assert r.status_code == 400 and "not set up" in r.json()["detail"] and not jobs  # no scan started

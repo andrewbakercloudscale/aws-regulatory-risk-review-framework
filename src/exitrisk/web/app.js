@@ -1440,6 +1440,7 @@
       el.innerHTML = `
         <h3>${AI_ICON}No Agentic Risk Review for this report</h3>
         ${last}
+        ${r.summary.scan_depth === "quick" ? '<p class="warn-text">This is a quick scan (billing only): the model would see spend, not resources or integrations, so its view is thin. For a full review, start a new scan with Agentic Risk Review ticked; it runs a dependency scan.</p>' : ""}
         <p class="small">${ready
           ? `Run it now on the report as shown, with ${esc(ready)}. It takes 5 to 40 minutes and you can keep reading meanwhile. Next time, tick <strong>Agentic Risk Review</strong> when you start the scan.`
           : "Set up the AI model once under <strong>Settings, AI configuration</strong>; then tick <strong>Agentic Risk Review</strong> when you start a scan, or run it here on any report."}</p>
@@ -1603,8 +1604,16 @@
     $("#sAi").disabled = !ready;
     if (!ready) $("#sAi").checked = false;
     else { try { $("#sAi").checked = localStorage.getItem(LS_AI_SCAN) === "1"; } catch { /* ignore */ } }
-    $("#sAiInfo").textContent = ready ? `With ${ready}. A second opinion in section 2: what matters most, the accounts to focus on and how to tackle them.`
+    // A review of billing alone sees spend, not resources or integrations: it comes with a dependency scan.
+    if ($("#sAi").checked) needDeepScan();
+    $("#sAiInfo").textContent = ready ? `With ${ready}. In section 2: what matters most, the accounts to focus on and how to tackle them.`
       : "Not set up yet: choose the AI model under AI configuration first.";
+  }
+
+  function needDeepScan() {
+    if ($("#sDepth").value !== "quick") return;
+    $("#sDepth").value = "dependency";
+    $("#sDepth").dispatchEvent(new Event("change"));
   }
 
   function aiProvider() { return state.aiCfg.providers.find((p) => p.key === $("#aiProvider").value); }
@@ -2799,6 +2808,11 @@
     $("#sDepth").addEventListener("change", (e) => {
       $("#invOpts").hidden = e.target.value === "quick";
       $("#sDepthHint").textContent = DEPTH_HINT[e.target.value];
+      if (e.target.value === "quick" && $("#sAi").checked) {
+        $("#sAi").checked = false;
+        try { localStorage.setItem(LS_AI_SCAN, "0"); } catch { /* ignore */ }
+        toast("Agentic Risk Review unticked: it needs a deep scan", 5000);
+      }
     });
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));
     $("#btnLogs").addEventListener("click", openLog);
@@ -2811,7 +2825,7 @@
     $("#btnAiTestAll").addEventListener("click", testAllAi);
     // Tests save too, so whatever closes the dialog, the scan option and section 2 follow what is saved.
     $("#aiDialog").addEventListener("close", () => { syncScanAi(); if (state.report) renderAi(state.report); });
-    $("#sAi").addEventListener("change", () => { try { localStorage.setItem(LS_AI_SCAN, $("#sAi").checked ? "1" : "0"); } catch { /* ignore */ } });
+    $("#sAi").addEventListener("change", () => { if ($("#sAi").checked) needDeepScan(); try { localStorage.setItem(LS_AI_SCAN, $("#sAi").checked ? "1" : "0"); } catch { /* ignore */ } });
     $("#aiProvider").addEventListener("change", () => aiProviderChanged(""));
     $("#aiModel").addEventListener("change", () => { $("#aiCustomWrap").hidden = $("#aiModel").value !== AI_CUSTOM; if (!$("#aiCustomWrap").hidden) $("#aiCustom").focus(); });
     $("#aiMask").addEventListener("change", () => { $("#aiMask").dataset.touched = "1"; });

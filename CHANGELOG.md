@@ -6,6 +6,17 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- **The Agentic Risk Review comes with a deep scan.** Ticking it in New scan switches Scan depth to a
+  dependency scan, choosing Quick unticks it, and the console refuses a quick scan with a review: on
+  billing alone the model sees spend, not resources or integrations. Running it on an existing quick
+  scan from section 2 still works, with a warning that the view is thin.
+- **Check access counts the permission set in every account about four times faster** (338 accounts
+  in about 23 s, was about 90 s): portal reads use 16 threads with standard retries. Adaptive retries'
+  client-side limiter, not the portal, was holding it to about 6 accounts a second. Deep scans asking
+  the portal for credentials gain the same.
+
 ## [0.15.0] - 2026-10-23
 
 ### Changed
