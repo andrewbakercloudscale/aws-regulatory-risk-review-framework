@@ -39,7 +39,7 @@ log = get_logger("ai")
 
 BATCH_ACCOUNTS = 12  # small enough that the first answers, and the progress, come back quickly
 MAX_ACCOUNTS = 400
-WORKERS = 8  # batches in flight at once; providers answer 429 when busy and the call waits and retries
+WORKERS = 16  # batches in flight: all 14 of a 166-account estate go at once; a busy provider's 429 is waited out
 MAX_OUTPUT_TOKENS = 64000  # a reply cut off at max_tokens is asked again with double, up to this
 PASSES = {"Analysing accounts": 1, "Estate view": 2, "Reviewing for consistency": 3}
 PHASES = ("Before mobilisation", "Mobilise", "Wave 1", "Wave 2", "Wave 3", "Cutover")
@@ -364,7 +364,9 @@ def _review_prompt(facts: dict, analyses: list[dict], draft: dict, checks: list[
         f"ACCOUNT ANALYSES:\n{json.dumps(analyses, separators=(',', ':'))}\n\n"
         f"DRAFT:\n{json.dumps(draft, separators=(',', ':'))}\n\n"
         'Reply with JSON: {"changes": [{"issue": "<what was wrong>", "fix": "<what you changed>"}], '
-        f'"final": <the corrected estate view, in exactly the DRAFT shape>}}\nDRAFT shape:\n{ESTATE_SHAPE}'
+        '"final": <only the top-level fields of the DRAFT that you changed, each one whole and in the DRAFT '
+        "shape; {} if nothing needs changing>}. Fields you leave out are kept as drafted.\n"
+        f"DRAFT shape:\n{ESTATE_SHAPE}"
     )
 
 
@@ -586,7 +588,9 @@ class Run:
         self._step("Reviewing for consistency", done, total, f"{len(checks)} automated finding(s) to resolve")
         reviewed = self._ask(client, _review_prompt(facts, analyses, draft, checks), 32000, "review")
         if isinstance(reviewed.get("final"), dict):
-            final = reviewed["final"]
+            # The reviewer sends back only the fields it changed: a whole second copy of the view would
+            # double the slowest call of the review for the same answer.
+            final = {**draft, **{k: v for k, v in reviewed["final"].items() if k in draft or v}}
         else:
             final = draft
             self._note("The review pass returned no corrected view, so the estate view is shown unreviewed.")

@@ -57,7 +57,7 @@ optional step.
 ## How it works
 
 1. **Account analysis.** Every account with spend (up to 400, largest effort first), in batches of 12,
-   eight at a time: entrenchment, the model's own effort range against the deterministic one, risks,
+   sixteen at a time: entrenchment, the model's own effort range against the deterministic one, risks,
    how to tackle the account and in which phase, confidence and evidence gaps. Accounts the model
    skips are asked for again.
 2. **Estate view.** One pass over the estate facts and every account analysis: headline, entrenchment,
@@ -66,7 +66,9 @@ optional step.
 3. **Review.** Automated checks run on the draft (ranges valid; far from the model only with a reason;
    effort, duration and team size consistent; every account named exists; phases valid). The draft,
    the facts, the analyses and those findings go back to the model as an independent reviewer, which
-   corrects what is wrong and lists each change. The checks run again; anything still open is shown.
+   corrects what is wrong and lists each change. It sends back only the parts it changed, which are
+   laid over the draft, so the slowest call is not spent copying the view out again. The checks run
+   again; anything still open is shown.
 
 **Nothing fails silently.** Every call is logged with its tokens in and out and the provider's stop
 reason. A reply cut off at its output limit is asked again with twice the room (up to 64,000 tokens),

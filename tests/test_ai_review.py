@@ -102,7 +102,9 @@ class FakeModel:
             )
             return Reply("Here you go:\n```json\n" + json.dumps(view) + "\n```", 100, 50)
         assert "names unknown accounts: A999" in user  # the automated checks reach the reviewer
-        return Reply(json.dumps({"changes": [{"issue": "Ghost account", "fix": "Removed"}], "final": view}), 100, 50)
+        # Only the field it changed comes back; the rest of the draft stands.
+        final = {"areas_of_focus": view["areas_of_focus"]}
+        return Reply(json.dumps({"changes": [{"issue": "Ghost account", "fix": "Removed"}], "final": final}), 100, 50)
 
 
 def test_masker_round_trip():
