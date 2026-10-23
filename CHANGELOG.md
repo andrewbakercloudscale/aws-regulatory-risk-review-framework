@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- When an AI review finishes, the AI review dialog closes and the page scrolls to section 7 so the result is in view.
+
 ## [0.14.4] - 2026-10-23
 
 ### Added

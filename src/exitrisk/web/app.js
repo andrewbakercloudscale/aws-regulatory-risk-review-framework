@@ -1630,6 +1630,11 @@
           if (run.status === "complete") { $("#aiOk").textContent = "Done: the AI review is in section 7."; toast("AI review ready: section 7"); }
           else $("#aiError").textContent = run.status === "cancelled" ? "Stopped." : run.message;
           renderAi(state.report);
+          // A finished run should land on the result, not leave the dialog sitting over it.
+          if (run.status === "complete") {
+            if ($("#aiDialog").open) $("#aiDialog").close();
+            $("#sec-focus").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+          }
           break;
         }
         state.ai = { ...got };
