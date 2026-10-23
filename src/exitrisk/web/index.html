@@ -770,9 +770,9 @@
 </dialog>
 
 <!-- AWS SSO sign-in dialog -->
-<dialog id="ssoDialog" class="dialog">
+<dialog id="ssoDialog" class="dialog" aria-labelledby="ssoTitle">
   <form method="dialog" id="ssoForm" autocomplete="off">
-    <h2>AWS sign-in</h2>
+    <h2 id="ssoTitle">AWS sign-in</h2>
     <p class="muted small">Signs in through your organisation's AWS access portal (IAM Identity Center), the same as <code>aws sso login</code>. You approve it on AWS's own page; the token stays in the AWS CLI cache on this machine and is never sent to this page.</p>
     <label>Access portal<select id="ssoSession"></select></label>
     <p id="ssoStatus" class="small"></p>
@@ -810,9 +810,9 @@
 </dialog>
 
 <!-- Access check dialog -->
-<dialog id="accessDialog" class="dialog">
+<dialog id="accessDialog" class="dialog" aria-labelledby="accessTitle">
   <form method="dialog" id="accessForm" autocomplete="off">
-    <h2>Check access</h2>
+    <h2 id="accessTitle">Check access</h2>
     <p class="muted small">Makes every read-only call a scan makes and names any permission that is missing. Costs US$0.03 (three Cost Explorer calls).</p>
     <label>AWS profile<select id="aProfile"></select></label>
     <details class="small"><summary>Deep scan role (optional)</summary>
@@ -931,8 +931,8 @@
   </form>
 </dialog>
 
-<dialog id="logDialog" class="dialog wide">
-  <h2>Application log</h2>
+<dialog id="logDialog" class="dialog wide" aria-labelledby="logTitle">
+  <h2 id="logTitle">Application log</h2>
   <label class="check"><input type="checkbox" id="logThisRun" checked> Only this scan</label>
   <div class="table-wrap log-wrap"><table class="data mono" id="logTable"></table></div>
   <div class="dialog-actions"><button class="btn" id="btnCloseLog">Close</button></div>

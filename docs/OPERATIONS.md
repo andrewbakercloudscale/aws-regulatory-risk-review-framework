@@ -9,8 +9,8 @@
 2. With AWS SSO: **AWS sign-in** → pick or add the access portal → **Sign in** (approve on the AWS
    page that opens) → choose the management account and a read-only role → **Use for a new scan**.
    Otherwise: **New scan** → choose the profile for the management account → **Load OUs** (first AWS call; with
-   aws-cli-zsp, approve Touch ID) → pick an OU or leave the root → months of history (3 is a good
-   default; 6 to 12 shows trend) → optionally tick **Deep scan** and give the member role name.
+   aws-cli-zsp, approve Touch ID) → pick an OU or leave the root → months of history (12, the default,
+   shows a year of growth by product type) → optionally tick **Deep scan** and give the member role name.
 3. Watch the progress bar. A spend-only scan of a few hundred accounts takes seconds; a deep scan takes
    about 20 seconds per account with 18 regions enabled (every service in every region read in parallel), with
    8 accounts at a time (`EXITRISK_MAX_WORKERS`, default 8): about 15 minutes for 166 accounts. Tick
@@ -73,6 +73,7 @@ Each file records the date AWS published it, which the report shows next to the 
 | `EXITRISK_DATA_DIR` | `~/.exitrisk` | Scans (`scans/`) and logs (`logs/`) |
 | `EXITRISK_LOG_LEVEL` | `INFO` | `DEBUG` adds per-call detail |
 | `EXITRISK_MAX_WORKERS` | `8` | Parallel accounts in a deep scan; lower it if throttled |
+| `EXITRISK_PROCESSES` | CPU cores, up to 8 | Worker processes a deep scan parses AWS answers in; `1` keeps it in the console process |
 | `AWS_PROFILE`, `AWS_CONFIG_FILE` | standard | Honoured by boto3 as usual |
 
 ## Logs

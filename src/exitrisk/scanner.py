@@ -364,8 +364,8 @@ def run_scan(job: ScanJob) -> dict:
         raise ScanFailed(msg) from exc
     job.update("auth", 10, f"Authenticated as {data['identity']['arn']}")
 
-    # 2. Organization and accounts.
-    job.update("organizations", 15, "Reading the organization's OU tree")
+    # 2. Organisation and accounts.
+    job.update("organizations", 15, "Reading the organisation's OU tree")
     try:
         # Always read fresh: a scan is evidence, so an OU moved minutes ago must count. The picker's
         # cached copy is refreshed with what the scan saw.
@@ -375,14 +375,14 @@ def run_scan(job: ScanJob) -> dict:
             session,
             known,
             lambda n_ous, n_accts: job.update(
-                "organizations", 15, f"Reading the organization's OU tree: {n_ous} OUs, {n_accts} accounts found"
+                "organizations", 15, f"Reading the organisation's OU tree: {n_ous} OUs, {n_accts} accounts found"
             ),
         )
         organizations.remember_org_and_tree(p.profile, data["org"], tree)
         ous = [organizations.find_ou(tree, i) for i in p.ous] if p.ous else [tree]
         missing = [i for i, ou in zip(p.ous, ous, strict=False) if ou is None]
         if missing:
-            raise ScanFailed(f"OU {', '.join(missing)} not found in this organization")
+            raise ScanFailed(f"OU {', '.join(missing)} not found in this organisation")
         data["ou"] = {k: " + ".join(ou[k] for ou in ous) for k in ("id", "name", "path")}
         data["ous"] = [{k: ou[k] for k in ("id", "name", "path")} for ou in ous]
         # Nested picks (an OU and one of its children) overlap: keep each account once.
@@ -412,7 +412,7 @@ def run_scan(job: ScanJob) -> dict:
             # describe_org worked, so this is a member account of a known organization.
             message = (
                 f"Organizations refused ({code}): this profile is in member account {acct}, and the "
-                f"organization's management account is {mgmt}. Scanning account {acct} only."
+                f"organisation's management account is {mgmt}. Scanning account {acct} only."
             )
             hint = f"For an OU-wide view, scan with a profile in management account {mgmt}."
             scope = "Single member account"

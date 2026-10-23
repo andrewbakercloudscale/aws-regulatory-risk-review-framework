@@ -45,6 +45,24 @@ database and no cloud deployment: scans are JSON files in a private directory on
 2. The job authenticates (`sts:GetCallerIdentity`, where aws-cli-zsp asks for Touch ID), reads the OU
    tree and accounts, queries Cost Explorer, optionally inventories member accounts in parallel, and
    saves the scan atomically (`tempfile` + `os.replace`, mode 0600).
+   A deep scan reads each account in a worker process (`procs.py`, `EXITRISK_PROCESSES`): parsing AWS
+   answers is CPU work that one Python process does on one core. Threads in the console fetch each
+   account's temporary credentials and wait out an ended sign-in; the worker gets only those
+   credentials and returns counts and issues. Workers are started with spawn, not fork (a fork copies
+   locks other threads hold), and send their log lines back through a queue, so only the console
+   writes the log file. If a worker dies, the accounts left are read in the console instead.
+
+## Concurrency
+
+- Shared state is held behind locks and read as one copy: a scan's status, phase and message change
+  together (`ScanJob.finish`), and an AI review's final status arrives with its final token usage.
+- Finished scans are dropped from memory after an hour and sign-in codes an hour after they expire;
+  their status then comes from the saved file.
+- Every saved file is written to a unique temporary name and renamed into place, so two saves of the
+  same file (a review that finishes as it is stopped) cannot interleave.
+- A stop signal waits for running scans and AI reviews; a second one stops at once and kills any
+  deep-scan workers. `serve --replace` waits while the old console is busy, then signals it again if it
+  has not stopped 15 seconds after going idle, and gives up rather than hang.
 3. `POST /api/report {scan_id, filter, questionnaire}` loads the scan and builds the report: scores,
    rankings, trend, estimate, narrative and issues. The browser renders charts and tables from it.
 

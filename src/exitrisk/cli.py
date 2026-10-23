@@ -109,11 +109,9 @@ def _scan_safe_server(config):
 def _stop_running_console(port: int) -> bool:
     """Stop the console already on this port, after its running scans finish. False if it would not stop."""
     import os
-    import urllib.request
 
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as resp:
-            health = json.load(resp)
+        health = _health(port)
     except OSError:
         return True  # nothing listening
     pid = health.get("pid")
@@ -157,13 +155,17 @@ def _stop_running_console(port: int) -> bool:
 REPLACE_STOP_SECONDS = 15
 
 
-def _console_busy(port: int) -> bool:
-    """True while the console on ``port`` still runs scans or reviews (or does not answer: it may be busy)."""
+def _health(port: int) -> dict:
     import urllib.request
 
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as resp:
+        return json.load(resp)
+
+
+def _console_busy(port: int) -> bool:
+    """True while the console on ``port`` still runs scans or reviews (or answers oddly: it may be busy)."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as resp:
-            health = json.load(resp)
+        health = _health(port)
     except OSError:
         return False  # no longer listening: shutting down
     except ValueError:
@@ -431,8 +433,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("scan", help="run a scan from the command line")
     p.add_argument("--profile", help="AWS profile (e.g. an aws-cli-zsp profile in the management account)")
-    p.add_argument("--ou", help="OU id(s), comma-separated (ou-xxxx-yyyyyyyy,...); default: the organization root")
-    p.add_argument("--months", type=int, default=3)
+    p.add_argument("--ou", help="OU id(s), comma-separated (ou-xxxx-yyyyyyyy,...); default: the organisation root")
+    p.add_argument(
+        "--months", type=int, default=12, help="months of spend history, 1 to 12 (default: 12, as the console)"
+    )
     p.add_argument("--inventory", action="store_true", help="also inventory resources in member accounts")
     p.add_argument(
         "--dependencies",

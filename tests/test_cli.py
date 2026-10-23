@@ -94,3 +94,15 @@ def test_second_stop_signal_stops_at_once(monkeypatch):
     server.handle_exit(signal.SIGTERM, None)
     server.handle_exit(signal.SIGTERM, None)
     assert server.should_exit
+
+
+def test_scan_reads_a_year_of_spend_by_default_as_the_console(monkeypatch):
+    seen = {}
+
+    def fake(args):
+        seen.update(months=args.months, spend_regions=args.spend_regions)
+        return 0
+
+    monkeypatch.setattr(cli, "_scan", fake)
+    assert cli.main(["scan", "--profile", "p"]) == 0
+    assert seen["months"] == 12 and seen["spend_regions"] is False

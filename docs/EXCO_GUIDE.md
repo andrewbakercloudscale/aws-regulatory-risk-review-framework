@@ -16,7 +16,7 @@ Figures below are from the synthetic demo organisation (made-up numbers, 12 mont
    (everything on commodity infrastructure) to 95 (everything on services that exist only on AWS). If
    the spend score is much higher, risk sits in a few big accounts; if the account score is higher, it
    is spread across many small ones.
-2. **How much is locked in**: "27% of production spend, $2.7m a year, runs on services we would have to
+2. **How much is locked in**: "27% of production spend, $2.4m a year, runs on services we would have to
    re-engineer, not just move."
 
    **How many accounts**: "34 of 40 production accounts are portable; 6 are High or Critical and hold
@@ -29,7 +29,7 @@ Figures below are from the synthetic demo organisation (made-up numbers, 12 mont
    hard part of leaving is not the portable compute; it is 2 critical accounts that are hard to move,
    613 AWS-specific integrations and 2,549 TB of data." Say which scan depth the figures rest on: a
    quick scan sizes effort from spend and cannot claim the confidence of a dependency scan.
-5. **What leaving would take**: "Roughly 2.5 to 5 years and $7m to $16m, with our current team and
+5. **What leaving would take**: "Roughly 3 to 5.5 years and $9m to $16m, with our current team and
    delivery maturity." The report gives ranges, never a single figure: at this stage a point
    estimate would claim precision it does not have. Cost and time appear only once the delivery questions under Exit model are
    answered; until then they are marked provisional.

@@ -41,7 +41,7 @@ other pillars, it is a design property you can measure, track and improve:
   needed. Choosing a proprietary service can still be the right call; this makes it a known,
   priced choice rather than an accident.
 
-The aim is not to discourage AWS. It is to replace "we are locked in" (fear) with "38/100, with three accounts holding 57% of the spend at risk and roughly 2.5 to 5 years to
+The aim is not to discourage AWS. It is to replace "we are locked in" (fear) with "38/100, with three accounts holding 57% of the spend at risk and roughly 3 to 5.5 years to
 exit" (a fact a board can govern).
 
 ![Dashboard overview](docs/images/dashboard-overview.png)
@@ -149,7 +149,7 @@ for the whole scan. The tool never reads, stores or logs keys.
 
 **AWS SSO (IAM Identity Center), no terminal needed.** Click **AWS sign-in** in the console header, add
 your access portal's start URL once (its region is found automatically), and approve the sign-in on
-AWS's own page. The console lists every account you can reach, preselects the organization's
+AWS's own page. The console lists every account you can reach, preselects the organisation's
 management account, and **Use for a new scan** creates (or reuses) a matching SSO profile in
 `~/.aws/config`. The token goes to the AWS CLI's own cache, so `aws` and `exitrisk scan --profile …`
 share the sign-in; it is never sent to the browser.

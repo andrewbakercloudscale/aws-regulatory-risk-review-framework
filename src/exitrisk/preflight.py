@@ -228,7 +228,7 @@ def run_checks(
                 "organization",
                 "Management account",
                 "ok" if is_mgmt else "warn",
-                f"Organization {o['Id']}; management account {o['MasterAccountId']}",
+                f"Organisation {o['Id']}; management account {o['MasterAccountId']}",
                 ""
                 if is_mgmt
                 else (
@@ -241,7 +241,7 @@ def run_checks(
         code = describe_exception(exc)[0]
         if code == "AWSOrganizationsNotInUseException":
             checks.append(
-                Check("organization", "Management account", "warn", "This account is not in an AWS Organization.")
+                Check("organization", "Management account", "warn", "This account is not in an AWS organisation.")
             )
         else:
             checks.append(_fail("organization", "Management account", exc, "organizations:DescribeOrganization"))
@@ -562,7 +562,7 @@ def admin_request(result: dict) -> str:
         "",
     ]
     if wrong_account:
-        lines += [f"I need access in the organization's management account, {mgmt}.", ""]
+        lines += [f"I need access in the organisation's management account, {mgmt}.", ""]
     if missing:
         lines += ["Today these calls are refused for " + who + ":"]
         lines += [f"  - {c['needs']}  ({c['label']})" for c in missing]

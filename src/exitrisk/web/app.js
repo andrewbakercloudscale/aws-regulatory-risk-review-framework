@@ -2169,7 +2169,7 @@
         `<p class="muted small">No OUs: the scan covers the whole organisation.</p>`;
       syncOus();
       const n = flattenOus(tree).length - 1;
-      $("#ouStatus").textContent = `${plural(n, "OU")} in organization ${org.id}, management account ${org.management_account_id}.`;
+      $("#ouStatus").textContent = `${plural(n, "OU")} in organisation ${org.id}, management account ${org.management_account_id}.`;
       state.mgmtAccount = org.management_account_id;
       try { if ($("#sProfile").value) localStorage.setItem(LS_ORG_PROFILE, $("#sProfile").value); } catch { /* ignore */ }
     } catch (e) {

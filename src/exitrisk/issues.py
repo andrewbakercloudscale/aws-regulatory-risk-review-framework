@@ -43,7 +43,7 @@ _HINTS = {
     "AccessDeniedException": "The caller lacks permission for this API. See docs/IAM_PERMISSIONS.md.",
     "AccessDenied": "The caller lacks permission for this API. See docs/IAM_PERMISSIONS.md.",
     "AWSOrganizationsNotInUseException": (
-        "This account is not part of an AWS Organization; scanning it as a single account."
+        "This account is not part of an AWS organisation; scanning it as a single account."
     ),
     "DataUnavailableException": (
         "Cost Explorer has no data yet. Enable Cost Explorer in the management account (takes up to 24h)."
