@@ -14,7 +14,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   reservation utilisation, and every inventory and dependency call inside a member account. Each refused
   action is named, shown in the console and added to the administrator request. With an Identity Center
   profile it also counts the accounts where your permission set is assigned, with a live
-  "x of y accounts checked" counter and progress bar.
+  "x of y accounts checked" counter and progress bar. The count is reused for 15 minutes (cleared on
+  sign-out), so a re-check takes seconds.
 - Live account counters in scan progress: OUs and accounts found while reading the OU tree, accounts
   read from Cost Explorer, and "x of y accounts scanned" during a deep scan.
 - Account ranking colours the most common lock-in services, with a legend counting the accounts each

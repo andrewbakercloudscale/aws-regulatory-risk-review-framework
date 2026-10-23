@@ -141,3 +141,31 @@ def test_logout_ends_token_and_removes_cache(monkeypatch, tmp_path):
     # Signing out twice, or after the token expired, is fine; an unknown portal is not.
     assert app.post("/api/sso/logout", json={"session": "corp"}, headers=H).status_code == 200
     assert app.post("/api/sso/logout", json={"session": "nope"}, headers=H).status_code == 400
+
+
+def test_permission_set_count_is_reused_until_sign_out(monkeypatch, isolated_aws):
+    calls = []
+    monkeypatch.setattr(sso, "_token_or_fail", lambda s: ("tok", "eu-west-1"))
+    monkeypatch.setattr(sso, "portal_account_ids", lambda s: ["1", "2"])
+    monkeypatch.setattr(sso, "load_token", lambda s: None)
+
+    class Portal:
+        def get_paginator(self, _name):
+            class P:
+                def paginate(self, accessToken, accountId):
+                    calls.append(accountId)
+                    return [{"roleList": [{"roleName": "Read"}] if accountId == "1" else []}]
+
+            return P()
+
+    monkeypatch.setattr(sso.boto3, "client", lambda *a, **k: Portal())
+    sso._role_counts.clear()
+    seen = []
+    assert sso.accounts_with_role("corp", "Read", lambda d, t: seen.append((d, t))) == (["1"], ["1", "2"])
+    assert sorted(seen) == [(1, 2), (2, 2)] and len(calls) == 2
+    seen.clear()
+    assert sso.accounts_with_role("corp", "Read", lambda d, t: seen.append((d, t))) == (["1"], ["1", "2"])
+    assert seen == [(2, 2)] and len(calls) == 2  # from the cache: no portal calls
+    assert sso.role_count_age("corp", "Read") is not None
+    sso.logout("corp")
+    assert sso.role_count_age("corp", "Read") is None

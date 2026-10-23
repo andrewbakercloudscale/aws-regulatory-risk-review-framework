@@ -307,6 +307,9 @@ def logout(session_name: str) -> None:
         except Exception as exc:  # the local token is removed either way
             log.info("SSO logout call for %s failed: %s", session_name, exc)
     path.unlink(missing_ok=True)
+    with _role_count_lock:  # a new sign-in may be a different person: count again
+        for key in [k for k in _role_counts if k[0] == session_name]:
+            del _role_counts[key]
 
 
 # ---------------------------------------------------------------- accounts and profiles
@@ -345,6 +348,9 @@ PORTAL_BULK = Config(
     signature_version=botocore.UNSIGNED, retries={"max_attempts": 10, "mode": "adaptive"}, max_pool_connections=16
 )
 PORTAL_WORKERS = 12
+ROLE_COUNT_SECONDS = 900
+_role_counts: dict[tuple[str, str], tuple[float, list[str], list[str]]] = {}
+_role_count_lock = threading.Lock()
 
 
 def portal_account_ids(session_name: str) -> list[str]:
@@ -358,8 +364,16 @@ def accounts_with_role(
 ) -> tuple[list[str], list[str]]:
     """(account ids where ``role`` is assigned to the analyst, all account ids the portal shows them).
 
-    ``progress(done, total)`` is called as each account is checked.
+    ``progress(done, total)`` is called as each account is checked. The answer is kept for
+    ROLE_COUNT_SECONDS: at ~8 portal calls a second a large estate takes a minute or more to count.
     """
+    key = (session_name, role)
+    with _role_count_lock:
+        hit = _role_counts.get(key)
+    if hit and time.monotonic() - hit[0] < ROLE_COUNT_SECONDS:
+        if progress:
+            progress(len(hit[2]), len(hit[2]))
+        return list(hit[1]), list(hit[2])
     token, region = _token_or_fail(session_name)
     ids = portal_account_ids(session_name)
     client = boto3.client("sso", region_name=region, config=PORTAL_BULK)
@@ -376,7 +390,18 @@ def accounts_with_role(
         return found
 
     have = pmap(has_role, ids, workers=PORTAL_WORKERS)
-    return [a for a, ok in zip(ids, have, strict=True) if ok], ids
+    assigned = [a for a, ok in zip(ids, have, strict=True) if ok]
+    with _role_count_lock:
+        _role_counts[key] = (time.monotonic(), assigned, ids)
+    return list(assigned), list(ids)
+
+
+def role_count_age(session_name: str, role: str) -> float | None:
+    """Seconds since accounts_with_role last counted, if its answer is still being reused."""
+    with _role_count_lock:
+        hit = _role_counts.get((session_name, role))
+    age = time.monotonic() - hit[0] if hit else None
+    return age if age is not None and age < ROLE_COUNT_SECONDS else None
 
 
 def _find_management(session_name: str, accounts: list[dict]) -> str | None:

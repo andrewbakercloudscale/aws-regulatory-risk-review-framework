@@ -454,15 +454,17 @@ def _assignment_check(checks, pair, ctx, on_progress) -> None:
         return
     ctx["permission_set_accounts"] = len(assigned)
     gap = len(reachable) - len(assigned)
+    age = sso.role_count_age(pair[0], pair[1])
+    when = f" (counted {max(1, round(age / 60))} min ago)" if age and age > 30 else ""
     checks.append(
         Check(
             "assignments",
             ASSIGN_LABEL,
             "warn" if gap else "ok",
             f"{pair[1]} is assigned in {len(assigned)} of the {len(reachable)} accounts your sign-in reaches; "
-            f"the other {gap} will not be deep-scanned."
+            f"the other {gap} will not be deep-scanned.{when}"
             if gap
-            else f"{pair[1]} is assigned in all {len(assigned)} accounts your sign-in reaches.",
+            else f"{pair[1]} is assigned in all {len(assigned)} accounts your sign-in reaches.{when}",
             f"Assign {pair[1]} in the remaining accounts, or give a member role to assume." if gap else "",
             f"IAM Identity Center assignment of {pair[1]} in {gap} more account(s)" if gap else "",
         )
