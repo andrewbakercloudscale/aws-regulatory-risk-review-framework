@@ -6,6 +6,27 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- **Deep scans are about 9 times faster.** Inside each account every service in every region is now read
+  in parallel (24 calls at a time) instead of one call after another: a member account with 18 regions
+  went from 188 s to 21 s. Clients are made one at a time and shared, as boto3 sessions are not thread safe.
+- **Cost Explorer reads run side by side.** The spend queries for each block of 100 accounts, spend by
+  region, data stored, Direct Connect and commitments no longer wait for each other. Account tags are read
+  8 at a time.
+- **Check access is quicker.** The permission-set count starts as soon as you are signed in and runs
+  while the other checks do; all member-account probes go at once.
+- **The Agentic Risk Review sends 8 batches at a time** (was 4); a busy provider's 429 is waited out.
+
+### Fixed
+
+- **A deep scan no longer stops at the hour.** The IAM Identity Center access token lasts an hour; the
+  console now renews it with the sign-in's refresh token, as the AWS CLI does, so a scan runs for as long
+  as the Identity Center session allows (set by your administrator, 8 hours by default).
+- **An ended sign-in asks you to sign in again.** Starting a scan with an ended sign-in opens the sign-in
+  dialog. If the sign-in ends during a deep scan, the scan waits up to 15 minutes, the console asks you to
+  sign in, and the scan carries on instead of skipping every account left.
+
 ## [0.15.1] - 2026-10-23
 
 ### Changed

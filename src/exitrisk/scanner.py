@@ -10,6 +10,7 @@ Cost Explorer query (without which there is no score) fails the scan.
 from __future__ import annotations
 
 import threading
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -91,6 +92,11 @@ class ScanParams:
             )
 
 
+# How long a deep scan waits for the user to sign in again when the sign-in ends part-way.
+SIGN_IN_WAIT_SECONDS = 15 * 60
+SIGN_IN_POLL_SECONDS = 3
+
+
 class ScanFailed(RuntimeError):
     pass
 
@@ -105,7 +111,11 @@ class ScanJob:
     status: str = "running"
     issues: list[Issue] = field(default_factory=list)
     data: dict = field(default_factory=dict, repr=False)
+    # The IAM Identity Center session to sign in to again while a deep scan waits for it, else None.
+    needs_sign_in: str | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _sign_in_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _sign_in_gave_up: bool = False
 
     def update(self, phase: str, pct: int, message: str) -> None:
         with self._lock:
@@ -138,7 +148,39 @@ class ScanJob:
                 "message": self.message,
                 "status": self.status,
                 "issues": len(self.issues),
+                "needs_sign_in": self.needs_sign_in,
             }
+
+    def wait_for_sign_in(self, session_name: str) -> bool:
+        """The sign-in ended mid-scan and could not be renewed: wait for the user to sign in again,
+        up to SIGN_IN_WAIT_SECONDS, instead of skipping every account left. True once signed in.
+        Threads that hit it together wait in turn; once one gives up, the rest skip at once."""
+        with self._sign_in_lock:
+            if sso.load_token(session_name):
+                return True  # another thread waited and the user signed in
+            if self._sign_in_gave_up:
+                return False
+            with self._lock:
+                phase, pct, message = self.phase, self.pct, self.message
+            self.needs_sign_in = session_name
+            deadline = time.monotonic() + SIGN_IN_WAIT_SECONDS
+            try:
+                while time.monotonic() < deadline:
+                    left = max(1, round((deadline - time.monotonic()) / 60))
+                    self.update(
+                        phase,
+                        pct,
+                        f"Your AWS sign-in has ended. Sign in again to carry on: the scan waits {left} more min",
+                    )
+                    time.sleep(SIGN_IN_POLL_SECONDS)
+                    if sso.load_token(session_name):
+                        self.update(phase, pct, message)
+                        log.info("signed in again; the deep scan carries on")
+                        return True
+                self._sign_in_gave_up = True
+                return False
+            finally:
+                self.needs_sign_in = None
 
 
 _jobs: dict[str, ScanJob] = {}
@@ -499,17 +541,25 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
             Issue(
                 "info",
                 "inventory",
-                f"Heads up: this deep scan uses your own sign-in ({access}). It can skip accounts if AWS throttles "
-                "the sign-in portal or your sign-in expires mid-scan; each skipped account is listed as its own issue.",
-                "Sign in just before a long deep scan, or give a member role to assume (ExitRiskReadOnly).",
+                f"Heads up: this deep scan uses your own sign-in ({access}). It is renewed as the scan runs; if it "
+                "ends, the scan waits up to 15 minutes for you to sign in again. Accounts it still cannot reach "
+                "(AWS throttling the sign-in portal, or no sign-in in time) are each listed as their own issue.",
+                "Give a member role to assume (ExitRiskReadOnly) to avoid depending on your sign-in.",
             )
         )
 
     def one(account):
         try:
-            sess = (
-                session if account.id == caller else member_session(session, p.profile, account.id, p.role_name, job.id)
-            )
+            try:
+                sess = (
+                    session
+                    if account.id == caller
+                    else member_session(session, p.profile, account.id, p.role_name, job.id)
+                )
+            except sso.SSOFailure:
+                if not (pair and job.wait_for_sign_in(pair[0])):
+                    raise
+                sess = member_session(session, p.profile, account.id, p.role_name, job.id)
         except Exception as exc:  # AWS refusal, or an expired IAM Identity Center sign-in
             code, msg, hint = describe_exception(exc)
             return (

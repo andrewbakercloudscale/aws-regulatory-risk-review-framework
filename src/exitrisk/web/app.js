@@ -2219,6 +2219,7 @@
       $("#scanProgress").hidden = true;
       $("#scanError").textContent = e.message;
       $("#btnStartScan").disabled = false;
+      if (e.status === 401) openSsoDialog(null, true);  // the AWS sign-in has ended
     }
   }
 
@@ -2241,6 +2242,12 @@
           }
           throw e;
         }
+        // The sign-in ended mid deep scan and the scan is waiting: ask once, over the progress.
+        if (s.needs_sign_in && !state.scanWaitsForSignIn) {
+          state.scanWaitsForSignIn = true;
+          try { localStorage.setItem(LS_SSO, s.needs_sign_in); } catch { /* ignore */ }
+          if (!$("#ssoDialog").open) openSsoDialog(null, true);
+        } else if (!s.needs_sign_in) state.scanWaitsForSignIn = false;
         $("#scanBar").style.width = `${s.pct}%`;
         $("#scanMsg").textContent = `${s.message || s.phase}${s.issues ? ` · ${plural(s.issues, "issue")} so far (listed under Issues when the scan finishes)` : ""}`;
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
@@ -2331,9 +2338,12 @@
 
   function currentSso() { return sso.sessions.find((s) => s.name === $("#ssoSession").value); }
 
-  async function openSsoDialog(ev) {
+  // overScan: the sign-in has ended and a scan needs it; keep New scan open underneath and close
+  // this dialog again once signed in.
+  async function openSsoDialog(ev, overScan = false) {
     ev?.preventDefault?.();
-    if ($("#scanDialog").open) $("#scanDialog").close();
+    sso.overScan = overScan;
+    if ($("#scanDialog").open && !overScan) $("#scanDialog").close();
     $("#ssoError").textContent = "";
     $("#ssoPending").hidden = true;
     busy("#ssoBusy", null);
@@ -2456,6 +2466,13 @@
           if (st.status !== "complete") { $("#ssoError").textContent = st.message; return; }
           toast(`Signed in to ${s.name}`);
           await refreshSsoBadge();
+          if (sso.overScan) {
+            sso.overScan = false;
+            $("#ssoDialog").close();
+            if (state.scanWaitsForSignIn) toast(`Signed in to ${s.name}: the scan carries on`);
+            else $("#scanError").textContent = "Signed in again: start the scan.";
+            return;
+          }
           await showSsoState();
         } catch (e) { clearInterval(sso.loginTimer); $("#ssoError").textContent = e.message; $("#btnSsoLogin").disabled = false; }
       }, 2000);

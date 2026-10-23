@@ -169,3 +169,28 @@ def test_permission_set_count_is_reused_until_sign_out(monkeypatch, isolated_aws
     assert sso.role_count_age("corp", "Read") is not None
     sso.logout("corp")
     assert sso.role_count_age("corp", "Read") is None
+
+
+def test_expiring_token_is_renewed_with_the_refresh_token(monkeypatch):
+    sso.add_session("corp", URL, "eu-west-1")
+    path = sso._cache_file("corp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    soon = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 120))
+    cached = {"accessToken": "old", "expiresAt": soon, "startUrl": URL, "region": "eu-west-1"}
+    path.write_text(json.dumps(cached | {"clientId": "id", "clientSecret": "secret", "refreshToken": "r1"}))
+    calls = []
+
+    class Oidc:
+        def create_token(self, **kw):
+            calls.append(kw)
+            return {"accessToken": "new", "expiresIn": 3600, "refreshToken": "r2"}
+
+    monkeypatch.setattr(sso, "_oidc", lambda region: Oidc())
+    token = sso.load_token("corp")
+    assert token["accessToken"] == "new" and calls[0]["grantType"] == "refresh_token"
+    assert json.loads(path.read_text())["refreshToken"] == "r2"  # saved for the CLI and the next renewal
+    assert sso.load_token("corp")["accessToken"] == "new" and len(calls) == 1  # fresh now: no second call
+
+    # Without a refresh token, an expired sign-in is simply not signed in.
+    path.write_text(json.dumps(cached | {"expiresAt": "2020-01-01T00:00:00Z"}))
+    assert sso.load_token("corp") is None and len(calls) == 1

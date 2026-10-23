@@ -94,6 +94,13 @@ portal, so no role or StackSet is needed, as long as that permission set is assi
 accounts and includes the list actions above. Check access counts the accounts where it is assigned and
 tests every inventory and dependency call in one of them.
 
+How long a sign-in lasts: the access token from the portal is valid for an hour, and the console renews it
+with the sign-in's refresh token as the AWS CLI does, so a long deep scan is not cut off at the hour. The
+real limit is the **IAM Identity Center session duration**, which an Identity Center administrator sets
+(Settings, Authentication, default 8 hours, up to 90 days). If that ends during a deep scan, the scan
+waits up to 15 minutes and the console asks you to sign in again; it then carries on where it was.
+Starting a scan with an ended sign-in opens the sign-in dialog straight away.
+
 Already have a read-only role everywhere (e.g. one with `ReadOnlyAccess` or `ViewOnlyAccess`)? Enter its
 name in the scan dialog instead; any role that grants the list actions above works.
 

@@ -318,3 +318,48 @@ def test_inventory_without_role_uses_identity_center_permission_set(monkeypatch)
     ScanParams(inventory=True, profile="sso").validate()
     with pytest.raises(ValueError, match="IAM Identity Center"):
         ScanParams(inventory=True, profile="keys").validate()
+
+
+def test_deep_scan_waits_for_a_new_sign_in_then_carries_on(monkeypatch):
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+    monkeypatch.setattr(scanner.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read"))
+    monkeypatch.setattr(scanner, "SIGN_IN_POLL_SECONDS", 0.01)
+    signed_in = {"now": False}
+    job = ScanJob(id=store.new_scan_id(), params=ScanParams(inventory=True, profile="sso"))
+    seen = []
+
+    def member(_s, _p, account_id, _r, _j):
+        if not signed_in["now"]:
+            raise scanner.sso.SSOFailure("Not signed in to 'corp'. Use Sign in first.")
+        return object()
+
+    def token(_name):
+        if job.needs_sign_in:  # the console shows the prompt; the user signs in
+            seen.append(job.snapshot()["needs_sign_in"])
+            signed_in["now"] = True
+        return {"accessToken": "t"} if signed_in["now"] else None
+
+    monkeypatch.setattr(scanner, "member_session", member)
+    monkeypatch.setattr(scanner.sso, "load_token", token)
+    monkeypatch.setattr(scanner.inventory, "inventory_account", lambda *a, **k: ({"resources": {}}, []))
+    doc = scanner.run_scan(job)
+    assert seen and seen[0] == "corp" and job.needs_sign_in is None
+    assert set(doc["inventory"]) == {"222222222222", "333333333333"}
+
+
+def test_deep_scan_skips_accounts_once_nobody_signs_in(monkeypatch):
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+    monkeypatch.setattr(scanner.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read"))
+    monkeypatch.setattr(scanner, "SIGN_IN_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(scanner, "SIGN_IN_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(scanner.sso, "load_token", lambda _name: None)
+
+    def member(*_a):
+        raise scanner.sso.SSOFailure("Not signed in to 'corp'. Use Sign in first.")
+
+    monkeypatch.setattr(scanner, "member_session", member)
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(inventory=True, profile="sso")))
+    assert doc["status"] == "partial" and not doc["inventory"]
+    assert sum("Not signed in" in i["message"] for i in doc["issues"]) == 2

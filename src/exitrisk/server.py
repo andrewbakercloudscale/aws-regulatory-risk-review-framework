@@ -366,6 +366,10 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
                 ai_providers.Client(ai_providers.load_settings())
             except (ValueError, ai_providers.AIError) as exc:
                 raise HTTPException(400, f"AI review: {exc}") from exc
+        # An ended IAM Identity Center sign-in fails the scan at its first call: ask for a new one now.
+        pair = sso.profile_permission_set(req.profile)
+        if pair and not sso.load_token(pair[0]):
+            raise HTTPException(401, f"Your AWS sign-in ({pair[0]}) has ended. Sign in again, then start the scan.")
         try:
             job = start_scan(ScanParams(**req.model_dump(exclude={"ai_review"})))
         except ValueError as exc:

@@ -131,3 +131,12 @@ def test_cannot_delete_a_running_scan(monkeypatch):
 
     monkeypatch.setattr(server, "get_job", lambda i: SimpleNamespace(status="running"))
     assert client().delete("/api/scans/20260101-000000-abcd", headers=H).status_code == 409
+
+
+def test_scan_with_an_ended_sign_in_asks_to_sign_in_again(monkeypatch):
+    from exitrisk import server
+
+    monkeypatch.setattr(server.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read"))
+    monkeypatch.setattr(server.sso, "load_token", lambda name: None)
+    r = client().post("/api/scans", json={"profile": "sso"}, headers=H)
+    assert r.status_code == 401 and "Sign in again" in r.json()["detail"]

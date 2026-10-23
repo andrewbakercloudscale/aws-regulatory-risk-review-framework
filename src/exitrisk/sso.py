@@ -46,6 +46,9 @@ CANDIDATE_REGIONS = [
     "eu-west-3", "eu-south-1", "me-south-1", "sa-east-1", "ap-northeast-2", "ap-east-1", "us-west-1",
 ]  # fmt: skip
 SCOPES = ["sso:account:access"]
+# Renew the hour-long access token this many minutes before it ends (the AWS CLI uses 15).
+REFRESH_MINUTES = 10
+_refresh_lock = threading.Lock()
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 START_URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(/start)?/?(#.*)?$")
 UNSIGNED = Config(signature_version=botocore.UNSIGNED, retries={"max_attempts": 5, "mode": "standard"})
@@ -92,15 +95,53 @@ def _portal(region: str):
 
 
 def load_token(session_name: str) -> dict | None:
-    """The cached token if it is still valid for at least a minute, else None."""
+    """The cached token if it is valid for at least a minute more, else None. An access token lasts
+    an hour; one about to expire is renewed with the sign-in's refresh token, as the AWS CLI does, so
+    a long deep scan keeps going for as long as the IAM Identity Center session allows."""
+    data = _read_token(session_name)
+    if data and data["_expires"] > _now() + timedelta(minutes=REFRESH_MINUTES):
+        return data
+    with _refresh_lock:  # one renewal, however many scan threads find the token stale
+        data = _read_token(session_name)
+        if data and data["_expires"] <= _now() + timedelta(minutes=REFRESH_MINUTES):
+            data = _refresh(session_name, data) or data
+    return data if data and data["_expires"] > _now() + timedelta(seconds=60) else None
+
+
+def _read_token(session_name: str) -> dict | None:
     try:
         data = json.loads(_cache_file(session_name).read_text())
-        expires = datetime.strptime(data["expiresAt"].replace("UTC", "Z"), "%Y-%m-%dT%H:%M:%SZ").replace(
+        data["_expires"] = datetime.strptime(data["expiresAt"].replace("UTC", "Z"), "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=timezone.utc
         )
     except (OSError, ValueError, KeyError):
         return None
-    return data if expires > _now() + timedelta(seconds=60) else None
+    return data
+
+
+def _refresh(session_name: str, data: dict) -> dict | None:
+    """Renew the access token with the refresh token; None when there is none or AWS says no (the
+    Identity Center session has ended: sign in again)."""
+    if not all(data.get(k) for k in ("refreshToken", "clientId", "clientSecret", "region")):
+        return None
+    try:
+        tok = _oidc(data["region"]).create_token(
+            clientId=data["clientId"],
+            clientSecret=data["clientSecret"],
+            grantType="refresh_token",
+            refreshToken=data["refreshToken"],
+        )
+    except Exception as exc:
+        log.info("SSO token for %s could not be renewed: %s", session_name, exc)
+        return None
+    out = {k: v for k, v in data.items() if k != "_expires"} | {
+        "accessToken": tok["accessToken"],
+        "expiresAt": _iso(_now() + timedelta(seconds=tok["expiresIn"])),
+        "refreshToken": tok.get("refreshToken") or data["refreshToken"],
+    }
+    _save_token(session_name, out)
+    log.info("SSO token for %s renewed until %s", session_name, out["expiresAt"])
+    return _read_token(session_name)
 
 
 def list_sessions() -> list[dict]:
@@ -285,6 +326,10 @@ def _write_token(session_name: str, start_url: str, region: str, reg: dict, tok:
     }
     if tok.get("refreshToken"):
         data["refreshToken"] = tok["refreshToken"]
+    _save_token(session_name, data)
+
+
+def _save_token(session_name: str, data: dict) -> None:
     path = _cache_file(session_name)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".json")  # 0600, unique per sign-in
@@ -300,7 +345,7 @@ def _write_token(session_name: str, start_url: str, region: str, reg: dict, tok:
 def logout(session_name: str) -> None:
     """Sign out like ``aws sso logout``: end the token at AWS (best effort) and delete the cached copy."""
     path = _cache_file(session_name)
-    token = load_token(session_name)
+    token = _read_token(session_name)  # no renewal just to sign out
     if token:
         try:
             _portal(token["region"]).logout(accessToken=token["accessToken"])

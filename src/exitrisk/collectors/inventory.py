@@ -24,7 +24,7 @@ from . import dependencies as dependencies_mod
 log = get_logger("inventory")
 
 # Calls in flight at once inside one account. Each service in each region is throttled on its own,
-# and the time goes on round trips, not on AWS limits: 24 cut a member account from about 90 s to 15 s.
+# and the time goes on round trips, not on AWS limits: 24 cut a member account (18 regions) from 188 s to 21 s.
 WORKERS = 24
 
 
