@@ -6,6 +6,26 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+
+- **The landing-zone baseline is left out.** AWS Control Tower, Amazon Inspector and AWS Security Incident
+  Response put the same EventBridge rules, SNS topics, Lambda functions and stacks into every account and
+  region. They are now counted separately (`baseline_*`) and left out of resource effort and integrations,
+  and their rules are no longer read target by target. On 166 Prod accounts: EventBridge rules 29,469 to
+  1,891, SNS topics 7,836 to 1,776, Lambda functions 8,623 to 5,506, integrations 46,758 to 11,573.
+  Integrations to these AWS-run services are dropped from older scans when the report is built.
+- **CloudFormation stacks carry no effort of their own.** A stack packages resources already counted, and
+  rewriting templates is the infrastructure-as-code factor; counting both doubled the work.
+- A state machine calling the same function from several states is one integration, not one per state.
+- Accounts in one console process share their HTTPS connections to each AWS endpoint.
+- The Agentic Risk Review sends all account batches at once, and the reviewer returns only what it changed.
+- The AI summary card has a tinted, bordered title bar and coloured Run again, AI configuration and Remove
+  buttons.
+
+### Fixed
+
+- A state machine written in JSONata (`Arguments` as one expression) no longer fails the whole account.
+
 ## [0.18.0] - 2026-10-23
 
 ### Changed
