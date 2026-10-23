@@ -33,9 +33,10 @@ from .providers import PROVIDERS, AIError, AISettings, Client
 
 log = get_logger("ai")
 
-BATCH_ACCOUNTS = 20
+BATCH_ACCOUNTS = 12  # small enough that the first answers, and the progress, come back quickly
 MAX_ACCOUNTS = 400
-WORKERS = 3
+WORKERS = 4  # batches in flight at once
+PASSES = {"Analysing accounts": 1, "Estate view": 2, "Reviewing for consistency": 3}
 PHASES = ("Before mobilisation", "Mobilise", "Wave 1", "Wave 2", "Wave 3", "Cutover")
 LEVELS = ("Low", "Moderate", "High", "Very high")
 # The automated check flags an AI estimate this far from the deterministic one, either way.
@@ -443,7 +444,7 @@ class Run:
 
     def _step(self, stage: str, done: int, total: int, message: str = "") -> None:
         with self._lock:
-            self.state.update(stage=stage, done=done, total=total, message=message)
+            self.state.update(stage=stage, done=done, total=total, message=message, **{"pass": PASSES.get(stage)})
 
     def _ask(self, client: Client, prompt: str, max_tokens: int) -> dict:
         """One call, parsed; one more try if the reply is not valid JSON."""
@@ -476,7 +477,8 @@ class Run:
         total = len(batches) + 2
         analyses: list[dict] = []
         done = 0
-        self._step("Analysing accounts", 0, total, f"0 of {len(rows)} accounts")
+        at_once = f"{min(WORKERS, len(batches))} batches of up to {BATCH_ACCOUNTS} at a time"
+        self._step("Analysing accounts", 0, total, f"0 of {len(rows)} accounts read · {at_once}")
 
         def one(batch: list[dict]) -> list[dict]:
             want = {a["id"] for a in batch}
@@ -500,7 +502,9 @@ class Run:
                 got = fut.result()
                 analyses.extend(got)
                 done += 1
-                self._step("Analysing accounts", done, total, f"{len(analyses)} of {len(rows)} accounts")
+                self._step(
+                    "Analysing accounts", done, total, f"{len(analyses)} of {len(rows)} accounts read · {at_once}"
+                )
         by_id = {a["id"]: a for a in analyses}
         analyses = [by_id[r["id"]] for r in rows if r["id"] in by_id]
 

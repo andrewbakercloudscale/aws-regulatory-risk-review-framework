@@ -8,6 +8,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ### Changed
 
+- AI review reads accounts in batches of 12, four at a time (was 20, three at a time), so a large
+  estate finishes sooner and progress shows earlier. Progress now reads "pass 1 of 3" and "40 of 164
+  accounts read", instead of a step count that looked like an account count.
 - The filter bar lines up with the report column and the view tabs at every width.
 - With the operating system's Reduce motion setting on, loading panels still show they are busy: the
   spinner turns slowly and the bar pulses in place instead of sliding.

@@ -37,8 +37,8 @@ optional step.
 
 ## How it works
 
-1. **Account analysis.** Every account with spend (up to 400, largest effort first), in batches of 20,
-   three at a time: entrenchment, the model's own effort range against the deterministic one, risks,
+1. **Account analysis.** Every account with spend (up to 400, largest effort first), in batches of 12,
+   four at a time: entrenchment, the model's own effort range against the deterministic one, risks,
    how to tackle the account and in which phase, confidence and evidence gaps. Accounts the model
    skips are asked for again.
 2. **Estate view.** One pass over the estate facts and every account analysis: headline, entrenchment,

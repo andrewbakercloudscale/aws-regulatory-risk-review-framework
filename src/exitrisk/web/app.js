@@ -1597,7 +1597,8 @@
         if (scan !== state.scanId) return;
         const run = got.run;
         if (!run) break;
-        $("#aiBusy .busy-text").textContent = `${run.stage}${run.total ? ` (step ${Math.min(run.done + 1, run.total)} of ${run.total})` : ""}`;
+        // Passes, not calls: "step 1 of 11" read as if only 11 accounts were being analysed.
+        $("#aiBusy .busy-text").textContent = `${run.stage}${run.pass ? ` (pass ${run.pass} of 3)` : ""}`;
         $("#aiBusySub").textContent = `${run.message || ""}${run.usage?.calls ? ` · ${run.usage.calls} calls so far` : ""}`;
         if (run.total) busyProgress("#aiBusy", run.done / run.total);
         if (run.status !== "running") {
