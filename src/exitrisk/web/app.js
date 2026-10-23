@@ -369,7 +369,10 @@
     if (weighting !== "spend") url.searchParams.set("weighting", weighting); else url.searchParams.delete("weighting");
     if ($("#fMinRating").value) url.searchParams.set("min_rating", $("#fMinRating").value); else url.searchParams.delete("min_rating");
     if (!PRINT) history.replaceState(null, "", url);
+    // The optional AI review is stored per scan; fetch it before drawing so the PDF includes it.
+    state.ai = await api(`/api/ai/review/${encodeURIComponent(state.scanId)}`).catch(() => null);
     render();
+    if (state.ai?.run?.status === "running") pollAi();
     // The multi-region view follows the same scan and filter.
     state.mr = null;
     if (state.view === "multiregion") loadMultiRegion();
@@ -393,6 +396,7 @@
       renderResilience(r);
       renderTiming(r);
       renderFocus(r);
+      renderAi(r);
       renderIssues(r);
       renderAppendix(r);
       renderOnePager(r);
@@ -1375,6 +1379,234 @@
       <div class="hint">${esc(a.id)} · ${money(a.monthly_spend)} a month · ${num(a.effort_weeks, 0)} engineer-weeks${a.rating ? ` · ${esc(a.rating)} risk` : ""} · ${a.owner ? `Owner: ${esc(a.owner)}` : "No owner"}</div>
       ${a.concerns.map((c) => focusItem(c)).join("")}
     </article>`).join("");
+  }
+
+
+  // ------------------------------------------------------------------ AI review (optional)
+  const range = (p, f) => (Array.isArray(p) && p.length === 2 ? `${f(p[0])} to ${f(p[1])}` : EMPTY);
+  const versus = (p, ref) => {
+    if (!Array.isArray(p) || !ref) return "";
+    const mid = (p[0] + p[1]) / 2, d = Math.round((mid / ref - 1) * 100);
+    return Math.abs(d) < 10 ? "close to the model" : `${d > 0 ? "+" : ""}${d}% against the model`;
+  };
+  const LEVEL_TIER = { Low: 1, Moderate: 3, High: 4, "Very high": 5 };
+  const list = (xs) => (xs?.length ? `<ul class="assumptions">${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : '<p class="hint">None.</p>');
+
+  function renderAi(r) {
+    const el = $("#aiPanel");
+    const res = state.ai?.result, run = state.ai?.run;
+    $("#aiDot").hidden = !(run?.status === "running" || res);
+    $("#aiDot").classList.toggle("running", run?.status === "running");
+    $("#focusRulesHead").hidden = !res;
+    if (!res && run?.status !== "running") { el.hidden = true; el.innerHTML = ""; return; }
+    el.hidden = false;
+    if (!res) {
+      el.innerHTML = `<h3>AI review running</h3><p class="muted small">${esc(run.stage)}${run.message ? `: ${esc(run.message)}` : ""}. Open <strong>AI review</strong> in the top bar for progress.</p>`;
+      return;
+    }
+    const f = res.final || {}, e = f.estimate || {}, ref = res.model_reference || {};
+    const cur = ref.currency || "USD";
+    const m = (v) => money(v, cur);
+    const sameBasis = res.basis?.filter === r.meta.filter.description;
+    const focus = (f.areas_of_focus || []).map((a) => focusItem({
+      level: a.priority === "high" ? "high" : "medium", title: a.title, phase: PHASES.includes(a.phase) ? a.phase : "Mobilise",
+      detail: a.concern, action: a.how_to_tackle,
+    }, (a.account_names || []).join(", "))).join("");
+    const accts = (res.accounts || []).slice().sort((a, b) => (LEVEL_TIER[b.entrenchment] || 0) - (LEVEL_TIER[a.entrenchment] || 0));
+    const modelWeeks = Object.fromEntries(r.accounts.map((a) => [a.id, a.effort_weeks]));
+    el.innerHTML = `
+      <div class="card-head"><h3><svg class="ai-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/></svg>AI review: a second opinion</h3>
+        <span class="no-print"><button type="button" class="btn" id="btnAiAgain">Run again</button> <button type="button" class="btn ghost" id="btnAiRemove">Remove</button></span></div>
+      <p class="hint">${esc(res.provider_label)} · ${esc(res.model)} · ${esc(fmtWhen(res.created_at))} · ${plural(res.accounts_analysed, "account")} analysed in three passes${res.masked ? " · names hidden from the model" : ""} · ${num(res.usage?.calls)} calls, ${num((res.usage?.input_tokens || 0) / 1000)}k tokens in, ${num((res.usage?.output_tokens || 0) / 1000)}k out, ${num(res.seconds / 60, 0)} min</p>
+      ${sameBasis ? "" : `<p class="warn-text">Run on a different filter (${esc(res.basis?.filter || "unknown")}); run it again for the accounts shown now.</p>`}
+      <p class="ai-headline">${esc(f.headline || "")}</p>
+      <div class="tiles">
+        ${tile("Entrenchment", f.entrenchment?.level || EMPTY, "AI judgement")}
+        ${tile("AI effort", range(e.effort_engineer_days, (v) => num(v)), `engineer-days, ${versus(e.effort_engineer_days, ref.effort_engineer_days)}`)}
+        ${tile("AI time", range(e.duration_months, (v) => num(v)), `months, ${versus(e.duration_months, ref.duration_months)}`)}
+        ${tile("AI cost", range(e.cost, m), versus(e.cost, ref.cost))}
+      </div>
+      <div class="grid-2">
+        <div><h4>How it compares with the model</h4><p class="small">${esc(e.compared_with_model || "")}</p>
+          <p class="hint">Model: ${num(ref.effort_engineer_days)} engineer-days, ${num(ref.duration_months)} months, ${m(ref.cost)}. AI confidence: ${esc(e.confidence || EMPTY)}.</p>
+          <h4>What drives it</h4>${list(e.drivers)}
+          ${e.adjustments?.length ? `<h4>Where the AI differs</h4><ul class="assumptions">${e.adjustments.map((x) => `<li><strong>${x.direction === "down" ? "Lower" : "Higher"}: ${esc(x.item)}.</strong> ${esc(x.reason)}</li>`).join("")}</ul>` : ""}
+        </div>
+        <div><h4>Why: entrenchment</h4><p class="small">${esc(f.entrenchment?.summary || "")}</p>
+          <h4>Not included</h4>${list(e.not_included)}</div>
+      </div>
+      <h4>AI areas of focus</h4><div class="focus-list">${focus || '<p class="hint">None.</p>'}</div>
+      ${f.programme_risks?.length ? `<h4>Programme risks</h4><div class="table-wrap"><table class="data compact"><thead><tr><th>Risk</th><th>Impact</th><th>Mitigation</th></tr></thead><tbody>${f.programme_risks.map((x) => `<tr><td>${esc(x.risk)}</td><td>${esc(x.impact)}</td><td>${esc(x.mitigation)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${f.sequencing?.length ? `<h4>Sequencing</h4><div class="table-wrap"><table class="data compact"><tbody>${f.sequencing.map((x) => `<tr><td>${phaseChip(x.phase)}</td><td>${esc(x.what)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      <div class="grid-2">
+        <div><h4>Quick wins</h4>${list(f.quick_wins)}</div>
+        <div><h4>Questions to validate with owners</h4>${list(f.questions_to_validate)}<h4>Evidence that would firm it up</h4>${list(f.evidence_to_collect)}</div>
+      </div>
+      <details class="ai-more"${PRINT ? " open" : ""}><summary>Review pass: ${plural((res.changes || []).length, "correction")}${res.open_checks?.length ? `, ${plural(res.open_checks.length, "check")} still open` : ", all automated checks pass"}</summary>
+        ${(res.changes || []).length ? `<ul class="assumptions">${res.changes.map((c) => `<li><strong>${esc(c.issue)}</strong> ${esc(c.fix)}</li>`).join("")}</ul>` : '<p class="hint">The reviewer changed nothing.</p>'}
+        ${res.open_checks?.length ? `<p class="warn-text">Still open after the review:</p>${list(res.open_checks)}` : ""}
+      </details>
+      <details class="ai-more"${PRINT ? " open" : ""}><summary>Every account the AI analysed (${num(accts.length)})</summary>
+        <div class="table-wrap"><table class="data compact"><thead><tr><th>Account</th><th>Entrenchment</th><th class="num-cell">AI weeks</th><th class="num-cell">Model weeks</th><th>Phase</th><th>Why, and how to tackle it</th></tr></thead><tbody>
+        ${accts.map((a) => `<tr><td><strong>${esc(res.account_names?.[a.id] || a.id)}</strong></td><td><span class="sev" style="--dot:${tierColor(LEVEL_TIER[a.entrenchment] || 3)}">${esc(a.entrenchment || EMPTY)}</span></td><td class="num-cell">${range(a.effort_engineer_weeks, (v) => num(v))}</td><td class="num-cell">${num(modelWeeks[a.id], 0)}</td><td>${esc(a.phase || "")}</td><td class="small">${esc(a.why || "")}${a.approach ? `<div class="hint">${esc(a.approach)}</div>` : ""}</td></tr>`).join("")}
+        </tbody></table></div>
+      </details>`;
+    $("#btnAiAgain").addEventListener("click", openAi);
+    $("#btnAiRemove").addEventListener("click", async () => {
+      await api(`/api/ai/review/${encodeURIComponent(state.scanId)}?remove=true`, { method: "DELETE" });
+      state.ai = null;
+      renderAi(state.report);
+      toast("AI review removed");
+    });
+  }
+
+  const AI_CUSTOM = "__custom";
+  async function openAi() {
+    if (!state.report) { toast("Load a scan first"); return; }
+    $("#aiError").textContent = "";
+    $("#aiOk").textContent = "";
+    $("#aiTests").hidden = true;
+    try {
+      const [cfg, prof] = await Promise.all([api("/api/ai/settings"), api("/api/profiles").catch(() => ({ profiles: [] }))]);
+      state.aiCfg = cfg;
+      $("#aiProvider").innerHTML = cfg.providers.map((p) => `<option value="${esc(p.key)}">${esc(p.label)}</option>`).join("");
+      $("#aiProfile").innerHTML = `<option value="">Default credentials</option>` + prof.profiles.map((x) => `<option>${esc(x)}</option>`).join("");
+      const s = cfg.settings;
+      $("#aiProvider").value = s.provider;
+      $("#aiRegion").value = s.region;
+      $("#aiProfile").value = s.profile;
+      $("#aiMask").checked = s.mask_names;
+      aiProviderChanged(s.model);
+    } catch (e) { $("#aiError").textContent = e.message; }
+    $("#aiDialog").showModal();
+    if (state.ai?.run?.status === "running") pollAi();
+  }
+
+  function aiProvider() { return state.aiCfg.providers.find((p) => p.key === $("#aiProvider").value); }
+
+  function aiProviderChanged(model) {
+    const p = aiProvider(), s = state.aiCfg.settings, k = s.keys[p.key];
+    $("#aiProviderNote").textContent = p.note + (p.third_party ? " The summary leaves your AWS estate for this provider: check it is approved for this data." : "");
+    $("#aiBedrock").hidden = p.key !== "bedrock";
+    $("#aiKeyLabel").textContent = p.key === "bedrock" ? "Bedrock API key (optional; blank = use the AWS profile)" : "API key";
+    $("#aiKeyLink").href = p.key_url;
+    $("#aiKey").value = "";
+    $("#aiKey").placeholder = k.set ? (k.env ? `Using ${p.key_env} from the environment` : `Saved (${k.hint}); type to replace`) : p.key === "bedrock" ? "" : `Paste the key, or set ${p.key_env}`;
+    if (p.key !== s.provider && $("#aiMask").dataset.touched !== "1") $("#aiMask").checked = p.third_party;
+    fillAiModels(p.recommended.map((x) => ({ ...x, recommended: false })), model ?? "");
+    loadAiModels(model);
+  }
+
+  function fillAiModels(models, want) {
+    const opts = models.map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join("");
+    $("#aiModel").innerHTML = opts + `<option value="${AI_CUSTOM}">Custom model…</option>`;
+    const known = models.some((x) => x.id === want);
+    $("#aiModel").value = !want ? models[0]?.id || AI_CUSTOM : known ? want : AI_CUSTOM;
+    if (want && !known) $("#aiCustom").value = want;
+    $("#aiCustomWrap").hidden = $("#aiModel").value !== AI_CUSTOM;
+  }
+
+  // Ask the provider which models this key can use; the recommended list stays if it cannot say.
+  async function loadAiModels(want) {
+    const seq = (state.aiModelSeq = (state.aiModelSeq || 0) + 1);
+    try {
+      const { models } = await api("/api/ai/models", { method: "POST", body: aiBody() });
+      if (seq !== state.aiModelSeq) return;
+      fillAiModels(models, want ?? aiModelId());
+    } catch { /* keep the recommended models */ }
+  }
+
+  const aiModelId = () => ($("#aiModel").value === AI_CUSTOM ? $("#aiCustom").value.trim() : $("#aiModel").value);
+  function aiBody(withKey = true) {
+    const key = $("#aiKey").value.trim();
+    return {
+      provider: $("#aiProvider").value, model: aiModelId(), region: $("#aiRegion").value.trim() || "us-east-1",
+      profile: $("#aiProfile").value, mask_names: $("#aiMask").checked, ...(withKey && key ? { api_key: key } : {}),
+    };
+  }
+
+  async function saveAi() {
+    const cfg = await api("/api/ai/settings", { method: "PUT", body: aiBody() });
+    state.aiCfg.settings = cfg.settings;
+    $("#aiKey").value = "";
+    return cfg;
+  }
+
+  async function testAi() {
+    $("#aiError").textContent = "";
+    $("#aiOk").textContent = "";
+    busy("#aiBusy", "Testing the connection…");
+    $("#aiBusySub").textContent = "";
+    try {
+      await saveAi();
+      const t = await api("/api/ai/test", { method: "POST", body: aiBody(false) });
+      if (t.ok) $("#aiOk").textContent = `Working: ${t.model} solved a small reasoning check and answered in valid JSON in ${t.seconds} s${t.reasoning ? ` (reasoning: ${t.reasoning})` : ""}.`;
+      else $("#aiError").textContent = t.error;
+    } catch (e) { $("#aiError").textContent = e.message; }
+    finally { busy("#aiBusy", ""); }
+  }
+
+  async function testAllAi() {
+    $("#aiError").textContent = "";
+    $("#aiOk").textContent = "";
+    busy("#aiBusy", "Testing every provider with a key…");
+    $("#aiBusySub").textContent = "";
+    try {
+      await saveAi();
+      const { results } = await api("/api/ai/test-all", { method: "POST" });
+      $("#aiTests").hidden = false;
+      $("#aiTestTable").innerHTML = `<thead><tr><th>Provider</th><th>Model</th><th>Result</th></tr></thead><tbody>${results.map((x) => `<tr><td>${esc(x.label)}</td><td>${esc(x.model || "")}</td><td>${x.ok ? `<span class="sev" style="--dot:var(--good)">Working</span> <span class="hint">${x.seconds} s${x.reasoning ? `, reasoning ${esc(x.reasoning)}` : ""}</span>` : x.ok === null ? `<span class="hint">${esc(x.error)}</span>` : `<span class="sev" style="--dot:var(--t5)">Failed</span> <div class="hint">${esc(x.error)}</div>`}</td></tr>`).join("")}</tbody>`;
+    } catch (e) { $("#aiError").textContent = e.message; }
+    finally { busy("#aiBusy", ""); }
+  }
+
+  async function runAi() {
+    $("#aiError").textContent = "";
+    $("#aiOk").textContent = "";
+    if (!aiModelId()) { $("#aiError").textContent = "Enter the custom model id."; return; }
+    try {
+      await saveAi();
+      const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
+      const run = await api("/api/ai/review", { method: "POST", body: { scan_id: state.scanId, filter, questionnaire: readQuestionnaire(), weighting: $("#fWeighting").value || "spend" } });
+      state.ai = { ...(state.ai || {}), run };
+      pollAi();
+    } catch (e) { $("#aiError").textContent = e.message; }
+  }
+
+  async function pollAi() {
+    if (state.aiPolling) return;
+    state.aiPolling = true;
+    const scan = state.scanId;
+    $("#btnAiRun").disabled = true;
+    $("#btnAiStop").hidden = false;
+    busy("#aiBusy", "Starting the AI review…");
+    try {
+      for (;;) {
+        const got = await api(`/api/ai/review/${encodeURIComponent(scan)}`);
+        if (scan !== state.scanId) return;
+        const run = got.run;
+        if (!run) break;
+        $("#aiBusy .busy-text").textContent = `${run.stage}${run.total ? ` (step ${Math.min(run.done + 1, run.total)} of ${run.total})` : ""}`;
+        $("#aiBusySub").textContent = `${run.message || ""}${run.usage?.calls ? ` · ${run.usage.calls} calls so far` : ""}`;
+        if (run.total) busyProgress("#aiBusy", run.done / run.total);
+        if (run.status !== "running") {
+          state.ai = got;
+          if (run.status === "complete") { $("#aiOk").textContent = "Done: the AI review is in section 7."; toast("AI review ready: section 7"); }
+          else $("#aiError").textContent = run.status === "cancelled" ? "Stopped." : run.message;
+          renderAi(state.report);
+          break;
+        }
+        state.ai = { ...got };
+        renderAi(state.report);
+        await new Promise((ok) => setTimeout(ok, 3000));
+      }
+    } catch (e) { $("#aiError").textContent = `Lost track of the AI review: ${e.message}`; }
+    finally {
+      state.aiPolling = false;
+      busy("#aiBusy", "");
+      $("#btnAiRun").disabled = false;
+      $("#btnAiStop").hidden = true;
+    }
   }
 
   function renderIssues(r) {
@@ -2457,6 +2689,17 @@
     });
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));
     $("#btnLogs").addEventListener("click", openLog);
+    $("#btnAi").addEventListener("click", openAi);
+    $("#btnAiClose").addEventListener("click", () => $("#aiDialog").close());
+    $("#btnAiTest").addEventListener("click", testAi);
+    $("#btnAiTestAll").addEventListener("click", testAllAi);
+    $("#btnAiRun").addEventListener("click", runAi);
+    $("#btnAiStop").addEventListener("click", () => api(`/api/ai/review/${encodeURIComponent(state.scanId)}`, { method: "DELETE" }).catch(() => {}));
+    $("#aiProvider").addEventListener("change", () => aiProviderChanged(""));
+    $("#aiModel").addEventListener("change", () => { $("#aiCustomWrap").hidden = $("#aiModel").value !== AI_CUSTOM; if (!$("#aiCustomWrap").hidden) $("#aiCustom").focus(); });
+    $("#aiMask").addEventListener("change", () => { $("#aiMask").dataset.touched = "1"; });
+    $("#aiKey").addEventListener("change", () => loadAiModels());
+    $("#aiForm").addEventListener("submit", (e) => e.preventDefault());
     $("#btnCompare").addEventListener("click", openCompare);
     $("#btnSchedule").addEventListener("click", openSchedule);
     $("#btnSchedBannerOpen").addEventListener("click", openSchedule);

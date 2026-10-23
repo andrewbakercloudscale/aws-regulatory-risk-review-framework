@@ -498,6 +498,30 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         except ai_providers.AIError as exc:
             return {"ok": False, "error": str(exc)}
 
+    @app.post("/api/ai/test-all")
+    def ai_test_all():
+        """Each provider with a key (Bedrock: the AWS profile), on its saved or recommended model."""
+        saved = ai_providers.load_settings()
+
+        def one(key: str) -> dict:
+            s = ai_providers.AISettings(**{**saved.__dict__, "provider": key})
+            if key != saved.provider:
+                s.model = ""
+            label = ai_providers.PROVIDERS[key].label
+            if key != "bedrock" and not s.api_key():
+                return {"provider": key, "label": label, "ok": None, "error": "No key saved"}
+            try:
+                return {**ai_providers.test_connection(s), "label": label}
+            except ai_providers.AIError as exc:
+                return {"provider": key, "label": label, "ok": False, "model": s.model_id(), "error": str(exc)}
+            except Exception as exc:  # e.g. no AWS credentials for Bedrock
+                return {"provider": key, "label": label, "ok": False, "model": s.model_id(), "error": str(exc)}
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            return {"results": list(pool.map(one, ai_providers.PROVIDERS))}
+
     @app.post("/api/ai/review")
     def ai_start(req: AIRunRequest):
         try:

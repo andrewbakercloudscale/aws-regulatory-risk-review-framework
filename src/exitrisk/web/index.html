@@ -23,7 +23,8 @@
     <span class="tb-sep" aria-hidden="true"></span>
     <button id="btnExcl" class="btn" title="AWS products left out of the score and estimate">Exclusions<span id="exclCount" class="count-badge" hidden></span></button>
     <button id="btnModel" class="btn" title="Your answers behind the cost, time, deadline and resilience figures">Exit model</button>
-    <button id="btnIssues" class="btn" title="Data quality and scan issues (section 7)" hidden>Issues<span id="issueBadge" class="count-badge"></span></button>
+    <button id="btnAi" class="btn" title="Optional: a second opinion from an AI model on the estimate and the areas of focus"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>AI review<span id="aiDot" class="dot" hidden></span></button>
+    <button id="btnIssues" class="btn" title="Data quality and scan issues (section 8)" hidden>Issues<span id="issueBadge" class="count-badge"></span></button>
     <span class="tb-sep" aria-hidden="true"></span>
     <div class="menu">
       <button id="btnSettings" class="btn icon" aria-haspopup="menu" aria-expanded="false" aria-controls="settingsMenu" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
@@ -375,6 +376,8 @@
     <section class="section" id="sec-focus">
       <h2><span class="num">7</span>Areas of focus: where the exit will be won or lost</h2>
       <p class="muted section-lede">The accounts whose complexity or risk needs attention, why, and how to tackle each one during the project. Derived from this scan with fixed rules, so the same scan always gives the same list; it does not change the score or the estimate.</p>
+      <div id="aiPanel" class="card ai-panel" hidden></div>
+      <h3 class="sub-head" id="focusRulesHead" hidden>Rule-based view</h3>
       <div class="tiles" id="focusTiles"></div>
       <div class="card">
         <h3>Programme themes</h3>
@@ -867,6 +870,41 @@
     <button type="button" class="btn" id="btnSchedRun" hidden>Run now</button>
     <button type="button" class="btn primary" id="btnSchedSave">Save</button>
   </footer>
+</dialog>
+
+<dialog id="aiDialog" class="dialog form-dialog" aria-labelledby="aiTitle">
+  <form method="dialog" id="aiForm">
+  <header class="fd-head">
+    <h2 id="aiTitle">AI review <span class="opt">optional</span></h2>
+    <p>A model reads this report and gives a second opinion on how entrenched the estate is, what the exit will cost and take, and where to focus. It works in three passes: every material account, then the whole estate, then an independent review that checks the result for inconsistencies. A large estate takes 20 to 40 minutes. The report's own figures do not change.</p>
+  </header>
+  <div class="fd-body">
+    <div class="fd-grid">
+      <label>Provider<select name="provider" id="aiProvider"></select></label>
+      <label>Model<select name="model_pick" id="aiModel"></select></label>
+    </div>
+    <p class="hint" id="aiProviderNote"></p>
+    <label id="aiCustomWrap" hidden>Custom model id<input name="custom_model" id="aiCustom" placeholder="for example zai-org/GLM-5.3" autocomplete="off" spellcheck="false"></label>
+    <div class="fd-grid" id="aiBedrock" hidden>
+      <label>AWS region<input name="region" id="aiRegion" placeholder="us-east-1" autocomplete="off" spellcheck="false"></label>
+      <label>AWS profile<select name="profile" id="aiProfile"></select></label>
+    </div>
+    <label><span id="aiKeyLabel">API key</span> <a id="aiKeyLink" class="opt" target="_blank" rel="noopener noreferrer" href="#">Get a key</a><input type="password" name="api_key" id="aiKey" autocomplete="off" spellcheck="false"></label>
+    <label class="check"><input type="checkbox" name="mask_names" id="aiMask"> <span>Hide account names and owners from the model. They are swapped for codes and restored in the answer; the model then judges each account by its services only.</span></label>
+    <p class="hint" id="aiPrivacy">Sent: a summary of this report as filtered (per account: name, spend, services, effort, data size and integration counts). Never sent: resource names, ARNs, configuration or your AWS credentials. Keys stay on this computer (<code>~/.exitrisk/ai.json</code>, readable only by you).</p>
+    <div id="aiBusy" class="busy" role="status" aria-live="polite" hidden><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text"></span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar" aria-hidden="true"><i></i></div><div class="busy-sub" id="aiBusySub"></div></div>
+    <div id="aiTests" class="table-wrap" hidden><table class="data compact" id="aiTestTable"></table></div>
+    <p id="aiOk" class="ok-text" role="status"></p>
+    <p id="aiError" class="error-text" role="alert"></p>
+  </div>
+  <footer class="fd-foot">
+    <button type="button" class="btn" id="btnAiClose">Close</button>
+    <button type="button" class="btn ghost push-right" id="btnAiStop" hidden>Stop</button>
+    <button type="button" class="btn" id="btnAiTestAll" title="Test every provider that has a key">Test all providers</button>
+    <button type="button" class="btn" id="btnAiTest" title="Ask the chosen model a small reasoning question, answered as JSON">Test connection</button>
+    <button type="button" class="btn primary" id="btnAiRun">Run AI review</button>
+  </footer>
+  </form>
 </dialog>
 
 <dialog id="logDialog" class="dialog wide">

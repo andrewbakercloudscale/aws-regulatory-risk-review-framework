@@ -716,3 +716,19 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 .chip.phase { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
 @media (max-width: 640px) { .focus-accounts { grid-template-columns: 1fr; } }
 @media print { .focus-accounts { grid-template-columns: 1fr 1fr; } .focus-acct, .focus-item { break-inside: avoid; } }
+
+/* AI review */
+#btnAi svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+#btnAi .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-left: 6px; }
+#btnAi .dot.running { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.ai-panel { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.ai-panel h3 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.ai-panel h4 { margin: 16px 0 6px; font-size: 13.5px; }
+.ai-icon { width: 18px; height: 18px; fill: color-mix(in srgb, var(--accent) 25%, transparent); stroke: var(--accent); stroke-width: 1.6; }
+.ai-headline { font-size: 15px; font-weight: 600; margin: 10px 0 12px; }
+.ai-more { margin-top: 14px; }
+.ai-more summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.ok-text { color: var(--good); font-size: 13px; }
+.warn-text { color: var(--t4); font-size: 13px; }
+@media print { .ai-more { display: block; } .ai-more > summary { list-style: none; } }

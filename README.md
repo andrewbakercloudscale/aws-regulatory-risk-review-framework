@@ -91,6 +91,12 @@ exit" (a fact a board can govern).
   Connect links you have today (from Cost Explorer port-hours) and prices three options for new 10 Gbps
   links dedicated to the migration, kept apart from production: Cheap (1 link), Medium (2) and Urgent
   (4), each with time to copy, AWS port cost, data out and total at AWS list price.
+- **Names the areas of focus** (section 7): the accounts whose complexity or risk will decide the
+  exit (AWS-only services with no like-for-like target, critical services, AWS-only integrations, data
+  to move, share of the effort, evidence and owner gaps), how to tackle each, and in which phase.
+- **Optional AI review**: a second opinion from Claude (Bedrock, Claude Enterprise/API, OpenRouter) or
+  GLM (Together AI) on entrenchment, cost, time and focus, in three passes with an independent review
+  for inconsistencies. See [AI_REVIEW.md](docs/AI_REVIEW.md).
 - **Exports a board-ready PDF** with charts, an executive narrative, a data-quality section, and an
   appendix explaining every service's tier, recommended migration path and typical duration.
 - **Never fails silently**: every AWS API error becomes an issue on the report with a fix, and is
@@ -270,6 +276,7 @@ Full detail, including the estimate model and its limitations: [docs/METHODOLOGY
 | Document | For |
 |---|---|
 | [METHODOLOGY.md](docs/METHODOLOGY.md) | Scoring, weighting and estimate formulas; assumptions; limitations |
+| [AI_REVIEW.md](docs/AI_REVIEW.md) | The optional AI review: providers, passes, what is sent, keys |
 | [MULTI_REGION.md](docs/MULTI_REGION.md) | The multi-region view: run and build cost, staff, region choice, failover risks |
 | [SERVICE_CATALOG.md](docs/SERVICE_CATALOG.md) | Every service's tier, rationale, migration path, equivalents, duration |
 | [IAM_PERMISSIONS.md](docs/IAM_PERMISSIONS.md) | Exact permissions; StackSet / Terraform for the member role |

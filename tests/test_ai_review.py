@@ -153,6 +153,7 @@ def test_full_run_three_passes_restores_names_and_records_review(monkeypatch, re
     focus = out["final"]["areas_of_focus"]
     assert [f["title"] for f in focus] == ["Cards"] and focus[0]["account_names"][0] in names
     assert out["changes"][0]["issue"] == "Ghost account"
+    assert focus[0]["account_names"][0] in out["final"]["headline"]  # ids in sentences read as names
     assert any("A999" in c for c in out["checks_before_review"]) and not out["open_checks"]
     assert out["usage"]["calls"] == batches + 2
     assert review.load_result("scan-x")["model"] == "claude-fable-5-1"

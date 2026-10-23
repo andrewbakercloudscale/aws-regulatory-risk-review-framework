@@ -60,8 +60,9 @@ PROVIDERS = {
             "AWS_BEARER_TOKEN_BEDROCK",
             "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html",
             (
-                ("global.anthropic.claude-fable-5-1", "Claude Fable 5.1 (recommended)"),
-                ("global.anthropic.claude-opus-5-5", "Claude Opus 5.5"),
+                # Fable on Bedrock needs a data-retention setting on the account; Opus works as is.
+                ("global.anthropic.claude-opus-5-5", "Claude Opus 5.5 (recommended)"),
+                ("global.anthropic.claude-fable-5-1", "Claude Fable 5.1 (needs Bedrock data retention enabled)"),
             ),
             r"anthropic\.claude-(fable|opus)",
             third_party=False,
@@ -99,6 +100,8 @@ PROVIDERS = {
         ),
     )
 }
+# Small, fast, batch-only or vision variants: not what a whole-estate review needs.
+SKIP_MODELS = r":batch|flash|turbo|lite|mini|air\b|\dv\b|vision|-vl|ocr|lora"
 OPENAI_BASE = {"together": "https://api.together.xyz/v1", "openrouter": "https://openrouter.ai/api/v1"}
 
 
@@ -212,6 +215,7 @@ def _explain(code: int, text: str) -> str:
         j = json.loads(text)
         err = j.get("error", j)
         msg = err.get("message", text) if isinstance(err, dict) else str(err)
+        msg = msg.rstrip(". ")
     except ValueError:
         pass
     if code in (401, 403):
@@ -231,27 +235,41 @@ class Reply:
 
 
 class Client:
-    """One provider, one model. `complete` asks for deep reasoning where the model offers it, and drops
-    the reasoning option (once, then for the rest of the run) if the model refuses it."""
+    """One provider, one model. `complete` asks for deep reasoning where the model offers it. Claude
+    models take adaptive thinking at high effort (current) or a thinking budget (older); other models a
+    high reasoning effort. A form the model refuses is dropped for the rest of the run."""
 
     def __init__(self, s: AISettings):
         if s.provider not in PROVIDERS:
             raise AIError(f"Unknown provider {s.provider!r}")
         self.s = s
         self.model = s.model_id()
-        self.reasoning = True
+        self.modes = ["adaptive", "budget"] if s.provider in ("anthropic", "bedrock") else ["high"]
         if s.provider != "bedrock" and not s.api_key():
             raise AIError(f"No API key for {PROVIDERS[s.provider].label}. Enter one in AI review settings.")
 
     def complete(self, system: str, user: str, max_tokens: int = 16000) -> Reply:
-        try:
-            return self._call(system, user, max_tokens)
-        except AIError as exc:
-            if self.reasoning and re.search(r"think|reason|budget|effort|unsupported|not support", str(exc), re.I):
-                log.info("model %s refused the reasoning option; retrying without it", self.model)
-                self.reasoning = False
+        while True:
+            try:
                 return self._call(system, user, max_tokens)
-            raise
+            except AIError as exc:
+                if not self.modes or not re.search(
+                    r"think|reason|budget|effort|output_config|unsupported|not support|extra", str(exc), re.I
+                ):
+                    raise
+                log.info("model %s refused reasoning form %r: %s", self.model, self.modes[0], exc)
+                self.modes.pop(0)
+
+    @property
+    def reasoning(self) -> str | None:
+        return self.modes[0] if self.modes else None
+
+    def _thinking(self, max_tokens: int) -> dict:
+        if self.reasoning == "adaptive":
+            return {"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}
+        if self.reasoning == "budget":
+            return {"thinking": {"type": "enabled", "budget_tokens": max(1024, max_tokens // 2)}}
+        return {}
 
     def _call(self, system: str, user: str, max_tokens: int) -> Reply:
         p = self.s.provider
@@ -262,8 +280,7 @@ class Client:
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
             }
-            if self.reasoning:
-                body["thinking"] = {"type": "enabled", "budget_tokens": max_tokens // 2}
+            body.update(self._thinking(max_tokens))
             j = _http(
                 "POST",
                 "https://api.anthropic.com/v1/messages",
@@ -280,7 +297,7 @@ class Client:
             "max_tokens": max_tokens,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         }
-        if self.reasoning:
+        if self.reasoning == "high":
             if p == "openrouter":
                 body["reasoning"] = {"effort": "high"}
             else:
@@ -300,7 +317,7 @@ class Client:
             "inferenceConfig": {"maxTokens": max_tokens},
         }
         if self.reasoning:
-            body["additionalModelRequestFields"] = {"thinking": {"type": "enabled", "budget_tokens": max_tokens // 2}}
+            body["additionalModelRequestFields"] = self._thinking(max_tokens)
         key = self.s.api_key()
         if key:  # Bedrock API key: plain bearer token on the runtime endpoint
             model = urllib.parse.quote(self.model, safe="")
@@ -341,7 +358,14 @@ def list_models(s: AISettings) -> list[dict]:
         log.info("could not list %s models: %s", s.provider, exc)
         return rec
     known = {m["id"] for m in rec}
-    found = sorted((m for m in ids if re.search(p.model_pattern, m, re.I) and m not in known), reverse=True)
+    found = sorted(
+        (
+            m
+            for m in ids
+            if re.search(p.model_pattern, m, re.I) and not re.search(SKIP_MODELS, m, re.I) and m not in known
+        ),
+        reverse=True,
+    )
     return rec + [{"id": m, "label": m, "recommended": False} for m in found[:40]]
 
 
@@ -368,14 +392,29 @@ def _listed(s: AISettings) -> list[str]:
 
 
 def test_connection(s: AISettings) -> dict:
-    """One tiny call, so a bad key or model fails in seconds, not twenty minutes into a review."""
+    """A small reasoning task answered as JSON, the way the review asks: a bad key, an unknown model or a
+    model that cannot follow the format fails here in seconds, not twenty minutes into a review."""
+    from .review import parse_json
+
     started = time.perf_counter()
     client = Client(s)
-    client.reasoning = False
-    reply = client.complete("Reply with the single word OK.", "Connection test.", max_tokens=16)
+    reply = client.complete(
+        "Reply with one JSON object only.",
+        'Three accounts need 12, 17 and 13 engineer-weeks. Reply exactly as {"total_weeks": <sum>, "status": "ok"}.',
+        max_tokens=4000,
+    )
+    seconds = round(time.perf_counter() - started, 1)
+    try:
+        answer = parse_json(reply.text)
+    except ValueError:
+        raise AIError(f"{client.model} answered, but not in JSON: {reply.text.strip()[:120]!r}") from None
+    if answer.get("total_weeks") != 42:
+        raise AIError(f"{client.model} answered, but got the sum wrong ({answer.get('total_weeks')!r} instead of 42)")
     return {
         "ok": True,
+        "provider": s.provider,
         "model": client.model,
-        "reply": reply.text.strip()[:40],
-        "seconds": round(time.perf_counter() - started, 1),
+        "seconds": seconds,
+        "reasoning": client.reasoning,
+        "tokens": reply.input_tokens + reply.output_tokens,
     }

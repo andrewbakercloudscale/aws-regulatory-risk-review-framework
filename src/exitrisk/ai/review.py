@@ -23,7 +23,7 @@ import json
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from ..catalog import Catalog, load_catalog
@@ -496,7 +496,8 @@ class Run:
             return got
 
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            for got in pool.map(one, batches):
+            for fut in as_completed([pool.submit(one, b) for b in batches]):
+                got = fut.result()
                 analyses.extend(got)
                 done += 1
                 self._step("Analysing accounts", done, total, f"{len(analyses)} of {len(rows)} accounts")
@@ -504,11 +505,11 @@ class Run:
         analyses = [by_id[r["id"]] for r in rows if r["id"] in by_id]
 
         self._step("Estate view", done, total, "Weighing the whole estate")
-        draft = self._ask(client, _estate_prompt(facts, analyses), 24000)
+        draft = self._ask(client, _estate_prompt(facts, analyses), 32000)
         done += 1
         checks = check_estate(draft, facts, ids)
         self._step("Reviewing for consistency", done, total, f"{len(checks)} automated finding(s) to resolve")
-        reviewed = self._ask(client, _review_prompt(facts, analyses, draft, checks), 24000)
+        reviewed = self._ask(client, _review_prompt(facts, analyses, draft, checks), 32000)
         final = reviewed.get("final") if isinstance(reviewed.get("final"), dict) else draft
         open_checks = check_estate(final, facts, ids)
         done += 1
@@ -538,14 +539,29 @@ class Run:
             "usage": dict(self.usage),
             "seconds": round(time.perf_counter() - started),
         }
-        # Analyses name accounts by id; keep names alongside for display.
+        # The model names accounts by id; readers know them by name. Lists of ids stay ids.
         names = {a["id"]: a["name"] for a in self.report["accounts"]}
+        for key in ("final", "draft", "changes", "accounts"):
+            result[key] = _ids_to_names(result[key], names)
         result["account_names"] = {a["id"]: names.get(a["id"], a["id"]) for a in result["accounts"]}
         for a in result["final"].get("areas_of_focus") or []:
             a["account_names"] = [names.get(x, x) for x in a.get("accounts") or []]
         save_result(result)
         self._step("Done", total, total, "")
         return result
+
+
+def _ids_to_names(obj, names: dict, key: str = ""):
+    """Account ids inside sentences become names; the "id" and "accounts" fields keep the ids."""
+    if key in ("id", "accounts"):
+        return obj
+    if isinstance(obj, str):
+        return re.sub(r"\b\d{12}\b", lambda m: names.get(m.group(0), m.group(0)), obj)
+    if isinstance(obj, list):
+        return [_ids_to_names(x, names) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _ids_to_names(v, names, k) for k, v in obj.items()}
+    return obj
 
 
 # ---------------------------------------------------------------------------- storage and jobs

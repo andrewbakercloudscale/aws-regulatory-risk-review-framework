@@ -6,6 +6,21 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- Areas of focus (report section 7; issues move to section 8): the accounts whose complexity or risk
+  will decide the exit, each with its concerns (AWS-only services with no like-for-like target, critical
+  service, AWS-only integrations, data to move, AWS-only spend, share of the effort, sized from spend
+  only, no owner), how to tackle each and the project phase to do it in; programme themes (the same
+  services in many accounts, Critical-tier decisions, data, commitments, ownership, evidence); and a
+  what-to-do-when plan by phase. Deterministic rules over the report.
+- Optional AI review (top bar): a second opinion on entrenchment, effort, duration, cost, areas of
+  focus, risks and sequencing from Amazon Bedrock, Claude Enterprise / Claude API, Together AI or
+  OpenRouter. Three passes: account analysis, estate view, and an independent review fed by automated
+  consistency checks. Account names and owners can be hidden from the model. Test connection and Test
+  all providers check each model with a small reasoning question answered as JSON. Keys are stored
+  readable only by you and never reach the browser. See docs/AI_REVIEW.md.
+
 ## [0.13.0] - 2026-10-23
 
 ### Added
