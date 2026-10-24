@@ -75,6 +75,7 @@ def main() -> int:
                 "A member account sees only its own spend; use the management account.",
             ),
             C("commitments", "Read Savings Plans and reservations", "ok", "Commitment end dates are readable."),
+            C("assurance_org", preflight.ASSURANCE_ORG_LABEL, "skip", "Only in the management account."),
             C(
                 "deep_scan",
                 preflight.DEEP_LABEL,
@@ -96,6 +97,15 @@ def main() -> int:
                 "2 of 4 calls refused in 333333333333: lambda:ListEventSourceMappings, events:ListTargetsByRule",
                 "Dependency scans will miss these. Grant them (iam/member-account-role-policy.json).",
                 "lambda:ListEventSourceMappings, events:ListTargetsByRule",
+            ),
+            C(
+                "assurance_reads",
+                preflight.ASSURANCE_LABEL,
+                "warn",
+                "2 of 36 calls refused in 333333333333: securityhub:DescribeHub, inspector2:BatchGetAccountStatus",
+                "The assurance checks will show these as not measured. Grant them "
+                "(iam/member-account-role-policy.json), or attach the AWS managed policy SecurityAudit.",
+                "securityhub:DescribeHub, inspector2:BatchGetAccountStatus",
             ),
             C(
                 "assignments",
@@ -200,6 +210,33 @@ def main() -> int:
         shoot(page, "#mr-region", "multiregion-region.png")
         shoot(page, "#mr-run", "multiregion-run.png")
         shoot(page, "#mr-build", "multiregion-build.png")
+
+        # Cloud Assurance Framework Report: summary, the rule picker, a finding and an account opened.
+        page.goto(base + "&view=assurance")
+        page.wait_for_selector("body[data-ready='1']")
+        page.wait_for_timeout(700)
+        page.add_style_tag(content=".topbar { position: static !important; }")
+        shoot(page, "#as-summary", "assurance-summary.png")
+        page.click("#btnAsEditRules")
+        page.fill("#asRuleSearch", "")
+        page.select_option("#asRuleArea", "resilience")
+        page.wait_for_timeout(300)
+        shoot(page, "#as-rules", "assurance-rules.png")
+        page.click("#btnAsEditRules")
+        page.locator("#asTop details").first.evaluate("d => d.open = true")
+        page.wait_for_timeout(200)
+        shoot(page, "#asTop details >> nth=0", "assurance-finding.png")
+        page.locator("#asAcctTable tr.as-acct").first.evaluate("tr => tr.click()")
+        page.wait_for_timeout(300)
+        box = page.locator("#as-accounts").bounding_box()
+        box["y"] += page.evaluate("() => window.scrollY")
+        page.screenshot(
+            path=str(OUT / "assurance-accounts.png"),
+            full_page=True,
+            clip={"x": box["x"], "y": box["y"], "width": box["width"], "height": min(box["height"], 1000)},
+        )
+        print("wrote", OUT / "assurance-accounts.png")
+        shoot(page, "#as-ownership", "assurance-ownership.png")
 
         # The scan dialog loads the OU tree from AWS; serve a canned one so the shot needs no credentials.
         def ou(i, name, accounts, children=()):

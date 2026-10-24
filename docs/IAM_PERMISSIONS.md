@@ -106,8 +106,34 @@ name in the scan dialog instead; any role that grants the list actions above wor
 
 The management account itself is scanned with the profile's own credentials, not the role.
 
+## 3. Cloud Assurance Framework checks
+
+Optional, for the [Cloud Assurance Framework Report](CLOUD_ASSURANCE.md). All read-only.
+
+- **Member accounts**: the third statement of
+  [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json), `ExitRiskCloudAssurance`
+  (security and control settings: IAM, S3 bucket settings, CloudTrail, GuardDuty, Security Hub, Config,
+  Inspector, Access Analyzer, backups, load balancers, KMS and more; the StackSet and Terraform include
+  it). The simplest equivalent is the AWS managed policy **SecurityAudit**
+  (`arn:aws:iam::aws:policy/SecurityAudit`) on the member role or permission set; a read-only
+  permission set such as ReadOnlyAccess covers it too.
+- **Management account**: the `OptionalCloudAssuranceOrganisation` statement of
+  [`iam/management-account-policy.json`](../iam/management-account-policy.json) (service control
+  policies, delegated administrators, central root access, Trusted Advisor organisation view, IAM
+  Identity Center assignments and users, organisation trails). The management account is also checked
+  as an account itself, with the profile's own credentials, so its permission set needs the member
+  statement (or SecurityAudit) as well.
+- **Check access** tests both: one cheap call per service, reported as "Cloud assurance reads in the
+  management account" and "Cloud assurance reads in a member account", with the refused actions named
+  in the request for your administrator. A refused call never counts as a pass: those rules show as
+  not measured in the report and lower its coverage.
+
+`iam:GenerateCredentialReport` asks IAM to build the account's credential report (a summary of users,
+passwords, keys and MFA) before it is read; it changes nothing else. Event history is read with
+`cloudtrail:LookupEvents` to find changes made by hand; only the event name, time and who made it are kept.
+
 ## What the tool does not need
 
 No write permissions anywhere, no access to data plane APIs (S3 objects, DynamoDB items, secrets),
-no CloudTrail, no Config aggregator, no CUR bucket. The tool holds no long-lived credentials: it uses
+no Config aggregator, no CUR bucket. The tool holds no long-lived credentials: it uses
 your profile's session, and member-account sessions last at most one hour.

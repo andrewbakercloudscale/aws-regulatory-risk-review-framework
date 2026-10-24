@@ -48,6 +48,12 @@ exit" (a fact a board can govern).
 
 ## What it does
 
+> **New: the [Cloud Assurance Framework Report](docs/CLOUD_ASSURANCE.md).** A second report from the same
+> scan that scores every account against 139 controls in 13 areas (internet exposure, privileged access,
+> audit trail, threat detection, data protection, sensitive data, change management, resilience and DR,
+> technology lifecycle, third parties, ownership, cost and AI), with rulesets you choose and save,
+> ownership fixes to approve and export, and an evidence file with a SHA-256.
+
 - **Scores every account** by the spend-weighted exit difficulty of the AWS services it uses.
   EKS, EC2 and Postgres/Aurora score low; DynamoDB, Lambda, Step Functions, Redshift and Connect score
   high. 120 services are classified in an open, reviewable [catalog](docs/SERVICE_CATALOG.md).
@@ -162,6 +168,8 @@ exitrisk scan --profile mgmt --inventory --role ExitRiskReadOnly        # plus r
 exitrisk scan --profile mgmt --dependencies --role ExitRiskReadOnly     # plus integrations between services
 exitrisk scan --profile mgmt --dependencies --inventory-scope material --role ExitRiskReadOnly  # deep-scan material accounts only
 exitrisk scan --profile mgmt --dependencies --spend-regions --role ExitRiskReadOnly       # only regions with spend: about twice as fast
+exitrisk scan --profile mgmt --assurance --spend-regions              # plus the Cloud Assurance Framework checks
+exitrisk pdf <scan-id> --view assurance --include prod                # Cloud Assurance Framework Report as PDF
 exitrisk scan --profile mgmt --target gcp                               # exit target: azure (default), gcp, oci, sovereign, onprem, datacenter
 exitrisk pdf <scan-id> --include prod --questionnaire answers.json --out board-pack.pdf  # PDF without a browser
 exitrisk pdf <scan-id> --include prod --onepage                      # one-page ExCo summary
@@ -257,6 +265,24 @@ accounts that drive the exit with their owners, and who owns the risk, on one A4
 Complete sample reports generated from the demo data: [exit risk](docs/sample-report.pdf),
 [one-page summary](docs/sample-summary.pdf), [multi-region](docs/sample-multiregion.pdf).
 
+**Cloud Assurance Framework Report**: every account scored against the selected controls, weakest areas first.
+
+![Cloud assurance summary](docs/images/assurance-summary.png)
+
+Choose the rules that apply, change severities, and save the selection as a ruleset.
+
+![Rules and rulesets](docs/images/assurance-rules.png)
+
+Each finding says why it matters, how to fix it and where; each account opens to its failing and unmeasured checks.
+
+![A finding](docs/images/assurance-finding.png)
+
+![Accounts](docs/images/assurance-accounts.png)
+
+Owners missing or not found in the directory, with proposed owners to approve and export.
+
+![Ownership](docs/images/assurance-ownership.png)
+
 ## How the score works
 
 | Tier | Label | Score | Example services |
@@ -282,6 +308,7 @@ Full detail, including the estimate model and its limitations: [docs/METHODOLOGY
 |---|---|
 | [METHODOLOGY.md](docs/METHODOLOGY.md) | Scoring, weighting and estimate formulas; assumptions; limitations |
 | [AI_REVIEW.md](docs/AI_REVIEW.md) | The optional AI review: providers, passes, what is sent, keys |
+| [CLOUD_ASSURANCE.md](docs/CLOUD_ASSURANCE.md) | The Cloud Assurance Framework Report: every rule, rulesets, scoring, permissions |
 | [MULTI_REGION.md](docs/MULTI_REGION.md) | The multi-region view: run and build cost, staff, region choice, failover risks |
 | [SERVICE_CATALOG.md](docs/SERVICE_CATALOG.md) | Every service's tier, rationale, migration path, equivalents, duration |
 | [IAM_PERMISSIONS.md](docs/IAM_PERMISSIONS.md) | Exact permissions; StackSet / Terraform for the member role |

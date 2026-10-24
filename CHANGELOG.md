@@ -6,6 +6,30 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+
+- **Cloud Assurance Framework Report**, a new tab and PDF from the same scan. 139 rules in 13 areas,
+  each account scored 0 to 100 with its coverage: SSH, RDP, database ports and every port open to the
+  internet; public buckets, snapshots, images and databases; root, MFA, old and unused keys, too many
+  administrators, administrators assigned directly, roles outside parties can assume; CloudTrail, Config,
+  flow logs, DNS query logs and security alerts; GuardDuty, Security Hub, Inspector, Access Analyzer and
+  Trusted Advisor switched on and their open findings; encryption and key rotation; sensitive buckets
+  (who can write, versioning, Object Lock, replication, KMS, data events and alerts); changes made by hand,
+  drift and patching; Multi-AZ, backups copied to a second region and locked, restore and failure tests,
+  NAT, VPN and Direct Connect redundancy; runtimes, Kubernetes and database engines past support;
+  ownership and contacts; budgets; AI guardrails and logging. Organisation controls (SCP guardrails and
+  region restriction, central root access, Identity Center administrators, owner emails) are read once
+  in the management account. Catalogue: `src/exitrisk/data/assurance.yaml`.
+- **Rulesets**: choose the rules that apply to the OU or accounts, change severities, and save the
+  selection by name for later scans; seven built-in rulesets (Regulator essentials, CIS, AWS FSBP,
+  Resilience, Sensitive data, Identity and access, All rules). Changing them needs no new scan.
+- **Ownership fixes**: proposed owners for accounts with none (or one who left), approved in the report
+  and exported as CSV or AWS CLI commands for an administrator. The console never changes AWS.
+- **Evidence file**: the report as JSON with a SHA-256.
+- **Check access** tests the assurance read permissions in the management and a member account; the
+  member policy, StackSet and management policy include them (or attach SecurityAudit).
+- CLI: `exitrisk scan --assurance`, `exitrisk pdf|report <scan-id> --view assurance [--assurance answers.json]`.
+
 ## [0.19.0] - 2026-10-24
 
 ### Added

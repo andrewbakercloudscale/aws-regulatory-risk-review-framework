@@ -586,7 +586,8 @@ def _ownership(accounts: list[dict], checked: dict, org: dict) -> dict:
             if cands:
                 proposal, n = cands.most_common(1)[0]
                 basis = f"owner of {n} related account{'s' if n != 1 else ''} ({_stem(x['name'])})"
-            elif in_ou:
+            elif in_ou and in_ou.most_common(1)[0][1] * 2 >= sum(in_ou.values()):
+                # Only when one owner holds at least half of the OU's owned accounts: else it is a guess.
                 proposal, n = in_ou.most_common(1)[0]
                 basis = f"owner of {n} of the accounts in {x.get('ou_path', '')}"
         rows.append({"id": x["id"], "name": x["name"], "owner": o, "status": st, "proposal": proposal,
