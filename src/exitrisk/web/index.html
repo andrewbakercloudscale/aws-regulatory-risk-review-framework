@@ -117,6 +117,7 @@
     <nav id="viewTabs" class="viewtabs" aria-label="Report">
       <button type="button" class="vtab" data-view="exit" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></svg><span><b>Exit risk</b><small>How hard it is to leave AWS</small></span></button>
       <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-region</b><small>Cost of a second AWS region</small></span></button>
+      <button type="button" class="vtab" data-view="assurance" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span><b>Cloud assurance</b><small>Controls and governance by account</small></span></button>
     </nav>
     <button type="button" id="btnJumpAi" class="btn ai-jump" title="Go to the Agentic Risk Review (section 2)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>Agentic Risk Review<span id="aiDot" class="dot" hidden></span></button>
     <div class="menu">
@@ -626,6 +627,148 @@
     </section>
     <footer class="report-footer" id="mrFooter"></footer>
   </div>
+
+  <!-- ================================================================ Cloud Assurance Framework view -->
+  <div id="asError" class="card mr-error no-print" role="alert" hidden>
+    <h2>The Cloud Assurance Framework Report could not be built</h2>
+    <p id="asErrorText" class="error-text"></p>
+    <p id="asErrorHint" class="muted"></p>
+    <p><button type="button" class="btn primary" id="btnAsRetry">Try again</button> <button type="button" class="btn" id="btnAsLog">Open the log</button></p>
+  </div>
+  <div id="asEmpty" class="card as-empty no-print" hidden>
+    <h2>No Cloud Assurance Framework checks in this scan</h2>
+    <p id="asEmptyText" class="muted"></p>
+    <p class="muted small">The checks read each account's controls (access, exposure, logging, resilience, data protection and more) with read-only calls, plus the organisation's guardrails from the management account. They need the extra read permissions in docs/IAM_PERMISSIONS.md: Check access tests them.</p>
+    <p><button type="button" class="btn primary" id="btnAsScan">New scan with the assurance checks</button> <button type="button" class="btn" id="btnAsDemo">Load the demo organisation</button></p>
+  </div>
+  <div id="asContent" hidden>
+    <section class="cover">
+      <div class="eyebrow">Cloud Assurance Framework</div>
+      <h1 id="asTitle">Cloud Assurance Framework Report</h1>
+      <p id="asSubtitle" class="muted">Every account scored against the selected controls: who holds access, what is exposed to the internet, whether changes are logged and alerted, whether production survives the loss of a data centre, and who owns each account.</p>
+      <div id="asCoverage" class="coverage" role="alert" hidden></div>
+      <dl id="asMeta" class="meta"></dl>
+    </section>
+
+    <section class="section" id="as-summary">
+      <h2><span class="num">1</span>Executive summary</h2>
+      <div class="card brief">
+        <p class="brief-eyebrow">Bottom line</p>
+        <p class="brief-headline" id="asHeadline"></p>
+        <div class="brief-cols">
+          <div><h3>What we found</h3><ul class="leads" id="asFindings"></ul></div>
+          <div><h3>What we recommend</h3><ol class="leads" id="asActions"></ol></div>
+        </div>
+      </div>
+      <div class="tiles" id="asTiles"></div>
+      <div class="card">
+        <h3>Control areas</h3>
+        <p class="muted small">Share of measured checks that pass in each area, weakest first. Not measured checks are left out of the rate and shown on their own.</p>
+        <div class="table-wrap"><table class="data compact" id="asAreas"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="as-rules">
+      <h2><span class="num">2</span>Rules and settings</h2>
+      <div class="card as-rules-card">
+        <div class="as-ruleset-bar">
+          <label>Ruleset<select id="asRuleset"></select></label>
+          <span id="asRulesetInfo" class="small muted"></span>
+          <span class="spacer"></span>
+          <button type="button" class="btn no-print" id="btnAsEditRules" aria-expanded="false" aria-controls="asRulePicker">Choose rules</button>
+          <button type="button" class="btn danger no-print" id="btnAsDeleteSet" hidden>Delete ruleset</button>
+        </div>
+        <p id="asRulesetDesc" class="muted small"></p>
+        <div id="asRulePicker" class="as-picker no-print" hidden>
+          <div class="as-picker-bar">
+            <input type="search" id="asRuleSearch" placeholder="Search rules, ids or references (CIS 1.4, FSBP S3.1)" aria-label="Search rules">
+            <select id="asRuleArea" aria-label="Area"><option value="">All areas</option></select>
+            <select id="asRuleSev" aria-label="Severity"><option value="">All severities</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+            <select id="asRuleRef" aria-label="Framework"><option value="">All frameworks</option><option value="CIS">CIS AWS Foundations</option><option value="FSBP">AWS Foundational Security Best Practices</option></select>
+            <button type="button" class="btn sm" id="btnAsAll">Select shown</button>
+            <button type="button" class="btn sm" id="btnAsNone">Clear shown</button>
+          </div>
+          <p class="small"><span id="asPickCount"></span></p>
+          <div class="table-wrap as-rule-table"><table class="data compact" id="asRuleTable"></table></div>
+          <div class="as-save">
+            <label>Save this selection as<input id="asSetName" maxlength="60" placeholder="e.g. Payments production"></label>
+            <label>Description <span class="opt">optional</span><input id="asSetDesc" maxlength="300" placeholder="What it is for"></label>
+            <button type="button" class="btn primary" id="btnAsSaveSet">Save ruleset</button>
+            <button type="button" class="btn" id="btnAsApply">Apply without saving</button>
+          </div>
+        </div>
+        <form id="asForm" class="as-form" autocomplete="off">
+          <p class="muted small">How the rules see your accounts. Comma-separated, matched anywhere in the account name. Saved in this browser only; changing them needs no new scan.</p>
+          <div class="mr-grid">
+            <label>Production accounts (name or OU contains)<input name="production_patterns" maxlength="200"></label>
+            <label>Internet edge accounts (name contains)<input name="edge_patterns" maxlength="200"></label>
+            <label>Sensitive buckets (name contains; classification tags always count)<input name="sensitive_patterns" maxlength="300"></label>
+            <label>Critical accounts (name contains; criticality tags always count)<input name="critical_patterns" maxlength="200"></label>
+            <label>Most people with administrator access per account<input name="admin_limit" type="number" min="1" max="500" step="1"></label>
+            <label>Allowed data locations (countries or EU, UK...; blank = where most spend is)<input name="allowed_locations" maxlength="200"></label>
+            <label>Required account tags <span class="opt">blank = not checked</span><input name="required_tags" maxlength="200" placeholder="environment,costcentre"></label>
+            <label>Accounts approved for AI services (name contains)<input name="ai_approved" maxlength="200"></label>
+          </div>
+          <button type="button" id="btnAsRecalc" class="btn primary no-print">Recalculate</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="section" id="as-findings">
+      <h2><span class="num">3</span>Top findings</h2>
+      <p class="muted small">Rules that fail in at least one account, most severe first. Open a rule for why it matters, how to fix it and where.</p>
+      <div id="asTop"></div>
+    </section>
+
+    <section class="section" id="as-accounts">
+      <h2><span class="num">4</span>Accounts</h2>
+      <div class="card">
+        <p class="muted small">Assurance risk score 0 to 100 (higher is worse) with the share of applicable checks measured. Open an account for every failing and unmeasured check, with the resources affected.</p>
+        <div class="table-wrap"><table class="data as-accounts" id="asAcctTable"></table></div>
+        <p class="table-more"><span id="asAcctMoreNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnAsAcctMore" hidden></button></p>
+      </div>
+    </section>
+
+    <section class="section" id="as-ownership">
+      <h2><span class="num">5</span>Ownership</h2>
+      <div class="card">
+        <p class="muted small">Each account's owner tag and whether the owner is a current user in IAM Identity Center. Where it is missing or not found, a new owner is proposed from related accounts. Approve the changes, then export them: the console never changes AWS.</p>
+        <p id="asOwnCounts" class="small"></p>
+        <div class="table-wrap"><table class="data compact" id="asOwnTable"></table></div>
+        <div class="row no-print as-own-actions">
+          <label class="inline">Owner tag key<input id="asOwnTag" value="Owner" maxlength="60"></label>
+          <button type="button" class="btn" id="btnAsOwnCsv">Export approved changes (CSV)</button>
+          <button type="button" class="btn" id="btnAsOwnCli">Export AWS CLI commands</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="as-org">
+      <h2><span class="num">6</span>Organisation controls</h2>
+      <div class="card"><div id="asOrg"></div></div>
+    </section>
+
+    <section class="section" id="as-method">
+      <h2><span class="num">7</span>Method and rules applied</h2>
+      <div class="card">
+        <h3>How the score works</h3>
+        <ul class="assumptions">
+          <li>Each failing rule adds its severity's points once, however many resources fail it: Critical <span id="asPtsC"></span>, High <span id="asPtsH"></span>, Medium <span id="asPtsM"></span>, Low <span id="asPtsL"></span>. Points combine with diminishing returns, so the score stays between 0 and 100.</li>
+          <li>A critical account (tagged as critical, or named in the settings) counts its points 1.5 times. Any failing Critical rule sets the score to at least 80.</li>
+          <li>Four states: Pass, Fail, Not measured (the call was refused or failed: never counted as a pass) and Not applicable (nothing to check, or the rule is for production, non-edge or sensitive-data accounts only). Coverage is the share of applicable checks that were measured.</li>
+          <li>OU score: the accounts' scores weighted by monthly spend (and by count, shown alongside).</li>
+          <li>Everything is read with read-only calls. Security Hub, GuardDuty, Inspector, Trusted Advisor and Access Analyzer findings are counted as their own rules; the configuration rules are read directly from each service, so they hold whether or not Security Hub is on.</li>
+        </ul>
+        <div class="row no-print"><button type="button" class="btn" id="btnAsEvidence">Download evidence (JSON with SHA-256)</button></div>
+        <p class="muted small" id="asEvidenceNote"></p>
+      </div>
+      <div class="card">
+        <h3>Rules in this report</h3>
+        <div class="table-wrap"><table class="data compact" id="asRuleList"></table></div>
+      </div>
+    </section>
+    <footer class="report-footer" id="asFooter"></footer>
+  </div>
 </main>
 
 <!-- Exit model: the answers behind the estimate, timing and resilience -->
@@ -762,7 +905,11 @@
         <label><span>Label <span class="opt">optional</span></span><input name="label" maxlength="120" placeholder="e.g. Q4 board pack"></label>
       </section>
       <section class="fd-sec">
-        <h3><span class="step">4</span>Agentic Risk Review <span class="opt">optional</span></h3>
+        <h3><span class="step">4</span>Cloud Assurance Framework <span class="opt">optional</span></h3>
+        <label class="check fd-check"><input type="checkbox" name="assurance" id="sAssurance"><span><strong>Run the Cloud Assurance Framework checks</strong><br><span class="fd-hint">Reads each account's controls (access, internet exposure, audit trail, threat detection, data protection, change management, resilience and DR, lifecycle, ownership) and the organisation's guardrails, for the Cloud assurance report. Read-only; needs the assurance read permissions (Check access tests them). Adds about a minute per 8 accounts.</span></span></label>
+      </section>
+      <section class="fd-sec">
+        <h3><span class="step">5</span>Agentic Risk Review <span class="opt">optional</span></h3>
         <label class="check fd-check"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Add an Agentic Risk Review to the report</strong><br><span class="fd-hint" id="sAiInfo"></span></span></label>
         <p class="fd-hint">Needs a deep scan: ticking it switches Scan depth to a dependency scan. Starts when the scan finishes and takes 5 to 40 minutes; the report is ready to read meanwhile and the review appears in section 2. <button type="button" class="link-btn" id="lnkAiConfig">AI configuration</button></p>
       </section>

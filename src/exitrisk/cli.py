@@ -197,6 +197,7 @@ def _scan(args) -> int:
         role_name=args.role,
         inventory=args.inventory or args.dependencies,
         dependencies=args.dependencies,
+        assurance=args.assurance,
         inventory_scope=args.inventory_scope,
         regions=args.regions.split(",") if args.regions else None,
         region_scope="spend" if args.spend_regions else "all",
@@ -294,6 +295,10 @@ def _report(args) -> int:
 
         mq = MultiRegionAnswers(**(_answers(args.multiregion, "multi-region answers") or {}))
         report = build_multiregion(scan, flt, q, mq)
+    elif args.view == "assurance":
+        from .assurance import AssuranceAnswers, build_assurance
+
+        report = build_assurance(scan, flt, AssuranceAnswers(**(_answers(args.assurance, "assurance answers") or {})))
     else:
         report = build_report(scan, flt, q, weighting=args.weighting)
     text = json.dumps(report, indent=2, default=str)
@@ -320,8 +325,10 @@ def _pdf(args) -> int:
 
     import uvicorn
 
-    if args.onepage and args.view == "multiregion":
-        raise UsageError("--onepage summarises the exit-risk report; drop --view multiregion")
+    if args.onepage and args.view != "exit":
+        raise UsageError(f"--onepage summarises the exit-risk report; drop --view {args.view}")
+    if args.view == "assurance" and args.out == "exit-risk-report.pdf":
+        args.out = "cloud-assurance-report.pdf"
     if args.onepage and args.out == "exit-risk-report.pdf":
         args.out = "exit-risk-summary.pdf"
 
@@ -353,8 +360,9 @@ def _pdf(args) -> int:
                 "weighting": args.weighting,
                 "min_rating": getattr(args, "min_rating", None),
                 "q": json.dumps(_answers(args.questionnaire, "questionnaire")) if args.questionnaire else None,
-                "view": "multiregion" if args.view == "multiregion" else None,
+                "view": args.view if args.view != "exit" else None,
                 "mr": json.dumps(_answers(args.multiregion, "multi-region answers")) if args.multiregion else None,
+                "as": json.dumps(_answers(args.assurance, "assurance answers")) if args.assurance else None,
                 "onepage": "1" if args.onepage else None,
                 "print": "1",
             }.items()
@@ -456,6 +464,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="deep-scan only the regions where each account has spend (much faster; skips $0 resources)",
     )
+    p.add_argument(
+        "--assurance",
+        action="store_true",
+        help="also run the Cloud Assurance Framework checks in every account (needs --role or a permission set)",
+    )
     p.add_argument("--label")
     p.add_argument(
         "--target",
@@ -495,8 +508,14 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument(
             "--view",
             default="exit",
-            choices=["exit", "multiregion"],
-            help="exit = the exit-risk report (default); multiregion = the cost of running a second region",
+            choices=["exit", "multiregion", "assurance"],
+            help="exit = the exit-risk report (default); multiregion = the cost of running a second region; "
+            "assurance = the Cloud Assurance Framework Report (needs a scan with --assurance)",
+        )
+        p.add_argument(
+            "--assurance",
+            help="JSON file with the assurance answers (ruleset, production_patterns, sensitive_patterns, ...); "
+            "see docs/CLOUD_ASSURANCE.md",
         )
         p.add_argument(
             "--multiregion",

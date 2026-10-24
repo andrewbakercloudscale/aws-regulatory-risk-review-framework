@@ -758,3 +758,56 @@ details.fix[open] > summary { border-color: var(--accent); background: color-mix
 @media print { .ai-more { display: block; } .ai-more > summary { list-style: none; } }
 .key-row { display: flex; gap: 8px; align-items: center; }
 .key-row input { flex: 1; min-width: 0; }
+
+/* ---------------------------------------------------------------- Cloud Assurance Framework view */
+body[data-view="assurance"] #btnJumpAi { display: none; }
+.as-empty { margin: 24px 0; padding: 20px 22px; border-left: 4px solid var(--accent); }
+.as-empty h2 { margin: 0 0 8px; font-size: 18px; }
+.as-bar { display: inline-block; vertical-align: middle; width: 90px; height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin-right: 6px; }
+.as-bar > span { display: block; height: 100%; width: var(--w); background: var(--dot); border-radius: 999px; }
+.as-ruleset-bar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.as-ruleset-bar label { min-width: 280px; margin: 0; }
+.as-ruleset-bar .spacer { flex: 1; }
+.as-picker { margin: 12px 0 18px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.as-picker-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.as-picker-bar input[type="search"] { flex: 1 1 280px; min-width: 0; }
+.as-rule-table { max-height: 60vh; overflow: auto; background: var(--surface); border-radius: 8px; }
+.as-rule-table tr.off td { color: var(--muted); }
+.as-rule-table tr.off strong { font-weight: 500; }
+.as-rule-table tr.as-area-row td { background: var(--surface-2); position: sticky; top: 0; z-index: 1; }
+.as-rule-table select { padding: 3px 6px; font-size: 12.5px; }
+.as-save { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-top: 12px; }
+.as-save label { flex: 1 1 220px; margin: 0; }
+.as-form { margin-top: 14px; }
+.as-rule { padding: 0; margin-bottom: 10px; }
+.as-rule > summary { cursor: pointer; padding: 12px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; list-style: none; }
+.as-rule > summary::-webkit-details-marker { display: none; }
+.as-rule > summary::after { content: "+"; margin-left: auto; color: var(--muted); font-weight: 700; }
+.as-rule[open] > summary::after { content: "−"; }
+.as-rule-body { padding: 0 16px 14px; border-top: 1px solid var(--border); }
+.as-rule-body p { margin: 10px 0; max-width: 100ch; }
+table.as-accounts tr.as-acct { cursor: pointer; }
+table.as-accounts tr.as-acct:hover td, table.as-accounts tr.as-acct[aria-expanded="true"] td { background: var(--surface-2); }
+table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 14px 12px; }
+.as-findings { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.as-findings li { padding: 6px 8px; border-radius: 6px; background: var(--surface); }
+.as-findings li.as-f-unknown { opacity: .8; border-left: 3px solid var(--muted); }
+.as-findings li.as-f-fail { border-left: 3px solid var(--t4); }
+.as-ev { color: var(--ink-2); margin-top: 3px; word-break: break-word; }
+.as-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; }
+.as-dl > div { display: contents; }
+.as-dl dt { font-weight: 650; color: var(--ink-2); }
+.as-dl dd { margin: 0; }
+.as-own-actions { margin-top: 10px; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.as-own-actions label.inline { display: inline-flex; flex-direction: column; margin: 0; max-width: 180px; }
+.as-own-input { min-width: 200px; }
+@media (max-width: 700px) { .as-dl { grid-template-columns: 1fr; } .as-ruleset-bar label { min-width: 0; flex: 1 1 100%; } }
+@media print {
+  .as-rule { break-inside: avoid; }
+  .as-rule > summary::after { content: none; }
+  table.as-accounts tr.as-drill { break-inside: avoid; }
+  .as-form input { border: none; padding: 0; }
+}
+.as-form label, .as-save label, .as-ruleset-bar label, .as-own-actions label.inline { display: flex; flex-direction: column; gap: 4px; }
+.as-rule-table select { min-width: 96px; }
+@media print { .as-hide-print { display: none; } .as-bar { width: 60px; } #as-rules .as-ruleset-bar .btn { display: none; } }

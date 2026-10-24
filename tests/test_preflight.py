@@ -20,6 +20,20 @@ def _no_ai_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(ai, "_settings_path", lambda: tmp_path / "ai.json")
 
 
+@pytest.fixture(autouse=True)
+def _assurance_probes_allowed(monkeypatch):
+    """The Cloud assurance probes answer "allowed" unless a test says otherwise, so the tests about
+    the other checks need not stub some forty more clients."""
+    real = preflight.probe_actions
+
+    def probe(session, account_id, probes):
+        if probes in (preflight.ASSURANCE_PROBES, preflight.ASSURANCE_ORG_PROBES):
+            return [], []
+        return real(session, account_id, probes)
+
+    monkeypatch.setattr(preflight, "probe_actions", probe)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SSO_ARN = "arn:aws:sts::111111111111:assumed-role/AWSReservedSSO_CTO-Read_0123456789abcdef/me@example.com"
 
@@ -106,11 +120,16 @@ def test_management_account_with_full_access_is_ready(monkeypatch):
         _ce(40),
     )
     monkeypatch.setattr(preflight.sso, "profile_permission_set", lambda p: None)
+    probed = []
+    monkeypatch.setattr(preflight, "probe_actions", lambda s, a, probes: probed.append(probes) or ([], []))
     r = preflight.run_checks("p")
     assert r["ready"] and r["permission_set"] == "CTO-Read"
     assert r["verdict"].startswith("Ready: a scan will cover")
     assert [c["id"] for c in r["checks"]] == [cid for cid, _ in preflight.STEPS]
-    assert [c["status"] for c in r["checks"]] == ["ok"] * 7 + ["skip"] * 5  # deep scan and AI review not set up
+    # The organisation-level assurance reads are tested in the management account; the deep scan
+    # (and the member assurance reads) and the AI review are not set up.
+    assert [c["status"] for c in r["checks"]] == ["ok"] * 8 + ["skip"] * 6
+    assert probed == [preflight.ASSURANCE_ORG_PROBES]
     cost = next(c for c in r["checks"] if c["id"] == "cost")
     assert "40 accounts in 1 region " in cost["detail"]  # one call proves the multi-region data too
 
@@ -128,8 +147,8 @@ def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):
     assert not r["ready"] and not r["partial"]
     assert status == {
         "identity": "ok", "organization": "warn", "ou_tree": "fail", "accounts": "skip", "account_tags": "skip",
-        "cost": "warn", "commitments": "ok", "deep_scan": "skip", "inventory_reads": "skip",
-        "dependency_reads": "skip", "assignments": "skip", "ai": "skip",
+        "cost": "warn", "commitments": "ok", "assurance_org": "skip", "deep_scan": "skip", "inventory_reads": "skip",
+        "dependency_reads": "skip", "assurance_reads": "skip", "assignments": "skip", "ai": "skip",
     }  # fmt: skip
     org = next(c for c in r["checks"] if c["id"] == "organization")
     assert "111111111111" in org["fix"]

@@ -65,6 +65,36 @@ Resources:
               "Resource": "*"
             },
             {
+              "Sid": "OptionalCloudAssuranceOrganisation",
+              "Effect": "Allow",
+              "Action": [
+                "organizations:ListPolicies",
+                "organizations:DescribePolicy",
+                "organizations:ListTargetsForPolicy",
+                "organizations:ListDelegatedAdministrators",
+                "organizations:ListDelegatedServicesForAccount",
+                "iam:ListOrganizationsFeatures",
+                "trustedadvisor:ListOrganizationRecommendations",
+                "trustedadvisor:ListOrganizationRecommendationAccounts",
+                "sso:ListInstances",
+                "sso:ListPermissionSets",
+                "sso:DescribePermissionSet",
+                "sso:ListManagedPoliciesInPermissionSet",
+                "sso:GetInlinePolicyForPermissionSet",
+                "sso:ListAccountsForProvisionedPermissionSet",
+                "sso:ListAccountAssignments",
+                "identitystore:DescribeUser",
+                "identitystore:DescribeGroup",
+                "identitystore:ListGroupMemberships",
+                "identitystore:GetUserId",
+                "cloudtrail:DescribeTrails",
+                "cloudtrail:GetTrailStatus",
+                "cloudtrail:GetEventSelectors",
+                "logs:DescribeMetricFilters"
+              ],
+              "Resource": "*"
+            },
+            {
               "Sid": "OptionalDeepScanAssumeMemberRole",
               "Effect": "Allow",
               "Action": "sts:AssumeRole",

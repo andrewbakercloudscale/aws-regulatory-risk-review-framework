@@ -26,6 +26,7 @@ import re
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -64,6 +65,12 @@ class AssuranceAnswers(BaseModel):
     case-insensitively against the account name (and OU path for production)."""
 
     ruleset: str = Field("All rules", max_length=60)
+    # A selection made in the report and not saved yet: it replaces the ruleset's rules. Severity
+    # overrides apply on top of the ruleset's own.
+    rules: list[Annotated[str, Field(max_length=60)]] | None = Field(None, max_length=500)
+    severity: dict[Annotated[str, Field(max_length=60)], Literal["critical", "high", "medium", "low"]] = Field(
+        default_factory=dict, max_length=500
+    )
     production_patterns: str = Field("prod,prd", max_length=200)
     edge_patterns: str = Field("edge,network,ingress,egress,dmz,perimeter", max_length=200)
     sensitive_patterns: str = Field("payment,card,pci,eft,pii,customer,statement", max_length=300)
@@ -135,8 +142,10 @@ def build_assurance(scan: dict, account_filter: AccountFilter | None = None, a: 
     rules = {c["id"]: c for c in cat["checks"]}
     points = cat["points"]
     ruleset = rulesets.get(a.ruleset)
-    enabled = [r for r in ruleset["rules"] if r in rules]
-    severity = {r: ruleset.get("severity", {}).get(r) or rules[r]["severity"] for r in enabled}
+    custom = a.rules is not None and a.rules != ruleset["rules"]
+    enabled = [r for r in dict.fromkeys(a.rules if a.rules is not None else ruleset["rules"]) if r in rules]
+    overrides = {**ruleset.get("severity", {}), **a.severity}
+    severity = {r: overrides.get(r) or rules[r]["severity"] for r in enabled}
     data = scan.get("assurance") or {}
     checked = data.get("accounts") or {}
     org = data.get("org") or {}
@@ -147,7 +156,8 @@ def build_assurance(scan: dict, account_filter: AccountFilter | None = None, a: 
         "scan_at": scan.get("created_at"),
         "ou": scan.get("ou"),
         "answers": a.model_dump(),
-        "ruleset": {k: ruleset[k] for k in ("name", "description", "builtin")} | {"rules": len(enabled)},
+        "ruleset": {k: ruleset[k] for k in ("name", "description", "builtin")}
+        | {"rules": len(enabled), "custom": custom, "of": len(rules)},
         "catalog_version": cat.get("version"),
         "scan_catalog_version": data.get("catalog_version"),
         "filter": account_filter.describe() if account_filter.active else "",

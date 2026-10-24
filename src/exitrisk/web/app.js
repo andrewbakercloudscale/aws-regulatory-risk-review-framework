@@ -378,6 +378,9 @@
     // The multi-region view follows the same scan and filter.
     state.mr = null;
     if (state.view === "multiregion") loadMultiRegion();
+    state.as = null;
+    state.asApproved = {};
+    if (state.view === "assurance") loadAssurance();
     return true;
   }
 
@@ -386,7 +389,7 @@
     const r = state.report;
     $("#empty").hidden = true;
     $("#reportBar").hidden = false;
-    $("#content").hidden = state.view === "multiregion";
+    $("#content").hidden = state.view !== "exit";
     try {
       renderCover(r);
       renderSummary(r);
@@ -413,7 +416,7 @@
       return;
     }
     $("#footer").textContent = `Generated ${new Date(r.meta.generated_at).toLocaleString()} by aws-regulatory-risk-review-framework v${r.meta.tool_version} · catalog ${r.meta.catalog_version} · scan ${r.meta.scan_id}`;
-    if (state.view !== "multiregion") document.body.dataset.ready = "1";
+    if (state.view === "exit") document.body.dataset.ready = "1";
   }
 
   function renderCover(r) {
@@ -1820,6 +1823,429 @@
     $("#catalog").innerHTML = html;
   }
 
+  // ------------------------------------------------------------------ Cloud Assurance Framework view
+  const LS_AS = "exitrisk.assurance.v1";
+  const AS_DEFAULTS = {
+    ruleset: "All rules", rules: null, severity: {}, production_patterns: "prod,prd",
+    edge_patterns: "edge,network,ingress,egress,dmz,perimeter", sensitive_patterns: "payment,card,pci,eft,pii,customer,statement",
+    critical_patterns: "", admin_limit: 5, allowed_locations: "", required_tags: "", ai_approved: "",
+  };
+  const AS_FIELDS = ["production_patterns", "edge_patterns", "sensitive_patterns", "critical_patterns", "admin_limit", "allowed_locations", "required_tags", "ai_approved"];
+  const AS_SEV_TIER = { critical: 5, high: 4, medium: 3, low: 2 };
+  const AS_RATING_TIER = { Low: 1, Medium: 3, High: 4, Critical: 5 };
+  const AS_STATE = { fail: "Fail", unknown: "Not measured", pass: "Pass", na: "Not applicable" };
+  const AS_SCOPE = { all: "All accounts", production: "Production only", non_edge: "Not internet edge", sensitive: "Holding sensitive data" };
+  const AS_ROWS = 25;
+  const AS_PRINT_DRILLS = 10; // the PDF opens the riskiest accounts only: hundreds of drilldowns are unreadable
+  const cap = (s) => String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);
+  const sevPill = (sev) => pill(AS_SEV_TIER[sev], cap(sev));
+
+  function loadAsAnswers() {
+    const a = { ...AS_DEFAULTS };
+    try { Object.assign(a, JSON.parse(localStorage.getItem(LS_AS) || "{}")); } catch { /* ignore */ }
+    if (params.get("as")) {
+      try { Object.assign(a, JSON.parse(params.get("as"))); state.asFromLink = true; } catch { console.warn("bad as param"); }
+    }
+    return a;
+  }
+
+  function saveAsAnswers(a) {
+    state.asAnswers = a;
+    if (!state.asFromLink) { try { localStorage.setItem(LS_AS, JSON.stringify(a)); } catch { /* ignore */ } }
+  }
+
+  function readAsForm() {
+    const a = { ...(state.asAnswers || loadAsAnswers()) };
+    const f = $("#asForm");
+    for (const k of AS_FIELDS) {
+      const el = f[k];
+      if (!el) continue;
+      a[k] = k === "admin_limit" ? Math.max(1, Number(el.value) || AS_DEFAULTS.admin_limit) : el.value.trim();
+    }
+    return a;
+  }
+
+  function downloadText(text, name, type = "text/plain") {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function loadAsLists(force) {
+    if (!state.asCatalog) state.asCatalog = await api("/api/assurance/catalog");
+    if (!state.asSets || force) state.asSets = (await api("/api/rulesets")).rulesets;
+  }
+
+  function asBody(extra) {
+    const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
+    const a = state.asAnswers || loadAsAnswers();
+    const answers = { ...a };
+    if (answers.rules == null) delete answers.rules;
+    return { scan_id: state.scanId, filter, answers, ...(extra || {}) };
+  }
+
+  async function loadAssurance() {
+    if (!state.scanId) return;
+    if (!state.asAnswers) state.asAnswers = loadAsAnswers();
+    const seq = (state.asSeq = (state.asSeq || 0) + 1);
+    try {
+      await loadAsLists();
+      if (!state.asSets.some((s) => s.name === state.asAnswers.ruleset)) state.asAnswers.ruleset = "All rules";
+      const r = await api("/api/assurance", { method: "POST", body: asBody() });
+      if (seq !== state.asSeq) return;
+      state.as = r;
+    } catch (e) {
+      if (seq !== state.asSeq) return;
+      showAsError(e);
+      return;
+    }
+    $("#asError").hidden = true;
+    renderAs();
+  }
+
+  function showAsError(e) {
+    console.error("assurance failed", e);
+    const ref = e.requestId ? ` (request ${e.requestId})` : "";
+    $("#asErrorText").textContent = `${e.message}${ref}`;
+    $("#asErrorHint").textContent = e.hint || (e.status >= 500
+      ? "This is a bug in the console. Open the Log for the details, and report it with the log lines."
+      : "Check the settings in section 2 and try again.");
+    $("#asError").hidden = state.view !== "assurance";
+    if (state.as) toast(`Cloud assurance not updated: ${e.message}`);
+    if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
+  }
+
+  function renderAs() {
+    const r = state.as;
+    $("#reportBar").hidden = false;
+    $("#empty").hidden = true;
+    const show = state.view === "assurance";
+    $("#asEmpty").hidden = !show || r.available;
+    $("#asContent").hidden = !show || !r.available;
+    if (!r.available) {
+      $("#asEmptyText").textContent = r.reason;
+      if (show && PRINT) document.body.dataset.ready = "1";
+      return;
+    }
+    try {
+      renderAsCover(r);
+      renderAsSummary(r);
+      renderAsRules(r);
+      renderAsTop(r);
+      renderAsAccounts(r);
+      renderAsOwnership(r);
+      renderAsOrg(r);
+      renderAsMethod(r);
+    } catch (e) {
+      console.error("assurance render failed", e);
+      showAsError(new Error(`The report could not be drawn (${e.message}). Reload the page; if it persists, open the log and report it.`));
+      return;
+    }
+    if (PRINT) document.querySelectorAll("#asContent details").forEach((d) => { d.open = true; });
+    if (show) document.body.dataset.ready = "1";
+  }
+
+  function renderAsCover(r) {
+    const s = r.summary;
+    const rs = r.ruleset;
+    $("#asMeta").innerHTML = [
+      ["Scope", r.filter || (r.ou?.path ?? "All accounts")],
+      ["Accounts checked", `${num(s.accounts)}${s.not_checked ? ` (${num(s.not_checked)} could not be read)` : ""}`],
+      ["Ruleset", `${rs.custom ? "Custom selection based on " : ""}${rs.name}: ${num(rs.rules)} of ${num(rs.of)} rules`],
+      ["Checks measured", pct(s.coverage, 1)],
+      ["Scanned", r.scan_at ? new Date(r.scan_at).toLocaleString() : EMPTY],
+      ["Catalogue", `v${r.catalog_version}${r.scan_catalog_version && r.scan_catalog_version !== r.catalog_version ? ` (scan read with v${r.scan_catalog_version}: newer rules show as not measured)` : ""}`],
+    ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+    const notes = [];
+    if (s.coverage < 90) notes.push(`Only ${pct(s.coverage, 0)} of the applicable checks could be measured. Unmeasured checks score nothing, so the real risk may be higher: section 7 and the scan issues say which permissions are missing.`);
+    if (s.not_checked) notes.push(`${plural(s.not_checked, "account")} could not be read and ${s.not_checked === 1 ? "is" : "are"} not scored.`);
+    const un = Object.entries(r.organisation?.unavailable || {});
+    if (un.length) notes.push(`Organisation-level checks not read: ${un.map(([k, v]) => `${k.replace(/_/g, " ")} (${v})`).join("; ")}.`);
+    $("#asCoverage").hidden = !notes.length;
+    $("#asCoverage").innerHTML = notes.map((n) => `<p>${esc(n)}</p>`).join("");
+  }
+
+  function renderAsSummary(r) {
+    const s = r.summary;
+    const worst = r.areas.filter((a) => a.pass_rate != null)[0];
+    const top = r.rules.filter((x) => x.fail)[0];
+    const own = r.ownership.counts || {};
+    const toFix = (own.missing || 0) + (own["not found"] || 0);
+    const hi = (s.ratings.High || 0) + (s.ratings.Critical || 0);
+    $("#asHeadline").textContent = `Assurance risk is ${s.rating}: ${num(s.score)}/100 weighted by spend (${num(s.score_by_count)} by number of accounts) across ${plural(s.accounts, "account")}, with ${pct(s.coverage, 0)} of applicable checks measured. ${plural(hi, "account")} ${hi === 1 ? "rates" : "rate"} High or Critical.`;
+    const found = [];
+    if (s.accounts_with_critical) found.push(`<strong>${plural(s.accounts_with_critical, "account")}</strong> fail a Critical rule (for example SSH open to the internet, a public bucket or root without MFA).`);
+    if (top) found.push(`Most severe widespread finding: <strong>${esc(top.title)}</strong> in ${plural(top.fail, "account")}.`);
+    if (worst) found.push(`Weakest area: <strong>${esc(worst.label)}</strong>, ${pct(worst.pass_rate, 0)} of its checks pass.`);
+    if (toFix) found.push(`<strong>${plural(toFix, "account")}</strong> ${toFix === 1 ? "has" : "have"} no owner, or an owner not found in the directory.`);
+    if (!found.length) found.push("No rule fails in the selected accounts.");
+    $("#asFindings").innerHTML = found.map((f) => `<li>${f}</li>`).join("");
+    const acts = [];
+    if (s.accounts_with_critical) acts.push(`Close the Critical findings first (section 3): they set an account's score to 80 or more.`);
+    if (worst) acts.push(`Give ${esc(worst.label.toLowerCase())} an owner and a plan: ${plural(worst.fails, "failing check")} across ${plural(worst.accounts_failing, "account")}.`);
+    if (toFix) acts.push(`Confirm the proposed owners in section 5 and apply the exported tag changes.`);
+    if (s.coverage < 95) acts.push(`Grant the missing read permissions so every check is measured (Check access lists them).`);
+    acts.push("Run this report monthly and keep the evidence file (section 7) with the risk register.");
+    $("#asActions").innerHTML = acts.map((a) => `<li>${a}</li>`).join("");
+    $("#asTiles").innerHTML = [
+      tile("Assurance risk score", `${num(s.score)}/100`, `${s.rating} · by spend`),
+      tile("High/critical accounts", num(hi), `of ${num(s.accounts)} checked`),
+      tile("Critical findings", num(s.fails.critical), `${num(s.fails.high)} high · ${num(s.fails.medium)} medium · ${num(s.fails.low)} low`),
+      tile("Checks measured", pct(s.coverage, 0), "of the applicable checks"),
+      tile("Rules applied", num(r.ruleset.rules), r.ruleset.custom ? "custom selection" : r.ruleset.name),
+      tile("Owners to fix", num(toFix), `${num(own.verified || 0)} verified · ${num(own.unverified || 0)} unverified`),
+    ].join("");
+    $("#asAreas").innerHTML = `<thead><tr><th>Area</th><th class="as-hide-print">What it covers</th><th class="num-cell">Rules</th><th>Pass rate</th><th class="num-cell">Failing checks</th><th class="num-cell">Accounts failing</th><th class="num-cell">Not measured</th></tr></thead><tbody>${
+      r.areas.map((a) => {
+        const rate = a.pass_rate;
+        const tier = rate == null ? null : rate >= 95 ? 1 : rate >= 85 ? 2 : rate >= 70 ? 3 : rate >= 50 ? 4 : 5;
+        return `<tr><td><strong>${esc(a.label)}</strong></td><td class="muted small as-hide-print">${esc(a.concern)}</td><td class="num-cell">${num(a.rules)}</td><td><span class="as-bar" style="--w:${rate ?? 0}%;--dot:${tier ? tierColor(tier) : css("--muted")}"><span></span></span> ${rate == null ? EMPTY : pct(rate, 0)}</td><td class="num-cell">${num(a.fails)}</td><td class="num-cell">${num(a.accounts_failing)}</td><td class="num-cell">${num(a.unknown)}</td></tr>`;
+      }).join("")}</tbody>`;
+  }
+
+  function renderAsRules(r) {
+    const a = state.asAnswers;
+    const sel = $("#asRuleset");
+    sel.innerHTML = state.asSets.map((s) => `<option value="${esc(s.name)}">${esc(s.name)}${s.builtin ? "" : " (saved)"} · ${num(s.rules.length)} rules</option>`).join("");
+    sel.value = a.ruleset;
+    const cur = state.asSets.find((s) => s.name === a.ruleset) || state.asSets[0];
+    $("#asRulesetDesc").textContent = cur.description || "";
+    $("#asRulesetInfo").textContent = r.ruleset.custom ? `Custom selection: ${num(r.ruleset.rules)} rules (not saved)` : "";
+    $("#btnAsDeleteSet").hidden = cur.builtin;
+    const f = $("#asForm");
+    for (const k of AS_FIELDS) if (f[k]) f[k].value = a[k] ?? "";
+    if (!$("#asRulePicker").hidden) renderAsPicker();
+  }
+
+  function asPickStart() {
+    const a = state.asAnswers;
+    const cur = state.asSets.find((s) => s.name === a.ruleset) || state.asSets[0];
+    state.asPick = new Set(a.rules ?? cur.rules);
+    state.asSev = { ...(cur.severity || {}), ...(a.severity || {}) };
+  }
+
+  function asShownRules() {
+    const q = $("#asRuleSearch").value.trim().toLowerCase();
+    const area = $("#asRuleArea").value, sev = $("#asRuleSev").value, ref = $("#asRuleRef").value;
+    return state.asCatalog.checks.filter((c) => {
+      if (area && c.area !== area) return false;
+      if (sev && (state.asSev[c.id] || c.severity) !== sev) return false;
+      if (ref && !(c.refs || []).some((x) => String(x).startsWith(ref + " "))) return false;
+      if (!q) return true;
+      return [c.id, c.title, c.why, ...(c.refs || [])].join(" ").toLowerCase().includes(q);
+    });
+  }
+
+  function renderAsPicker() {
+    const cat = state.asCatalog;
+    const areaSel = $("#asRuleArea");
+    if (areaSel.options.length <= 1) areaSel.innerHTML += Object.entries(cat.areas).map(([k, v]) => `<option value="${esc(k)}">${esc(v.label)}</option>`).join("");
+    const shown = asShownRules();
+    $("#asPickCount").textContent = `${num(state.asPick.size)} of ${num(cat.checks.length)} rules selected · ${num(shown.length)} shown`;
+    let lastArea = null;
+    const rows = [];
+    for (const c of shown) {
+      if (c.area !== lastArea) {
+        lastArea = c.area;
+        const ids = shown.filter((x) => x.area === c.area).map((x) => x.id);
+        const on = ids.filter((id) => state.asPick.has(id)).length;
+        rows.push(`<tr class="as-area-row"><td><input type="checkbox" data-area="${esc(c.area)}" aria-label="All ${esc(cat.areas[c.area].label)} rules" ${on === ids.length ? "checked" : ""}></td><td colspan="5"><strong>${esc(cat.areas[c.area].label)}</strong> <span class="muted small">${num(on)} of ${num(ids.length)} · ${esc(cat.areas[c.area].concern)}</span></td></tr>`);
+      }
+      const sev = state.asSev[c.id] || c.severity;
+      rows.push(`<tr class="${state.asPick.has(c.id) ? "" : "off"}"><td><input type="checkbox" data-rule="${esc(c.id)}" aria-label="${esc(c.title)}" ${state.asPick.has(c.id) ? "checked" : ""}></td>
+        <td><strong>${esc(c.title)}</strong><div class="muted small">${esc(c.why)}</div><div class="muted small mono">${esc(c.id)}</div></td>
+        <td><select data-sev="${esc(c.id)}" aria-label="Severity of ${esc(c.title)}">${["critical", "high", "medium", "low"].map((v) => `<option value="${v}" ${v === sev ? "selected" : ""}>${cap(v)}${v === c.severity ? "" : ""}</option>`).join("")}</select>${sev !== c.severity ? `<div class="muted small">catalogue: ${esc(c.severity)}</div>` : ""}</td>
+        <td class="small">${esc(AS_SCOPE[c.scope || "all"])}</td>
+        <td class="small">${esc((c.refs || []).join(", ") || EMPTY)}</td>
+        <td class="small muted">${esc(c.source || "")}</td></tr>`);
+    }
+    $("#asRuleTable").innerHTML = `<thead><tr><th></th><th>Rule</th><th>Severity</th><th>Applies to</th><th>References</th><th>Read from</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+  }
+
+  async function applyAsPick(save) {
+    const rules = state.asCatalog.checks.map((c) => c.id).filter((id) => state.asPick.has(id));
+    if (!rules.length) { toast("Select at least one rule"); return; }
+    const sev = {};
+    for (const c of state.asCatalog.checks) if (state.asSev[c.id] && state.asSev[c.id] !== c.severity && state.asPick.has(c.id)) sev[c.id] = state.asSev[c.id];
+    const a = { ...readAsForm() };
+    if (save) {
+      const name = $("#asSetName").value.trim();
+      if (!name) { toast("Name the ruleset first"); $("#asSetName").focus(); return; }
+      try {
+        const saved = await api("/api/rulesets", { method: "PUT", body: { name, description: $("#asSetDesc").value.trim(), rules, severity: sev } });
+        await loadAsLists(true);
+        Object.assign(a, { ruleset: saved.name, rules: null, severity: {} });
+        toast(`Saved ruleset “${saved.name}” with ${rules.length} rules`);
+      } catch (e) { toast(e.message, 6000); return; }
+    } else {
+      Object.assign(a, { rules, severity: sev });
+    }
+    saveAsAnswers(a);
+    loadAssurance();
+  }
+
+  function renderAsTop(r) {
+    const failing = r.rules.filter((x) => x.fail);
+    if (!failing.length) { $("#asTop").innerHTML = `<div class="card"><p>No rule fails in the selected accounts.</p></div>`; return; }
+    $("#asTop").innerHTML = failing.slice(0, PRINT ? 25 : 60).map((x) => `<details class="card as-rule">
+      <summary>${sevPill(x.severity)} <strong>${esc(x.title)}</strong> <span class="muted small">${plural(x.fail, "account")} · ${plural(x.resources, "item")}${x.unknown ? ` · not measured in ${num(x.unknown)}` : ""}</span></summary>
+      <div class="as-rule-body">
+        <p><strong>Why it matters.</strong> ${esc(x.why)}</p>
+        <p><strong>Fix.</strong> ${esc(x.fix)}</p>
+        <p class="small muted">${esc(x.refs.join(", ") || "No public control reference")} · applies to ${esc((AS_SCOPE[x.scope] || "").toLowerCase())} · rule ${esc(x.id)}${x.severity !== x.catalog_severity ? ` · rated ${esc(x.severity)} in this ruleset (catalogue: ${esc(x.catalog_severity)})` : ""}</p>
+        <table class="data compact"><thead><tr><th>Account</th><th class="num-cell">Items</th><th>Examples</th></tr></thead><tbody>${
+          x.accounts.slice(0, 15).map((acc) => `<tr><td>${esc(acc.name)}</td><td class="num-cell">${num(acc.n)}</td><td class="small">${esc(acc.ev.join(", ") || EMPTY)}</td></tr>`).join("")
+        }</tbody></table>${x.accounts.length > 15 ? `<p class="muted small">and ${plural(x.accounts.length - 15, "more account")}.</p>` : ""}
+      </div></details>`).join("");
+  }
+
+  function renderAsAccounts(r) {
+    const rows = state.asShowAll || PRINT ? r.accounts : r.accounts.slice(0, AS_ROWS);
+    const flags = (a) => [a.production ? "Production" : "", a.edge ? "Edge" : "", a.critical ? "Critical" : "", a.sensitive_buckets ? `${a.sensitive_buckets} sensitive bucket${a.sensitive_buckets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+    $("#asAcctTable").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Score</th><th>Rating</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th class="num-cell">Low</th><th class="num-cell">Measured</th><th class="num-cell">Spend/month</th><th>Owner</th></tr></thead><tbody>${
+      rows.map((a) => `<tr class="as-acct" data-id="${esc(a.id)}" tabindex="0" aria-expanded="${state.asOpen === a.id}"><td><strong>${esc(a.name)}</strong><div class="muted small">${esc(a.id)}${flags(a) ? " · " + esc(flags(a)) : ""}</div></td>
+        <td class="num-cell"><strong>${num(a.score)}</strong></td><td>${pill(AS_RATING_TIER[a.rating], a.rating)}</td>
+        <td class="num-cell">${num(a.fails.critical)}</td><td class="num-cell">${num(a.fails.high)}</td><td class="num-cell">${num(a.fails.medium)}</td><td class="num-cell">${num(a.fails.low)}</td>
+        <td class="num-cell">${pct(a.coverage, 0)}</td><td class="num-cell">${money(a.monthly_spend)}</td><td class="small">${esc(a.owner || "none")}</td></tr>${
+        state.asOpen === a.id || (PRINT && rows.indexOf(a) < AS_PRINT_DRILLS) ? `<tr class="as-drill"><td colspan="10">${asDrill(a)}</td></tr>` : ""}`).join("")}</tbody>`;
+    const more = r.accounts.length - rows.length;
+    $("#asAcctMoreNote").textContent = more > 0 ? `${plural(rows.length, "account")} of ${num(r.accounts.length)} shown.` : "";
+    $("#btnAsAcctMore").hidden = PRINT || r.accounts.length <= AS_ROWS;
+    $("#btnAsAcctMore").textContent = state.asShowAll ? `Show the top ${AS_ROWS}` : `Show all ${num(r.accounts.length)}`;
+  }
+
+  function asDrill(a) {
+    const cat = Object.fromEntries((state.asCatalog?.checks || []).map((c) => [c.id, c]));
+    const items = a.findings.map((f) => `<li class="as-f-${f.status}">${sevPill(f.severity)} <strong>${esc(cat[f.id]?.title || f.id)}</strong> <span class="muted small">${esc(AS_STATE[f.status])}${f.n ? ` · ${plural(f.n, "item")}` : ""}${f.note ? ` · ${esc(f.note)}` : ""}</span>${(f.ev || []).length ? `<div class="small mono as-ev">${esc(f.ev.slice(0, 8).join(" · "))}${f.n > 8 ? " …" : ""}</div>` : ""}</li>`);
+    return `<div class="as-drill-body"><p class="small muted">${num(a.counts.fail)} failing · ${num(a.counts.unknown)} not measured · ${num(a.counts.pass)} passing · ${num(a.counts.na)} not applicable${a.ou_path ? ` · ${esc(a.ou_path)}` : ""}</p>${items.length ? `<ul class="as-findings">${items.join("")}</ul>` : "<p>Every applicable rule passes.</p>"}</div>`;
+  }
+
+  function renderAsOwnership(r) {
+    const o = r.ownership;
+    const c = o.counts || {};
+    $("#asOwnCounts").textContent = `${num(c.verified || 0)} verified in the directory · ${num(c.unverified || 0)} tagged but not verifiable (a name, not an email, or the directory not read) · ${num(c["not found"] || 0)} not found · ${num(c.missing || 0)} missing.${o.directory ? "" : " IAM Identity Center was not read, so no owner could be verified."}`;
+    const todo = o.rows.filter((x) => x.status === "missing" || x.status === "not found");
+    const approved = state.asApproved || (state.asApproved = {});
+    $("#asOwnTable").innerHTML = todo.length ? `<thead><tr><th>Account</th><th>Current owner</th><th>Status</th><th>New owner</th><th>Why</th><th class="no-print">Approve</th></tr></thead><tbody>${
+      todo.map((x) => `<tr><td>${esc(x.name)}<div class="muted small">${esc(x.id)}</div></td><td>${esc(x.owner || "none")}</td><td>${pill(x.status === "not found" ? 5 : 4, cap(x.status))}</td>
+        <td><input class="as-own-input" data-own="${esc(x.id)}" value="${esc(approved[x.id]?.owner ?? x.proposal)}" maxlength="200" placeholder="owner email" aria-label="New owner for ${esc(x.name)}"></td>
+        <td class="small muted">${esc(x.basis || "no related account has an owner: choose one")}</td>
+        <td class="no-print"><input type="checkbox" data-approve="${esc(x.id)}" aria-label="Approve the new owner for ${esc(x.name)}" ${approved[x.id]?.ok ? "checked" : ""}></td></tr>`).join("")}</tbody>`
+      : `<tbody><tr><td>Every account has an owner${o.directory ? " that is a current user" : ""}.</td></tr></tbody>`;
+    $("#asOwnTable").closest(".card").querySelector(".as-own-actions").hidden = !todo.length;
+  }
+
+  async function exportOwnership(kind) {
+    const approved = {};
+    for (const [id, v] of Object.entries(state.asApproved || {})) if (v.ok && v.owner?.trim()) approved[id] = v.owner.trim();
+    if (!Object.keys(approved).length) { toast("Tick Approve on at least one row with a new owner"); return; }
+    try {
+      const out = await api("/api/assurance/ownership-export", { method: "POST", body: asBody({ approved, tag: $("#asOwnTag").value.trim() || "Owner" }) });
+      if (kind === "csv") downloadText(out.csv, `account-owner-changes-${state.scanId}.csv`, "text/csv");
+      else downloadText(out.commands, `account-owner-changes-${state.scanId}.sh`);
+      toast(`${plural(out.count, "change")} exported: review, then apply in the management account`, 6000);
+    } catch (e) { toast(e.message, 6000); }
+  }
+
+  function renderAsOrg(r) {
+    const o = r.organisation;
+    if (!o.read) {
+      $("#asOrg").innerHTML = `<p class="muted">The organisation's own controls were not read: scan with a profile in the management account for guardrails (SCPs), central root access, Identity Center administrators and owner checks.</p>`;
+      return;
+    }
+    const scp = r.rules.find((x) => x.id === "scp_guardrails");
+    const items = [
+      ["Guardrails (SCPs)", scp ? (scp.fail ? `${plural(scp.fail, "account")} missing at least one expected guardrail; ${plural(scp.pass, "account")} fully covered.` : `Every account checked has the expected guardrails (${plural(scp.pass, "account")}).`) : "Not in this ruleset."],
+      ["Central root access", o.root ? (o.root.credentials ? "On: member accounts need no root password or MFA of their own." : "Off: every member account keeps its own root password and MFA.") : EMPTY],
+      ["Administrator permission sets", o.admin_permission_sets.length ? o.admin_permission_sets.join(", ") : "None found, or Identity Center not read."],
+      ["Delegated administrators", o.delegated.length ? o.delegated.map((d) => `${d.name || d.id}: ${d.services.map((x) => x.replace(".amazonaws.com", "")).join(", ")}`).join("; ") : "None."],
+      ["Organisation trails", o.trails.length ? o.trails.map((t) => `${t.name} (${t.home}) ${t.logging ? "logging" : "NOT logging"}`).join("; ") : "None found."],
+      ["Trusted Advisor", o.trusted_advisor_org ? "Read once from the organisation view." : "Read in each account (the organisation view was not available)."],
+    ];
+    $("#asOrg").innerHTML = `<dl class="as-dl">${items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>${
+      Object.keys(o.unavailable).length ? `<p class="muted small">Not read: ${esc(Object.entries(o.unavailable).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`).join("; "))}.</p>` : ""}`;
+  }
+
+  function renderAsMethod(r) {
+    $("#asPtsC").textContent = r.points.critical; $("#asPtsH").textContent = r.points.high;
+    $("#asPtsM").textContent = r.points.medium; $("#asPtsL").textContent = r.points.low;
+    const areas = state.asCatalog?.areas || {};
+    $("#asRuleList").innerHTML = `<thead><tr><th>Rule</th><th>Area</th><th>Severity</th><th>Applies to</th><th class="num-cell">Fail</th><th class="num-cell">Pass</th><th class="num-cell">Not measured</th><th class="num-cell">N/A</th><th>References</th></tr></thead><tbody>${
+      r.rules.map((x) => `<tr><td>${esc(x.title)}<div class="muted small mono">${esc(x.id)}</div></td><td class="small">${esc(areas[x.area]?.label || x.area)}</td><td>${sevPill(x.severity)}</td><td class="small">${esc(AS_SCOPE[x.scope] || x.scope)}</td><td class="num-cell">${num(x.fail)}</td><td class="num-cell">${num(x.pass)}</td><td class="num-cell">${num(x.unknown)}</td><td class="num-cell">${num(x.na)}</td><td class="small">${esc(x.refs.join(", ") || EMPTY)}</td></tr>`).join("")}</tbody>`;
+    $("#asFooter").textContent = `Generated ${new Date().toLocaleString()} by aws-regulatory-risk-review-framework · Cloud Assurance Framework catalogue v${r.catalog_version} · scan ${r.scan_id}`;
+  }
+
+  function bindAssurance() {
+    $("#btnAsRetry").addEventListener("click", () => loadAssurance());
+    $("#btnAsLog").addEventListener("click", () => $("#btnLogs").click());
+    $("#btnAsScan").addEventListener("click", () => { openScanDialog().then(() => { $("#sAssurance").checked = true; $("#sAssurance").dispatchEvent(new Event("change")); }); });
+    $("#btnAsDemo").addEventListener("click", () => $("#btnDemo").click());
+    $("#asRuleset").addEventListener("change", (e) => {
+      saveAsAnswers({ ...readAsForm(), ruleset: e.target.value, rules: null, severity: {} });
+      state.asPick = null;
+      loadAssurance();
+    });
+    $("#btnAsEditRules").addEventListener("click", async () => {
+      const p = $("#asRulePicker");
+      p.hidden = !p.hidden;
+      $("#btnAsEditRules").setAttribute("aria-expanded", String(!p.hidden));
+      $("#btnAsEditRules").textContent = p.hidden ? "Choose rules" : "Hide the rules";
+      if (!p.hidden) { await loadAsLists(); asPickStart(); renderAsPicker(); }
+    });
+    for (const id of ["#asRuleSearch", "#asRuleArea", "#asRuleSev", "#asRuleRef"]) $(id).addEventListener("input", () => renderAsPicker());
+    $("#asRuleTable").addEventListener("change", (ev) => {
+      const t = ev.target;
+      if (t.dataset.rule) { if (t.checked) state.asPick.add(t.dataset.rule); else state.asPick.delete(t.dataset.rule); }
+      else if (t.dataset.area) { for (const c of asShownRules()) if (c.area === t.dataset.area) { if (t.checked) state.asPick.add(c.id); else state.asPick.delete(c.id); } }
+      else if (t.dataset.sev) state.asSev[t.dataset.sev] = t.value;
+      renderAsPicker();
+    });
+    $("#btnAsAll").addEventListener("click", () => { for (const c of asShownRules()) state.asPick.add(c.id); renderAsPicker(); });
+    $("#btnAsNone").addEventListener("click", () => { for (const c of asShownRules()) state.asPick.delete(c.id); renderAsPicker(); });
+    $("#btnAsApply").addEventListener("click", () => applyAsPick(false));
+    $("#btnAsSaveSet").addEventListener("click", () => applyAsPick(true));
+    $("#btnAsDeleteSet").addEventListener("click", async () => {
+      const name = $("#asRuleset").value;
+      const b = $("#btnAsDeleteSet");
+      if (b.dataset.confirm !== name) { b.dataset.confirm = name; b.textContent = `Click again to delete “${name}”`; setTimeout(() => { b.dataset.confirm = ""; b.textContent = "Delete ruleset"; }, 4000); return; }
+      b.dataset.confirm = ""; b.textContent = "Delete ruleset";
+      try {
+        await api(`/api/rulesets/${encodeURIComponent(name)}`, { method: "DELETE" });
+        await loadAsLists(true);
+        saveAsAnswers({ ...readAsForm(), ruleset: "All rules", rules: null, severity: {} });
+        toast(`Deleted ruleset “${name}”`);
+        loadAssurance();
+      } catch (e) { toast(e.message); }
+    });
+    $("#asForm").addEventListener("change", () => { saveAsAnswers(readAsForm()); loadAssurance(); });
+    $("#btnAsRecalc").addEventListener("click", () => { saveAsAnswers(readAsForm()); loadAssurance(); });
+    $("#asAcctTable").addEventListener("click", (ev) => {
+      const tr = ev.target.closest("tr.as-acct");
+      if (!tr) return;
+      state.asOpen = state.asOpen === tr.dataset.id ? null : tr.dataset.id;
+      renderAsAccounts(state.as);
+    });
+    $("#asAcctTable").addEventListener("keydown", (ev) => { if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches("tr.as-acct")) { ev.preventDefault(); ev.target.click(); } });
+    $("#btnAsAcctMore").addEventListener("click", () => { state.asShowAll = !state.asShowAll; renderAsAccounts(state.as); });
+    $("#asOwnTable").addEventListener("input", (ev) => {
+      const id = ev.target.dataset.own || ev.target.dataset.approve;
+      if (!id) return;
+      const row = ev.target.closest("tr");
+      state.asApproved[id] = { owner: row.querySelector("[data-own]").value, ok: row.querySelector("[data-approve]").checked };
+    });
+    $("#btnAsOwnCsv").addEventListener("click", () => exportOwnership("csv"));
+    $("#btnAsOwnCli").addEventListener("click", () => exportOwnership("cli"));
+    $("#btnAsEvidence").addEventListener("click", async () => {
+      try {
+        const rec = await api("/api/assurance/evidence", { method: "POST", body: asBody() });
+        downloadText(JSON.stringify(rec, null, 1), `cloud-assurance-${state.scanId}-${rec.sha256.slice(0, 12)}.json`, "application/json");
+        $("#asEvidenceNote").textContent = `Evidence saved. SHA-256 ${rec.sha256} (${rec.algorithm}).`;
+      } catch (e) { toast(e.message); }
+    });
+    window.addEventListener("beforeprint", () => { if (state.view === "assurance") document.querySelectorAll("#asContent details").forEach((d) => { d.open = true; }); });
+  }
+
   // ------------------------------------------------------------------ multi-region view
   const LS_MR = "exitrisk.multiregion.v1";
   const LS_MR_ACCTS = "exitrisk.multiregion.accounts."; // + scan id: the accounts ticked for a second region
@@ -1830,24 +2256,29 @@
   const AVAIL_TIER = { available: 1, missing: 5, unverified: 3, global: 2 };
   const MR_ROWS = 25;
 
+  const VIEWS = ["exit", "multiregion", "assurance"];
   function setView(v) {
-    state.view = v === "multiregion" ? "multiregion" : "exit";
+    state.view = VIEWS.includes(v) ? v : "exit";
     document.body.dataset.view = state.view;
     for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
     $("#content").hidden = state.view !== "exit" || !state.report;
     $("#mrContent").hidden = state.view !== "multiregion" || !state.mr;
+    $("#asContent").hidden = state.view !== "assurance" || !state.as?.available;
+    $("#asEmpty").hidden = state.view !== "assurance" || !state.as || state.as.available;
     if (state.view !== "multiregion") $("#mrError").hidden = true;
+    if (state.view !== "assurance") $("#asError").hidden = true;
     // Export follows the report on screen; the one-page summary exists only for exit risk.
-    const mr = state.view === "multiregion";
-    $("#btnPdf b").textContent = mr ? "Multi-region report" : "Full report";
-    $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : "Every section and the appendix";
-    $("#btnOnePage").hidden = mr;
+    const mr = state.view === "multiregion", as = state.view === "assurance";
+    $("#btnPdf b").textContent = mr ? "Multi-region report" : as ? "Cloud Assurance Framework Report" : "Full report";
+    $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : as ? "Every assurance section, as on screen" : "Every section and the appendix";
+    $("#btnOnePage").hidden = mr || as;
     if (!PRINT) {
       const url = new URL(location.href);
-      if (state.view === "multiregion") url.searchParams.set("view", "multiregion"); else url.searchParams.delete("view");
+      if (state.view !== "exit") url.searchParams.set("view", state.view); else url.searchParams.delete("view");
       history.replaceState(null, "", url);
     }
     if (state.view === "multiregion" && !state.mr) loadMultiRegion();
+    if (state.view === "assurance" && !state.as) loadAssurance();
     Object.values(state.charts).forEach((c) => c.resize());
   }
 
@@ -2219,7 +2650,7 @@
       inventory_scope: f.material_only.checked ? "material" : "all", role_name: f.role_name.value || null,
       region_scope: f.spend_regions.checked ? "spend" : "all",
       regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: f.label.value,
-      target: f.target.value || "azure",
+      target: f.target.value || "azure", assurance: f.assurance.checked,
     };
     $("#qForm").target.value = body.target;
     syncDatacenter();
@@ -2758,7 +3189,7 @@
     });
     $("#btnOnePage").addEventListener("click", () => {
       if (!state.report) { toast("Load a scan first"); return; }
-      if (state.view === "multiregion") setView("exit"); // the one-page summary is the exit-risk report
+      if (state.view !== "exit") setView("exit"); // the one-page summary is the exit-risk report
       document.body.classList.add("onepage");
       toast("Choose “Save as PDF” in the print dialog. For a scripted PDF: exitrisk pdf <scan-id> --onepage", 6000);
       setTimeout(() => window.print(), 300);
@@ -2842,8 +3273,10 @@
     enterDoes("#scanForm", () => { if (!$("#btnStartScan").disabled) startScan(); });
     enterDoes("#ssoForm", (el) => { if (el.closest("#ssoAdd")) ssoAddPortal(); });
     enterDoes("#accessForm", () => runAccessCheck());
+    // The member role, regions and region scope apply to the assurance checks too.
+    $("#sAssurance").addEventListener("change", () => { $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked; });
     $("#sDepth").addEventListener("change", (e) => {
-      $("#invOpts").hidden = e.target.value === "quick";
+      $("#invOpts").hidden = e.target.value === "quick" && !$("#sAssurance").checked;
       $("#sDepthHint").textContent = DEPTH_HINT[e.target.value];
       if (e.target.value === "quick" && $("#sAi").checked) {
         $("#sAi").checked = false;
@@ -2908,10 +3341,11 @@
       [state.options, state.catalog] = await Promise.all([api("/api/options"), api("/api/catalog")]);
     } catch (e) { failed(e); return; }
     fillQuestionnaire(loadQuestionnaire());
-    state.view = params.get("view") === "multiregion" ? "multiregion" : "exit";
+    state.view = VIEWS.includes(params.get("view")) ? params.get("view") : "exit";
     document.body.dataset.view = state.view;
     for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
     bindMultiRegion();
+    bindAssurance();
     if (["balanced", "spend", "equal"].includes(params.get("weighting"))) $("#fWeighting").value = params.get("weighting");
     if (["Moderate", "High"].includes(params.get("min_rating"))) $("#fMinRating").value = params.get("min_rating");
     for (const k of ["include", "exclude", "mode"]) if (params.get(k)) $(`#f${k[0].toUpperCase()}${k.slice(1)}`).value = params.get(k);

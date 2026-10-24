@@ -50,6 +50,36 @@ MANAGEMENT_POLICY = {
             "Resource": "*",
         },
         {
+            "Sid": "OptionalCloudAssuranceOrganisation",
+            "Effect": "Allow",
+            "Action": [
+                "organizations:ListPolicies",
+                "organizations:DescribePolicy",
+                "organizations:ListTargetsForPolicy",
+                "organizations:ListDelegatedAdministrators",
+                "organizations:ListDelegatedServicesForAccount",
+                "iam:ListOrganizationsFeatures",
+                "trustedadvisor:ListOrganizationRecommendations",
+                "trustedadvisor:ListOrganizationRecommendationAccounts",
+                "sso:ListInstances",
+                "sso:ListPermissionSets",
+                "sso:DescribePermissionSet",
+                "sso:ListManagedPoliciesInPermissionSet",
+                "sso:GetInlinePolicyForPermissionSet",
+                "sso:ListAccountsForProvisionedPermissionSet",
+                "sso:ListAccountAssignments",
+                "identitystore:DescribeUser",
+                "identitystore:DescribeGroup",
+                "identitystore:ListGroupMemberships",
+                "identitystore:GetUserId",
+                "cloudtrail:DescribeTrails",
+                "cloudtrail:GetTrailStatus",
+                "cloudtrail:GetEventSelectors",
+                "logs:DescribeMetricFilters",
+            ],
+            "Resource": "*",
+        },
+        {
             "Sid": "OptionalDeepScanAssumeMemberRole",
             "Effect": "Allow",
             "Action": "sts:AssumeRole",
@@ -129,6 +159,60 @@ DEPENDENCY_PROBES = [
         {"stateMachineArn": f"arn:aws:states:{PROBE_REGION}:{{account}}:stateMachine:{_NO_SUCH}"},
     ),
 ]
+
+# Cloud Assurance Framework checks in a member account: one cheap call per service they read. The
+# AWS managed policy SecurityAudit covers all of them; iam/member-account-role-policy.json lists them.
+_BUCKET = "exitrisk-access-check-{account}"
+ASSURANCE_PROBES = [
+    ("iam:GetAccountSummary", "iam", "get_account_summary", {}),
+    ("iam:GenerateCredentialReport", "iam", "generate_credential_report", {}),
+    ("iam:GetAccountAuthorizationDetails", "iam", "get_account_authorization_details", {"MaxItems": 1}),
+    ("iam:GetAccountPasswordPolicy", "iam", "get_account_password_policy", {}),
+    ("s3:GetAccountPublicAccessBlock", "s3control", "get_public_access_block", {"AccountId": "{account}"}),
+    ("s3:GetBucketVersioning", "s3", "get_bucket_versioning", {"Bucket": _BUCKET}),
+    ("cloudtrail:DescribeTrails", "cloudtrail", "describe_trails", {}),
+    ("cloudtrail:LookupEvents", "cloudtrail", "lookup_events", {"MaxResults": 1}),
+    ("cloudtrail:GetEventSelectors", "cloudtrail", "get_event_selectors", {"TrailName": _NO_SUCH}),
+    ("account:GetAlternateContact", "account", "get_alternate_contact", {"AlternateContactType": "SECURITY"}),
+    ("ec2:DescribeSecurityGroups", "ec2", "describe_security_groups", {"MaxResults": 5}),
+    ("ec2:DescribeNetworkInterfaces", "ec2", "describe_network_interfaces", {"MaxResults": 5}),
+    ("ec2:DescribeFlowLogs", "ec2", "describe_flow_logs", {"MaxResults": 5}),
+    ("ec2:DescribeNetworkAcls", "ec2", "describe_network_acls", {"MaxResults": 5}),
+    ("ec2:GetEbsEncryptionByDefault", "ec2", "get_ebs_encryption_by_default", {}),
+    ("ec2:DescribeSnapshots", "ec2", "describe_snapshots", {"OwnerIds": ["self"], "MaxResults": 5}),
+    ("ec2:DescribeVpnConnections", "ec2", "describe_vpn_connections", {}),
+    ("elasticloadbalancing:DescribeLoadBalancers", "elbv2", "describe_load_balancers", {"PageSize": 1}),
+    ("wafv2:ListWebACLs", "wafv2", "list_web_acls", {"Scope": "REGIONAL", "Limit": 1}),
+    ("guardduty:ListDetectors", "guardduty", "list_detectors", {"MaxResults": 1}),
+    ("securityhub:DescribeHub", "securityhub", "describe_hub", {}),
+    ("config:DescribeConfigurationRecorderStatus", "config", "describe_configuration_recorder_status", {}),
+    ("inspector2:BatchGetAccountStatus", "inspector2", "batch_get_account_status", {"accountIds": ["{account}"]}),
+    ("access-analyzer:ListAnalyzers", "accessanalyzer", "list_analyzers", {"maxResults": 1}),
+    ("backup:ListBackupPlans", "backup", "list_backup_plans", {"MaxResults": 1}),
+    ("ssm:DescribeInstanceInformation", "ssm", "describe_instance_information", {"MaxResults": 5}),
+    ("kms:ListKeys", "kms", "list_keys", {"Limit": 1}),
+    ("secretsmanager:ListSecrets", "secretsmanager", "list_secrets", {"MaxResults": 1}),
+    ("ram:ListPrincipals", "ram", "list_principals", {"resourceOwner": "SELF", "maxResults": 1}),
+    ("acm:ListCertificates", "acm", "list_certificates", {"MaxItems": 1}),
+    ("logs:DescribeMetricFilters", "logs", "describe_metric_filters", {"limit": 1}),
+    ("route53resolver:ListResolverQueryLogConfigAssociations", "route53resolver",
+     "list_resolver_query_log_config_associations", {"MaxResults": 1}),
+    ("budgets:ViewBudget", "budgets", "describe_budgets", {"AccountId": "{account}", "MaxResults": 1}),
+    ("resiliencehub:ListApps", "resiliencehub", "list_apps", {"maxResults": 1}),
+    ("fis:ListExperiments", "fis", "list_experiments", {"maxResults": 1}),
+    ("dynamodb:DescribeContinuousBackups", "dynamodb", "describe_continuous_backups", {"TableName": _NO_SUCH}),
+]  # fmt: skip
+# The organisation-level assurance reads, in the management account.
+ASSURANCE_ORG_PROBES = [
+    ("organizations:ListPolicies", "organizations", "list_policies",
+     {"Filter": "SERVICE_CONTROL_POLICY", "MaxResults": 1}),
+    ("organizations:ListDelegatedAdministrators", "organizations", "list_delegated_administrators", {"MaxResults": 1}),
+    ("iam:ListOrganizationsFeatures", "iam", "list_organizations_features", {}),
+    ("trustedadvisor:ListOrganizationRecommendations", "trustedadvisor", "list_organization_recommendations",
+     {"maxResults": 1}),
+    ("sso:ListInstances", "sso-admin", "list_instances", {"MaxResults": 1}),
+    ("cloudtrail:DescribeTrails", "cloudtrail", "describe_trails", {}),
+]  # fmt: skip
 
 
 def probe_actions(session, account_id: str, probes: list) -> tuple[list[str], list[str]]:
@@ -346,13 +430,34 @@ def run_checks(
         )
     )
 
+    if ctx.get("management_account_id") == ctx.get("account_id"):
+        denied, other = probe_actions(session, ctx["account_id"], ASSURANCE_ORG_PROBES)
+        what = "The organisation-level assurance checks will show as not measured"
+        checks.append(_probe_check("assurance_org", ASSURANCE_ORG_LABEL, ASSURANCE_ORG_PROBES, denied, other,
+                                   ctx["account_id"], what, "iam/management-account-policy.json"))  # fmt: skip
+    else:
+        skip("assurance_org", ASSURANCE_ORG_LABEL, "Only in the management account.")
     _member_checks(checks, session, profile, role_name, member_id, ctx, counted)
     return _result(checks, ctx)
+
+
+def _probe_check(cid, label, probes, denied, other, where, what, policy) -> Check:
+    n = len(probes)
+    if denied:
+        detail = f"{len(denied)} of {n} calls refused in {where}: {', '.join(denied)}"
+        fix = f"{what}. Grant them ({policy}), or attach the AWS managed policy SecurityAudit."
+    elif other:
+        detail, fix = f"Could not finish: {'; '.join(other)}", "Sign in again and re-check."
+    else:
+        detail, fix = f"All {n} read-only calls allowed in {where}.", ""
+    return Check(cid, label, "warn" if denied or other else "ok", detail, fix, ", ".join(denied))
 
 
 DEEP_LABEL = "Deep scan access (optional)"
 INV_LABEL = "Count resources in a member account"
 DEP_LABEL = "Read integrations in a member account"
+ASSURANCE_LABEL = "Cloud assurance reads in a member account"
+ASSURANCE_ORG_LABEL = "Cloud assurance reads in the management account"
 
 
 ASSIGN_LABEL = "Permission set in every account"
@@ -365,7 +470,8 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
     ctx["member_access"] = role_name or (f"permission set {pair[1]}" if pair else None)
 
     def skip_rest(why: str, assignments: str | None = None) -> None:
-        for cid, label in (("inventory_reads", INV_LABEL), ("dependency_reads", DEP_LABEL)):
+        for cid, label in (("inventory_reads", INV_LABEL), ("dependency_reads", DEP_LABEL),
+                           ("assurance_reads", ASSURANCE_LABEL)):  # fmt: skip
             checks.append(Check(cid, label, "skip", why))
         if assignments is not None:
             checks.append(Check("assignments", ASSIGN_LABEL, "skip", assignments))
@@ -419,22 +525,18 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
         return skip_rest("Needs deep scan access.", "Needs deep scan access." if role_name else None)
 
     sets = (
-        ("inventory_reads", INV_LABEL, INVENTORY_PROBES, "Inventory"),
-        ("dependency_reads", DEP_LABEL, DEPENDENCY_PROBES, "Dependency"),
+        ("inventory_reads", INV_LABEL, INVENTORY_PROBES, "Inventory scans will miss these"),
+        ("dependency_reads", DEP_LABEL, DEPENDENCY_PROBES, "Dependency scans will miss these"),
+        ("assurance_reads", ASSURANCE_LABEL, ASSURANCE_PROBES, "The assurance checks will show these as not measured"),
     )
-    # Both sets at once: every call goes to a different service.
+    # The sets at once: every call goes to a different service.
     results = pmap(lambda st: probe_actions(member, member_id, st[2]), sets, workers=len(sets))
     for (cid, label, probes, what), (denied, other) in zip(sets, results, strict=True):
-        n = len(probes)
-        if denied:
-            detail = f"{len(denied)} of {n} calls refused in {member_id}: {', '.join(denied)}"
-            fix = f"{what} scans will miss these. Grant them (iam/member-account-role-policy.json)."
-        elif other:
-            detail, fix = f"Could not finish: {'; '.join(other)}", "Sign in again and re-check."
-        else:
-            detail, fix = f"All {n} read-only calls allowed in {member_id}.", ""
-        status = "warn" if denied or other else "ok"
-        checks.append(Check(cid, label, status, detail, fix, ", ".join(denied)))
+        policy = "iam/member-account-role-policy.json"
+        check = _probe_check(cid, label, probes, denied, other, member_id, what, policy)
+        if cid != "assurance_reads" and denied:
+            check.fix = f"{what}. Grant them ({policy})."
+        checks.append(check)
     if role_name:
         checks.append(
             Check(
@@ -492,14 +594,17 @@ _LATER = [
     ("account_tags", "Read account tags"),
     ("cost", "Read Cost Explorer"),
     ("commitments", "Read Savings Plans and reservations"),
+    ("assurance_org", ASSURANCE_ORG_LABEL),
     ("deep_scan", DEEP_LABEL),
     ("inventory_reads", INV_LABEL),
     ("dependency_reads", DEP_LABEL),
+    ("assurance_reads", ASSURANCE_LABEL),
     ("assignments", ASSIGN_LABEL),
     ("ai", AI_LABEL),
 ]
 # Checks a quick scan can do without: a failure there is a warning, not "Not ready".
-OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads", "assignments", "ai"}
+OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads", "assurance_org",
+            "assurance_reads", "assignments", "ai"}  # fmt: skip
 # Every run reports exactly these checks, in this order (skipped ones included).
 STEPS = [("identity", "Sign in to AWS"), *_LATER]
 
@@ -545,7 +650,7 @@ def _result(checks: list[Check], ctx: dict) -> dict:
 def admin_request(result: dict) -> str:
     """Plain-text message for the AWS administrator, specific to what failed."""
     missing = [c for c in result["checks"] if c["status"] in ("fail", "warn") and c["needs"]]
-    member_gaps = [c for c in missing if c["id"] in ("inventory_reads", "dependency_reads")]
+    member_gaps = [c for c in missing if c["id"] in ("inventory_reads", "dependency_reads", "assurance_reads")]
     missing = [c for c in missing if c not in member_gaps]
     wrong_account = any(c["id"] == "organization" and c["status"] == "warn" for c in result["checks"])
     mgmt = result.get("management_account_id") or "<management account id>"
@@ -599,6 +704,13 @@ def admin_request(result: dict) -> str:
             "iam/member-account-role-policy.json (StackSet: iam/cloudformation/member-role-stackset.yaml).",
             "",
         ]
+        if any(c["id"] == "assurance_reads" for c in member_gaps):
+            lines += [
+                "The Cloud Assurance Framework checks read security settings (IAM, S3, CloudTrail, GuardDuty, Security "
+                "Hub, Config, backups and more). The simplest grant is the AWS managed policy SecurityAudit "
+                "(arn:aws:iam::aws:policy/SecurityAudit) on the same role or permission set; it is read-only.",
+                "",
+            ]
     lines += [
         "Cost: Cost Explorer API calls are US$0.01 each, about 2 per 100 accounts per scan.",
         "",
