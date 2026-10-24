@@ -26,7 +26,7 @@ from concurrent.futures.process import BrokenProcessPool
 
 import boto3
 
-from .collectors import inventory
+from .collectors import assurance, inventory
 from .config import settings
 from .logging_config import get_logger, run_id_var
 
@@ -90,6 +90,18 @@ def _inventory(creds: tuple[str, str, str | None], region: str | None, account_i
         run_id_var.reset(token)
 
 
+def _assurance(creds: tuple[str, str, str | None], region: str | None, account_id: str, regions, info, run_id):
+    """In a worker: one account's Cloud Assurance Framework checks."""
+    token = run_id_var.set(run_id)
+    try:
+        session = boto3.Session(
+            aws_access_key_id=creds[0], aws_secret_access_key=creds[1], aws_session_token=creds[2], region_name=region
+        )
+        return assurance.account_checks(session, account_id, regions, info)
+    finally:
+        run_id_var.reset(token)
+
+
 class InventoryPool:
     """Worker processes for one deep scan. Safe to call from the scan's many threads at once."""
 
@@ -115,16 +127,32 @@ class InventoryPool:
     def inventory_account(self, session, account_id: str, regions, dependencies: bool = False):
         """As inventory.inventory_account, in a worker. If the workers have died (killed, out of memory),
         the account is read in this process instead, so a scan never loses accounts to it."""
+        return self._account(
+            _inventory,
+            lambda: inventory.inventory_account(session, account_id, regions, dependencies=dependencies),
+            session,
+            account_id,
+            regions,
+            dependencies,
+        )
+
+    def assurance_account(self, session, account_id: str, regions, info: dict):
+        """As assurance.account_checks, in a worker, with the same fallback."""
+        return self._account(
+            _assurance, lambda: assurance.account_checks(session, account_id, regions, info), session, account_id,
+            regions, info,
+        )  # fmt: skip
+
+    def _account(self, fn, here, session, account_id: str, *args):
         base = getattr(session, "session", session)  # a ClientCache stands in for the scan's own session
         creds = base.get_credentials().get_frozen_credentials()  # refreshed here if close to expiry
         try:
             return self.call(
-                _inventory,
+                fn,
                 (creds.access_key, creds.secret_key, creds.token),
                 base.region_name,
                 account_id,
-                regions,
-                dependencies,
+                *args,
                 run_id_var.get(),
             )
         except BrokenProcessPool:
@@ -134,7 +162,7 @@ class InventoryPool:
                 first, self._broken = not self._broken, True
             if first:
                 log.warning("the deep-scan worker processes stopped; reading the remaining accounts in the console")
-            return inventory.inventory_account(session, account_id, regions, dependencies=dependencies)
+            return here()
 
     def close(self) -> None:
         """Stop the workers, then the log relay once their last lines are in. Idempotent."""

@@ -92,8 +92,18 @@ NOT_CHANGE_SOURCES = ("signin.", "sso.", "sts.", "cloudshell.", "athena.", "heal
 
 
 @lru_cache(maxsize=1)
+def catalog() -> dict:
+    """The rule catalogue, data/assurance.yaml."""
+    return yaml.safe_load(resources.files("exitrisk").joinpath("data/assurance.yaml").read_text(encoding="utf-8"))
+
+
+def catalog_version() -> str:
+    return str(catalog().get("version", ""))
+
+
+@lru_cache(maxsize=1)
 def lifecycle_data() -> dict:
-    raw = yaml.safe_load(resources.files("exitrisk").joinpath("data/assurance.yaml").read_text(encoding="utf-8"))
+    raw = catalog()
     day = lambda v: v if isinstance(v, date) else date.fromisoformat(str(v))  # noqa: E731
     return {
         "lambda": {k: day(v) for k, v in (raw.get("lambda_deprecated") or {}).items()},
@@ -169,7 +179,9 @@ class Ctx:
         self.session = session
         self.account_id = account_id
         self.regions = regions
-        self.home = regions[0] if regions else "us-east-1"
+        # The account's busiest region: event history, Macie and the trail are read there.
+        home = info.get("home")
+        self.home = home if home in regions else regions[0] if regions else "us-east-1"
         self.r = Results()
         self.org_ids = set(info.get("org_ids") or [])
         services = info.get("services")

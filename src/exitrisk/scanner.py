@@ -23,7 +23,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from . import procs, sso, store
 from .aws_session import ClientCache, caller_identity, make_session, member_session
-from .collectors import cost, inventory, organizations
+from .collectors import assurance, assurance_org, cost, inventory, organizations
 from .config import settings
 from .issues import Issue, describe_exception, is_fatal_auth_error
 from .logging_config import get_logger, run_id_var
@@ -103,6 +103,9 @@ class ScanParams:
     regions: list[str] | None = None
     # "all" enabled regions in every account, or only the regions where each account has "spend".
     region_scope: str = "all"
+    # Cloud Assurance Framework checks: governance and control settings in every account, plus the
+    # organisation-level controls read in the management account. Independent of the inventory.
+    assurance: bool = False
     label: str = ""
     target: str = "azure"  # exit target asked at scan time; seeds the estimate questionnaire
 
@@ -119,9 +122,9 @@ class ScanParams:
             raise ValueError(f"region_scope must be one of {', '.join(REGION_SCOPES)}")
         if not 1 <= self.months <= 12:
             raise ValueError("months must be between 1 and 12")
-        if self.inventory and not self.role_name and not sso.profile_permission_set(self.profile):
+        if (self.inventory or self.assurance) and not self.role_name and not sso.profile_permission_set(self.profile):
             raise ValueError(
-                "a member-account role name is required for the resource inventory "
+                "a member-account role name is required for the resource inventory and the assurance checks "
                 "(or use an IAM Identity Center profile, whose permission set is then used in each account)"
             )
 
@@ -308,6 +311,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None
         "commitments": data.get("commitments"),
         "period": data.get("period"),
         "inventory": data.get("inventory", {}),
+        "assurance": data.get("assurance"),
         "unavailable": data.get("unavailable", {}),
         "issues": [i.to_dict() for i in job.issues],
     }
@@ -356,6 +360,8 @@ def run_scan(job: ScanJob) -> dict:
     job.update("auth", 5, f"Authenticating with profile '{p.profile or 'default'}' (approve Touch ID if prompted)")
     # Shared by the threads below (tags, cost queries, inventory): clients made one at a time.
     session = ClientCache(make_session(p.profile))
+    known: dict = {}  # OU id -> its accounts, for the whole organisation
+    tree = None
     try:
         data["identity"] = caller_identity(session)
     except Exception as exc:
@@ -370,7 +376,6 @@ def run_scan(job: ScanJob) -> dict:
         # Always read fresh: a scan is evidence, so an OU moved minutes ago must count. The picker's
         # cached copy is refreshed with what the scan saw.
         data["org"] = organizations.describe_org(session)
-        known: dict = {}
         tree = organizations.list_ou_tree(
             session,
             known,
@@ -566,8 +571,16 @@ def run_scan(job: ScanJob) -> dict:
                 a["tags"] = tags.get(a["id"], {})
 
     # 4. Optional deep inventory through a role in each member account.
+    caller = data["identity"]["account_id"]
+    regions_for = _region_picker(job) if p.inventory or p.assurance else None
     if p.inventory:
-        data["inventory"] = _run_inventory(job, session, accounts, data["identity"]["account_id"])
+        span = (60, 80) if p.assurance else (60, 98)
+        data["inventory"] = _run_inventory(job, session, accounts, caller, regions_for, span)
+
+    # 5. Optional Cloud Assurance Framework checks: the organisation's controls, then each account.
+    if p.assurance:
+        span = (80, 98) if p.inventory else (60, 98)
+        data["assurance"] = _run_assurance(job, session, accounts, caller, regions_for, tree, known, span)
 
     status = "complete" if not any(i.severity in ("error", "critical") for i in job.issues) else "partial"
     job.update("saving", 99, "Saving the scan")
@@ -578,26 +591,9 @@ def run_scan(job: ScanJob) -> dict:
     return doc
 
 
-def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
-    """Inventory each active account through the scan role; the caller's own account uses the session as is."""
+def _region_picker(job: ScanJob):
+    """regions_for(account id): the regions a deep read covers in that account, busiest first."""
     p = job.params
-    results: dict = {}
-    done = 0
-
-    pair = None if p.role_name else sso.profile_permission_set(p.profile)
-    access = p.role_name or (f"permission set {pair[1]}" if pair else "your sign-in")
-    if pair:
-        job.add_issue(
-            Issue(
-                "info",
-                "inventory",
-                f"Heads up: this deep scan uses your own sign-in ({access}). It is renewed as the scan runs; if it "
-                "ends, the scan waits up to 15 minutes for you to sign in again. Accounts it still cannot reach "
-                "(AWS throttling the sign-in portal, or no sign-in in time) are each listed as their own issue.",
-                "Give a member role to assume (ExitRiskReadOnly) to avoid depending on your sign-in.",
-            )
-        )
-
     with_spend = None
     if p.region_scope == "spend":
         if job.data.get("region_costs"):
@@ -630,6 +626,115 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
         mine = with_spend[account_id]
         return ([r for r in mine if r in p.regions] or p.regions) if p.regions else mine
 
+    return regions_for
+
+
+def _busiest_regions(job: ScanJob) -> dict[str, str]:
+    """Each account's region with the most spend."""
+    spend: dict[str, dict[str, float]] = {}
+    for r in job.data.get("region_costs") or []:
+        region = r.get("region") or ""
+        if region and region not in ("global", "NoRegion"):
+            acct = spend.setdefault(r["account_id"], {})
+            acct[region] = acct.get(region, 0.0) + float(r.get("monthly") or 0)
+    return {a: max(v, key=v.get) for a, v in spend.items() if v}
+
+
+def _run_inventory(job: ScanJob, session, accounts, caller: str, regions_for=None, span=(60, 98)) -> dict:
+    """Inventory each active account through the scan role; the caller's own account uses the session as is."""
+    p = job.params
+    regions_for = regions_for or _region_picker(job)
+    active = [a for a in accounts if a.status in ("ACTIVE", "UNKNOWN")]
+    if p.inventory_scope == "material":
+        keep = material_accounts(job.data.get("costs") or [], p.months)
+        log.info(
+            "selective deep scan: %d of %d account(s) are material", len(keep & {a.id for a in active}), len(active)
+        )
+        active = [a for a in active if a.id in keep]
+
+    def read(workers, sess, account):
+        fn = workers.inventory_account if workers else inventory.inventory_account
+        return fn(sess, account.id, regions_for(account.id), dependencies=p.dependencies)
+
+    return _each_account(job, session, active, caller, read, "inventory", "scanned", span)
+
+
+def _run_assurance(job: ScanJob, session, accounts, caller: str, regions_for, tree, known: dict, span) -> dict:
+    """The organisation-level controls from the management account, then each active account's checks."""
+    p = job.params
+    active = [a for a in accounts if a.status in ("ACTIVE", "UNKNOWN")]
+    rows = job.data.get("accounts") or []
+    busiest = _busiest_regions(job)
+    org_facts: dict = {}
+    mgmt = (job.data.get("org") or {}).get("management_account_id")
+    if mgmt and mgmt == caller:
+        pair = sso.profile_permission_set(p.profile)
+        try:
+            sso_region = sso._session_config(pair[0]).get("sso_region") if pair else None
+        except sso.SSOFailure:
+            sso_region = None
+        org_facts, issues = assurance_org.org_checks(
+            session, tree, rows, sso_region, busiest.get(caller) or "us-east-1",
+            lambda what: job.update("assurance", span[0], f"Assurance: reading the organisation's {what}"),
+        )  # fmt: skip
+        for i in issues:
+            job.add_issue(i)
+    else:
+        job.add_issue(
+            Issue(
+                "warning",
+                "assurance",
+                "Not running in the management account: guardrails (SCPs), central root access, Identity Center "
+                "administrators and owner checks are not measured.",
+                "Scan with a profile in the management account for the organisation-level checks.",
+            )
+        )
+    org_ids = sorted({a["id"] for a in rows} | {a["Id"] for found in known.values() for a in found})
+    services: dict[str, set[str]] = {}
+    for r in job.data.get("costs") or []:
+        if float(r.get("amount") or 0) > 0:
+            services.setdefault(r["account_id"], set()).add(r["service"])
+    ta_org = "trusted_advisor" in org_facts
+
+    def read(workers, sess, account):
+        info = {
+            "org_ids": org_ids,
+            "services": sorted(services[account.id]) if account.id in services else None,
+            "ta_org": ta_org,
+            "home": busiest.get(account.id),
+        }
+        fn = workers.assurance_account if workers else assurance.account_checks
+        return fn(sess, account.id, regions_for(account.id), info)
+
+    results = _each_account(job, session, active, caller, read, "assurance", "checked", span)
+    return {
+        "catalog_version": assurance.catalog_version(),
+        "org": org_facts,
+        "accounts": results,
+    }
+
+
+def _each_account(job: ScanJob, session, active, caller: str, read, what: str, verb: str, span) -> dict:
+    """``read(workers, session, account) -> (result, issues)`` for each account through the scan role,
+    accounts on threads (sign-in and AWS waits) and parsing in worker processes (CPU)."""
+    p = job.params
+    results: dict = {}
+    done = 0
+
+    pair = None if p.role_name else sso.profile_permission_set(p.profile)
+    access = p.role_name or (f"permission set {pair[1]}" if pair else "your sign-in")
+    if pair and not any(i.category == "inventory" and i.message.startswith("Heads up") for i in job.issues):
+        job.add_issue(
+            Issue(
+                "info",
+                "inventory",
+                f"Heads up: this deep scan uses your own sign-in ({access}). It is renewed as the scan runs; if it "
+                "ends, the scan waits up to 15 minutes for you to sign in again. Accounts it still cannot reach "
+                "(AWS throttling the sign-in portal, or no sign-in in time) are each listed as their own issue.",
+                "Give a member role to assume (ExitRiskReadOnly) to avoid depending on your sign-in.",
+            )
+        )
+
     def one(account):
         try:
             try:
@@ -650,7 +755,7 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
                 [
                     Issue(
                         "error",
-                        "inventory",
+                        what,
                         f"cannot reach {account.name} as {access}: {msg}",
                         hint
                         or (
@@ -664,53 +769,43 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str) -> dict:
                 ],
             )
         try:
-            inv, issues = read(sess, account.id, regions_for(account.id), dependencies=p.dependencies)
+            out, issues = read(workers, sess, account)
         except procs.Stopped:
             return account, None, []
         except Exception as exc:  # one account's odd answer must not lose the other accounts
             if not isinstance(exc, (ClientError, BotoCoreError)):
-                log.exception("inventory of %s failed with an unexpected error", account.id)
+                log.exception("%s of %s failed with an unexpected error", what, account.id)
             code, msg, hint = describe_exception(exc)
             severity = "critical" if is_fatal_auth_error(code) else "error"
             issue = Issue(
                 severity,
-                "inventory",
-                f"inventory of {account.name} failed: {msg}",
+                what,
+                f"{what} of {account.name} failed: {msg}",
                 hint,
                 account_id=account.id,
                 error_code=code,
             )
             return account, None, [issue]
-        return account, inv, issues
+        return account, out, issues
 
-    active = [a for a in accounts if a.status in ("ACTIVE", "UNKNOWN")]
-    if p.inventory_scope == "material":
-        keep = material_accounts(job.data.get("costs") or [], p.months)
-        log.info(
-            "selective deep scan: %d of %d account(s) are material", len(keep & {a.id for a in active}), len(active)
-        )
-        active = [a for a in active if a.id in keep]
-    # Accounts are read on threads (sign-in and AWS waits) and parsed in worker processes (CPU).
     workers = (
         InventoryPool(min(settings.processes, len(active))) if settings.processes > 1 and len(active) > 1 else None
     )
-    read = workers.inventory_account if workers else inventory.inventory_account
     pool = ThreadPoolExecutor(max_workers=settings.max_workers)
+    label = "Assurance checks" if what == "assurance" else None
     with workers or nullcontext():
         try:
             # Each account's thread runs in a copy of this context, so its log lines keep the scan's run id.
             for fut in as_completed([pool.submit(contextvars.copy_context().run, one, a) for a in active]):
-                account, inv, issues = fut.result()
+                account, out, issues = fut.result()
                 for i in issues:
                     job.add_issue(i)
-                if inv:
-                    results[account.id] = inv
+                if out:
+                    results[account.id] = out
                 done += 1
-                job.update(
-                    "inventory",
-                    60 + int(38 * done / max(len(active), 1)),
-                    f"{done} of {len(active)} accounts scanned: {account.name}",
-                )
+                text = f"{done} of {len(active)} accounts {verb}: {account.name}"
+                job.update(what, span[0] + int((span[1] - span[0]) * done / max(len(active), 1)),
+                           f"{label}: {text}" if label else text)  # fmt: skip
         except BaseException:
             # Ctrl+C or a failure: drop the accounts not yet started and stop the workers now, rather
             # than reading every remaining account first.
