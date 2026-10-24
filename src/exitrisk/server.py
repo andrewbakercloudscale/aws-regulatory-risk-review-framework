@@ -28,9 +28,10 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, preflight, schedule, sso, store
+from . import __version__, preflight, rulesets, schedule, sso, store
 from .ai import providers as ai_providers
 from .ai import review as ai_review
+from .assurance import AssuranceAnswers, build_assurance, evidence, ownership_export
 from .aws_session import available_profiles, make_session, profile_accounts
 from .catalog import load_catalog
 from .collectors import organizations
@@ -89,6 +90,7 @@ class ScanRequest(BaseModel):
     inventory_scope: str = Field("all", pattern="^(all|material)$")
     regions: list[REGION] | None = Field(None, max_length=40)
     region_scope: str = Field("all", pattern="^(all|spend)$")
+    assurance: bool = False
     label: str = Field("", max_length=120)
     target: str = Field("azure", pattern=TARGET_PATTERN)
     # Set to run the AI review on the finished scan, with the report as the console will show it.
@@ -166,6 +168,20 @@ class MultiRegionRequest(BaseModel):
     filter: FilterModel = FilterModel()
     questionnaire: Questionnaire = Questionnaire()
     multiregion: MultiRegionAnswers = MultiRegionAnswers()
+
+
+class AssuranceRequest(BaseModel):
+    scan_id: str
+    filter: FilterModel = FilterModel()
+    answers: AssuranceAnswers = AssuranceAnswers()
+
+
+class OwnershipExportRequest(AssuranceRequest):
+    # Account id -> the new owner the analyst approved in the report.
+    approved: dict[Annotated[str, Field(pattern=r"^\d{12}$")], Annotated[str, Field(max_length=200)]] = Field(
+        default_factory=dict, max_length=2000
+    )
+    tag: str = Field("Owner", max_length=60, pattern=r"^[\w.:/=+@ -]+$")
 
 
 def _host_name(header: str) -> str:
@@ -510,6 +526,56 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         except FilterError as exc:
             raise HTTPException(400, str(exc)) from exc
         return build_multiregion(scan, flt, req.questionnaire, req.multiregion)
+
+    # ------------------------------------------------------------------ Cloud Assurance Framework
+    def _assurance(req: AssuranceRequest) -> dict:
+        try:
+            scan = store.load_scan(req.scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        try:
+            flt = AccountFilter(**req.filter.model_dump())
+        except FilterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return build_assurance(scan, flt, req.answers)
+
+    @app.post("/api/assurance")
+    def assurance(req: AssuranceRequest):
+        return _assurance(req)
+
+    @app.post("/api/assurance/evidence")
+    def assurance_evidence(req: AssuranceRequest):
+        record = evidence(_assurance(req))
+        name = f"cloud-assurance-{req.scan_id}-{record['sha256'][:12]}.json"
+        return JSONResponse(record, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.post("/api/assurance/ownership-export")
+    def assurance_ownership(req: OwnershipExportRequest):
+        return ownership_export(_assurance(req), req.approved, req.tag)
+
+    @app.get("/api/assurance/catalog")
+    def assurance_catalog():
+        from .collectors.assurance import catalog
+
+        cat = catalog()
+        return {k: cat[k] for k in ("version", "points", "areas", "checks")}
+
+    @app.get("/api/rulesets")
+    def list_rulesets():
+        return {"rulesets": rulesets.list_all()}
+
+    @app.put("/api/rulesets")
+    def save_ruleset(req: rulesets.Ruleset):
+        try:
+            return rulesets.save(req)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.delete("/api/rulesets/{name}")
+    def delete_ruleset(name: str):
+        if not rulesets.delete(name):
+            raise HTTPException(404, "no saved ruleset by that name (built-in rulesets cannot be deleted)")
+        return {"deleted": name}
 
     # ------------------------------------------------------------------ AI review (optional)
     def _ai_settings(req: AISettingsRequest | None = None) -> ai_providers.AISettings:

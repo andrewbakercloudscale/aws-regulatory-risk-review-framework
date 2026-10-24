@@ -41,6 +41,7 @@ PARAM_KEYS = (
     "regions",
     "region_scope",
     "target",
+    "assurance",
 )
 
 
