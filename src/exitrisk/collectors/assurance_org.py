@@ -159,7 +159,8 @@ def trusted_advisor(session, account_ids: set[str]) -> dict:
 
 
 def identity_center_region(session, hint: str | None) -> str | None:
-    for region in dict.fromkeys([r for r in (hint, session.region_name, "us-east-1") if r]):
+    home = getattr(getattr(session, "session", session), "region_name", None)
+    for region in dict.fromkeys([r for r in (hint, home, "us-east-1") if r]):
         try:
             if _client(session, "sso-admin", region).list_instances().get("Instances"):
                 return region
