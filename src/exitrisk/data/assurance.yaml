@@ -1,0 +1,1282 @@
+# The Cloud Assurance Framework: every rule the "Cloud Assurance Framework Report" can test
+# (report/assurance.py, collectors/assurance.py, collectors/assurance_org.py).
+#
+# Each check is evaluated per account and ends in one of four states: pass, fail, not measured
+# (the call was refused or failed) or not applicable. A failing check adds its severity's points
+# to the account's assurance risk score, once per check however many resources fail it.
+#
+#   area      the governance concern it belongs to (areas below)
+#   severity  critical | high | medium | low
+#   scope     all (default) | production (production accounts only) | non_edge (accounts that are
+#             not internet-edge accounts) | sensitive (accounts holding sensitive buckets), set by
+#             the patterns answered in the report
+#   refs      public control references: CIS AWS Foundations Benchmark v3.0.0 and the AWS Foundational
+#             Security Best Practices (FSBP) control ids in Security Hub
+#   source    the read-only AWS calls the check is evaluated from
+#
+# Which rules apply is chosen in the report (rulesets); this file is the full catalogue. Edit freely:
+# a check removed here disappears from the report; severities and areas can be changed without a
+# new scan. Bump the version when you do.
+version: 2026.10.2
+
+points: {critical: 40, high: 15, medium: 5, low: 1}
+
+areas:
+  exposure:
+    label: Internet exposure
+    concern: Hosts, data and services reachable from the internet that should not be.
+  access:
+    label: Identity and privileged access
+    concern: Who holds administrator rights, root and long-lived credentials, segregation of duties.
+  logging:
+    label: Audit trail
+    concern: Complete, tamper-evident records of who changed what, kept as evidence.
+  detection:
+    label: Threat detection and open findings
+    concern: Security services switched on, and the issues AWS itself reports being closed.
+  data:
+    label: Data protection and location
+    concern: Encryption, key management, and where data actually sits.
+  sensitive:
+    label: Sensitive data controls
+    concern: Payment and customer files protected against change, deletion and silent tampering.
+  change:
+    label: Change management
+    concern: Production changed through pipelines, not by hand; configuration kept in its approved state.
+  resilience:
+    label: Resilience and disaster recovery
+    concern: Production survives the loss of a data centre (AZ) or region, and recovery is tested.
+  lifecycle:
+    label: Technology lifecycle
+    concern: Runtimes and platform versions past their end of support.
+  third_party:
+    label: Third-party and external access
+    concern: Resources and roles shared with accounts outside the organisation.
+  ownership:
+    label: Ownership and accountability
+    concern: Every account has a current, reachable owner and security contact.
+  cost:
+    label: Cost control
+    concern: Spend is planned, watched and owned.
+  ai:
+    label: AI services
+    concern: AI model use is logged and governed.
+
+checks:
+  # ---------------------------------------------------------------- internet exposure
+  - id: admin_ports_public
+    area: exposure
+    severity: critical
+    title: SSH or RDP reachable from the internet
+    why: A security group allows 0.0.0.0/0 or ::/0 on port 22 or 3389 and is attached to a resource with a public IP, so anyone can try to log in.
+    fix: Remove the internet rule; reach hosts through Systems Manager Session Manager or a bastion behind the VPN.
+    refs: [CIS 5.2, CIS 5.3, FSBP EC2.13, FSBP EC2.14]
+    source: ec2:DescribeSecurityGroups, ec2:DescribeNetworkInterfaces
+  - id: db_ports_public
+    area: exposure
+    severity: high
+    title: Database or cache ports reachable from the internet
+    why: A security group open to the internet on a database or cache port (1433, 3306, 5432, 6379, 27017 and others) is attached to a resource with a public IP.
+    fix: Remove the internet rule and keep databases in private subnets.
+    refs: [FSBP EC2.19]
+    source: ec2:DescribeSecurityGroups, ec2:DescribeNetworkInterfaces
+  - id: admin_ports_open
+    area: exposure
+    severity: medium
+    title: Security groups open to the internet on SSH or RDP
+    why: The rule is not attached to anything public today, but it is one attachment away from exposure.
+    fix: Remove the 0.0.0.0/0 and ::/0 rules on 22 and 3389.
+    refs: [CIS 5.2, CIS 5.3]
+    source: ec2:DescribeSecurityGroups
+  - id: ec2_public_ip
+    area: exposure
+    severity: medium
+    scope: non_edge
+    title: Instances with a public IP outside the internet edge
+    why: Instances outside the designated internet-edge accounts have public IPv4 addresses, bypassing central inspection.
+    fix: Remove public IPs; publish through the edge accounts' load balancers.
+    refs: [FSBP EC2.9]
+    source: ec2:DescribeNetworkInterfaces
+  - id: igw_present
+    area: exposure
+    severity: medium
+    scope: non_edge
+    title: Internet gateway outside the internet edge
+    why: A VPC has its own internet gateway, so traffic can enter or leave without passing the central firewall.
+    fix: Route internet traffic through the edge or network account; detach the gateway.
+    refs: []
+    source: ec2:DescribeInternetGateways
+  - id: nat_present
+    area: exposure
+    severity: low
+    scope: non_edge
+    title: NAT gateway outside the internet edge
+    why: Outbound internet traffic leaves this account directly, not through central egress filtering.
+    fix: Send egress through the central egress VPC (Transit Gateway) and remove local NAT gateways.
+    refs: []
+    source: ec2:DescribeNatGateways
+  - id: public_lb
+    area: exposure
+    severity: low
+    scope: non_edge
+    title: Internet-facing load balancers outside the internet edge
+    why: Services are published to the internet from an account that is not an internet-edge account.
+    fix: Publish through the edge accounts, or record the account as an internet-edge account.
+    refs: []
+    source: elasticloadbalancing:DescribeLoadBalancers
+  - id: rds_public
+    area: exposure
+    severity: high
+    title: Databases marked publicly accessible
+    why: RDS instances with PubliclyAccessible get a public DNS name and can be reached from the internet if a security group allows it.
+    fix: Turn off public accessibility (modify the instance).
+    refs: [CIS 2.3.3, FSBP RDS.2]
+    source: rds:DescribeDBInstances
+  - id: public_snapshots
+    area: exposure
+    severity: critical
+    title: Disk snapshots shared with everyone
+    why: "EBS snapshots restorable by any AWS account: anyone can copy the disk and read its data."
+    fix: Remove the public restore permission from the snapshots.
+    refs: [FSBP EC2.1]
+    source: ec2:DescribeSnapshots
+  - id: public_amis
+    area: exposure
+    severity: high
+    title: Machine images shared with everyone
+    why: Public AMIs often hold configuration, keys or data baked into the image.
+    fix: Make the images private.
+    refs: []
+    source: ec2:DescribeImages
+  - id: s3_account_bpa
+    area: exposure
+    severity: high
+    title: S3 Block Public Access not on for the account
+    why: Without all four account-level settings, one bucket policy or ACL can make data public.
+    fix: Turn on all four S3 Block Public Access settings at account level.
+    refs: [CIS 2.1.4, FSBP S3.1]
+    source: s3:GetAccountPublicAccessBlock
+  - id: s3_public_bucket
+    area: exposure
+    severity: critical
+    title: Public S3 buckets
+    why: A bucket policy grants access to everyone.
+    fix: Remove the public statement, then turn on Block Public Access.
+    refs: [FSBP S3.2, FSBP S3.3, FSBP S3.8]
+    source: s3:GetBucketPolicyStatus, s3:GetBucketPublicAccessBlock
+  - id: imdsv2
+    area: exposure
+    severity: medium
+    title: Instances that allow IMDSv1
+    why: The old instance metadata service lets a server-side request forgery steal the instance's credentials.
+    fix: Require IMDSv2 (HttpTokens required) on every instance and in launch templates.
+    refs: [CIS 5.6, FSBP EC2.8]
+    source: ec2:DescribeInstances
+  - id: default_sg_open
+    area: exposure
+    severity: low
+    title: Default security groups allow traffic
+    why: Anything launched without a chosen security group gets the default one.
+    fix: Remove every rule from the default security group of each VPC.
+    refs: [CIS 5.4, FSBP EC2.2]
+    source: ec2:DescribeSecurityGroups
+  - id: default_vpc
+    area: exposure
+    severity: low
+    title: Default VPC still present
+    why: Default VPCs have public subnets and an internet gateway, ready for an accidental public launch.
+    fix: Delete unused default VPCs.
+    refs: []
+    source: ec2:DescribeVpcs
+  - id: all_ports_public
+    area: exposure
+    severity: critical
+    title: Every port reachable from the internet
+    why: A security group allows all traffic from 0.0.0.0/0 or ::/0 and is attached to a resource with a public IP.
+    fix: Replace the rule with the few ports the service needs, from known addresses only.
+    refs: [CIS 5.2, FSBP EC2.18]
+    source: ec2:DescribeSecurityGroups, ec2:DescribeNetworkInterfaces
+  - id: nacl_admin_open
+    area: exposure
+    severity: low
+    title: Network ACLs open to the internet on SSH or RDP
+    why: A network ACL allows inbound 22 or 3389 from anywhere, so the subnet relies on security groups alone.
+    fix: Deny or narrow admin ports in the network ACL.
+    refs: [CIS 5.1, FSBP EC2.21]
+    source: ec2:DescribeNetworkAcls
+  - id: eks_public_endpoint
+    area: exposure
+    severity: high
+    title: Kubernetes API open to the internet
+    why: An EKS cluster endpoint is public with no address restriction.
+    fix: Make the endpoint private, or limit it to the corporate address ranges.
+    refs: [FSBP EKS.1]
+    source: eks:DescribeCluster
+  - id: opensearch_public
+    area: exposure
+    severity: high
+    title: OpenSearch domains outside a VPC
+    why: The domain has a public endpoint and is protected only by its access policy.
+    fix: Recreate the domain inside a VPC.
+    refs: [FSBP Opensearch.2]
+    source: es:DescribeDomains
+  - id: redshift_public
+    area: exposure
+    severity: high
+    title: Redshift clusters marked publicly accessible
+    why: The data warehouse can be given a public address and reached from the internet.
+    fix: Turn off public accessibility.
+    refs: [FSBP Redshift.1]
+    source: redshift:DescribeClusters
+  - id: elb_http
+    area: exposure
+    severity: medium
+    title: Load balancers serving plain HTTP
+    why: A listener accepts HTTP without redirecting to HTTPS, so traffic can be read or changed in transit.
+    fix: Redirect HTTP to HTTPS or remove the listener.
+    refs: [FSBP ELB.1]
+    source: elasticloadbalancing:DescribeListeners
+  - id: tls_outdated
+    area: exposure
+    severity: medium
+    title: Load balancers allowing TLS 1.0 or 1.1
+    why: An HTTPS listener uses a security policy that still accepts retired TLS versions.
+    fix: Move to a TLS 1.2 or 1.3 policy (ELBSecurityPolicy-TLS13-1-2-2021-06).
+    refs: [FSBP ELB.8]
+    source: elasticloadbalancing:DescribeListeners
+  - id: waf_missing
+    area: exposure
+    severity: medium
+    title: Internet-facing applications without a web firewall
+    why: A public Application Load Balancer or API Gateway stage has no AWS WAF web ACL.
+    fix: Attach a WAF web ACL with the AWS managed rule groups.
+    refs: [FSBP APIGateway.4, FSBP WAF.10]
+    source: wafv2:ListWebACLs, wafv2:ListResourcesForWebACL
+  - id: cloudfront_http
+    area: exposure
+    severity: medium
+    title: CloudFront serving plain HTTP
+    why: A distribution allows viewers to connect over HTTP.
+    fix: Set the viewer protocol policy to redirect-to-https or https-only.
+    refs: [FSBP CloudFront.3]
+    source: cloudfront:ListDistributions
+  - id: cloudfront_no_waf
+    area: exposure
+    severity: low
+    title: CloudFront without a web firewall
+    why: A distribution has no AWS WAF web ACL.
+    fix: Attach a WAF web ACL.
+    refs: [FSBP CloudFront.6]
+    source: cloudfront:ListDistributions
+
+  # ---------------------------------------------------------------- identity and privileged access
+  - id: root_mfa
+    area: access
+    severity: critical
+    title: Root user without MFA
+    why: The root user can do anything in the account, including closing it, and cannot be restricted.
+    fix: Turn on MFA (a hardware key) for root, or remove root credentials centrally through AWS Organizations.
+    refs: [CIS 1.5, FSBP IAM.9]
+    source: iam:GetAccountSummary
+  - id: root_keys
+    area: access
+    severity: critical
+    title: Root user has access keys
+    why: Root access keys are unrestricted, long-lived credentials.
+    fix: Delete the root access keys.
+    refs: [CIS 1.4, FSBP IAM.4]
+    source: iam:GetAccountSummary
+  - id: root_used
+    area: access
+    severity: high
+    title: Root user used in the last 90 days
+    why: Day-to-day use of root bypasses every permission and approval control.
+    fix: Use roles for daily work; keep root for the few tasks that need it, under break-glass procedure.
+    refs: [CIS 1.7]
+    source: iam:GenerateCredentialReport, iam:GetCredentialReport
+  - id: console_no_mfa
+    area: access
+    severity: high
+    title: IAM users who sign in without MFA
+    why: A password alone is enough to sign in to the console.
+    fix: Enforce MFA, or move the people to IAM Identity Center.
+    refs: [CIS 1.10, FSBP IAM.5]
+    source: iam:GetCredentialReport
+  - id: keys_old
+    area: access
+    severity: medium
+    title: Access keys older than 90 days
+    why: Long-lived keys leak into code, laptops and logs; the older, the more likely.
+    fix: Rotate the keys, or replace them with roles.
+    refs: [CIS 1.14, FSBP IAM.3]
+    source: iam:GetCredentialReport
+  - id: creds_unused
+    area: access
+    severity: medium
+    title: Credentials unused for 45 days or more
+    why: Unused passwords and keys are standing access nobody watches.
+    fix: Disable or delete them.
+    refs: [CIS 1.12, FSBP IAM.8]
+    source: iam:GetCredentialReport
+  - id: iam_users
+    area: access
+    severity: low
+    title: IAM users with passwords or keys
+    why: People and systems sign in with long-lived IAM credentials instead of federated or role-based access.
+    fix: Move people to IAM Identity Center and workloads to roles.
+    refs: []
+    source: iam:GetCredentialReport
+  - id: admin_policy
+    area: access
+    severity: high
+    title: Custom policies granting full administrator access
+    why: Policies that allow every action on every resource ("*:*") give unrestricted access.
+    fix: Replace them with least-privilege policies.
+    refs: [CIS 1.16, FSBP IAM.1]
+    source: iam:GetAccountAuthorizationDetails
+  - id: user_direct_policies
+    area: access
+    severity: low
+    title: Permissions attached directly to IAM users
+    why: Access granted user by user is hard to review and to remove when people move.
+    fix: Grant permissions through groups or roles.
+    refs: [CIS 1.15, FSBP IAM.2]
+    source: iam:GetAccountAuthorizationDetails
+  - id: admin_holders
+    area: access
+    severity: medium
+    title: Too many people with administrator access
+    why: More people hold administrator access to the account than the limit set in the report, which weakens segregation of duties.
+    fix: Remove standing administrator assignments; grant them just in time with approval.
+    refs: []
+    source: sso:ListAccountAssignments, identitystore:ListGroupMemberships, iam:GetAccountAuthorizationDetails
+  - id: external_trust
+    area: access
+    severity: high
+    title: Roles anyone outside the organisation can assume
+    why: A role trusts an AWS account outside the organisation (or anyone) without an external ID.
+    fix: Remove the trust, or require an external ID and limit the role's permissions.
+    refs: []
+    source: iam:GetAccountAuthorizationDetails
+  - id: roles_unused
+    area: access
+    severity: low
+    title: Roles unused for 90 days or more
+    why: Unused roles are standing access nobody needs.
+    fix: Delete roles that are no longer used.
+    refs: []
+    source: iam:GetAccountAuthorizationDetails
+  - id: access_analyzer_off
+    area: access
+    severity: medium
+    title: IAM Access Analyzer not watching for external access
+    why: Nothing flags resources shared outside the account or organisation.
+    fix: Create an organisation analyzer in the delegated administrator account, or an account analyzer.
+    refs: [CIS 1.20]
+    source: access-analyzer:ListAnalyzers, organizations:ListDelegatedAdministrators
+  - id: scp_guardrails
+    area: access
+    severity: medium
+    title: Missing organisation guardrails (SCPs)
+    why: Nothing stops an administrator in the account from turning off CloudTrail, GuardDuty or Config, or leaving the organisation.
+    fix: Attach service control policies that deny these actions to the OU.
+    refs: []
+    source: organizations:ListPolicies, organizations:DescribePolicy, organizations:ListTargetsForPolicy
+  - id: password_policy
+    area: access
+    severity: low
+    title: Weak IAM password policy
+    why: IAM users sign in with passwords but the account password policy is missing or allows short or reused passwords.
+    fix: Require 14 or more characters and prevent reuse of the last 24 passwords.
+    refs: [CIS 1.8, CIS 1.9, FSBP IAM.7]
+    source: iam:GetAccountPasswordPolicy
+  - id: support_role
+    area: access
+    severity: low
+    title: No role for AWS Support
+    why: No role holds AWSSupportAccess, so support cases depend on administrators or root.
+    fix: Create a support role and assign it to the operations team.
+    refs: [CIS 1.17, FSBP IAM.18]
+    source: iam:GetAccountAuthorizationDetails
+  - id: workload_admin
+    area: access
+    severity: high
+    title: Servers or functions running as administrator
+    why: "An EC2 instance profile or Lambda function role has full administrator rights: anyone who takes over the workload owns the account."
+    fix: Give the workload a role with only the permissions it needs.
+    refs: [FSBP IAM.1]
+    source: iam:GetAccountAuthorizationDetails, ec2:DescribeInstances, lambda:ListFunctions
+  - id: admin_direct_user
+    area: access
+    severity: medium
+    title: Administrator access assigned to people directly
+    why: An administrator permission set is assigned to individual users, not to a group, so joiners and leavers are not managed in one place.
+    fix: Assign administrator permission sets to groups only and review the group regularly.
+    refs: []
+    source: sso:ListAccountAssignments (management account)
+  - id: central_root_off
+    area: access
+    severity: medium
+    title: Root credentials not centrally managed
+    why: Central root access management is off for the organisation, so every member account keeps its own root password and MFA to look after.
+    fix: Turn on centralised root access in IAM and remove member root credentials.
+    refs: [FSBP IAM.6]
+    source: iam:ListOrganizationsFeatures (management account)
+  - id: scp_region_deny
+    area: access
+    severity: low
+    title: No region restriction
+    why: No service control policy limits which regions can be used, so resources and data can be created anywhere.
+    fix: Add an SCP that denies use of regions outside the approved list (aws:RequestedRegion).
+    refs: []
+    source: organizations:ListPoliciesForTarget, organizations:DescribePolicy (management account)
+
+  # ---------------------------------------------------------------- audit trail
+  - id: cloudtrail_off
+    area: logging
+    severity: high
+    title: No multi-region CloudTrail logging
+    why: Without it there is no record of who did what in the account.
+    fix: Turn on an organisation trail for all regions.
+    refs: [CIS 3.1, FSBP CloudTrail.1]
+    source: cloudtrail:DescribeTrails, cloudtrail:GetTrailStatus
+  - id: cloudtrail_validation
+    area: logging
+    severity: medium
+    title: CloudTrail log file validation off
+    why: Without digest files nobody can prove the logs were not altered.
+    fix: Turn on log file validation on the trail.
+    refs: [CIS 3.2, FSBP CloudTrail.4]
+    source: cloudtrail:DescribeTrails
+  - id: config_off
+    area: logging
+    severity: high
+    title: AWS Config not recording
+    why: Without Config there is no history of how resources were configured, and no compliance rules run.
+    fix: Turn on Config in every region (Control Tower or a StackSet).
+    refs: [CIS 3.3, FSBP Config.1]
+    source: config:DescribeConfigurationRecorderStatus
+  - id: flow_logs
+    area: logging
+    severity: medium
+    title: VPCs without flow logs
+    why: There is no record of network connections for an investigation.
+    fix: Turn on VPC flow logs to the central log archive.
+    refs: [CIS 3.7, FSBP EC2.6]
+    source: ec2:DescribeVpcs, ec2:DescribeFlowLogs
+  - id: s3_versioning_off
+    area: logging
+    severity: low
+    title: S3 buckets without versioning
+    why: "An overwritten or deleted file leaves no earlier version behind: no audit trail of the object."
+    fix: Turn on versioning (with a lifecycle rule to expire old versions).
+    refs: [FSBP S3.14]
+    source: s3:GetBucketVersioning
+  - id: cloudtrail_kms
+    area: logging
+    severity: low
+    title: CloudTrail logs not encrypted with a KMS key
+    why: The trail relies on default S3 encryption, so anyone who can read the bucket can read the logs.
+    fix: Encrypt the trail with a customer managed KMS key.
+    refs: [CIS 3.5, FSBP CloudTrail.2]
+    source: cloudtrail:DescribeTrails
+  - id: cloudtrail_cwl
+    area: logging
+    severity: low
+    title: CloudTrail not sent to CloudWatch Logs
+    why: Events cannot trigger alarms in near real time.
+    fix: Send the trail to a CloudWatch Logs group (or to the SIEM).
+    refs: [FSBP CloudTrail.5]
+    source: cloudtrail:DescribeTrails
+  - id: security_alerts_none
+    area: logging
+    severity: medium
+    title: No alerts on root use, IAM or CloudTrail changes
+    why: No CloudWatch metric filter or EventBridge rule watches for root sign-in, IAM policy changes or changes to CloudTrail.
+    fix: Add the CIS alarms (or EventBridge rules to the security team) for these events.
+    refs: [CIS 4.1, CIS 4.3, CIS 4.4, CIS 4.5]
+    source: logs:DescribeMetricFilters, events:ListRules
+  - id: config_partial
+    area: logging
+    severity: low
+    title: AWS Config not recording every resource type
+    why: The recorder records a chosen list of resource types, so changes to the rest leave no history.
+    fix: Record all supported resource types (and global resources in one region).
+    refs: [FSBP Config.1]
+    source: config:DescribeConfigurationRecorders
+  - id: elb_access_logs
+    area: logging
+    severity: low
+    scope: production
+    title: Load balancers without access logs
+    why: Requests to the service are not logged, so incidents cannot be traced.
+    fix: Turn on access logging to the log archive bucket.
+    refs: [FSBP ELB.5]
+    source: elasticloadbalancing:DescribeLoadBalancerAttributes
+  - id: dns_query_logs
+    area: logging
+    severity: low
+    title: VPCs without DNS query logging
+    why: DNS lookups from workloads are not logged, which hides command-and-control and data theft over DNS.
+    fix: Associate a Route 53 Resolver query logging configuration with each VPC.
+    refs: []
+    source: route53resolver:ListResolverQueryLogConfigAssociations
+
+  # ---------------------------------------------------------------- detection and findings
+  - id: guardduty_off
+    area: detection
+    severity: high
+    title: GuardDuty off
+    why: No threat detection for compromised credentials, crypto mining or data theft.
+    fix: Turn on GuardDuty organisation-wide from the delegated administrator account.
+    refs: [FSBP GuardDuty.1]
+    source: guardduty:ListDetectors, guardduty:GetDetector
+  - id: securityhub_off
+    area: detection
+    severity: medium
+    title: Security Hub off
+    why: Findings are not collected in one place and standards are not checked.
+    fix: Turn on Security Hub organisation-wide with the FSBP and CIS standards.
+    refs: [CIS 4.16]
+    source: securityhub:DescribeHub
+  - id: inspector_off
+    area: detection
+    severity: medium
+    title: Inspector vulnerability scanning off
+    why: Known software vulnerabilities in instances, containers and functions are not found.
+    fix: Turn on Amazon Inspector organisation-wide.
+    refs: [FSBP Inspector.1]
+    source: inspector2:BatchGetAccountStatus
+  - id: guardduty_findings
+    area: detection
+    severity: high
+    title: Open high-severity GuardDuty findings
+    why: GuardDuty has reported likely threats that are not archived.
+    fix: Investigate and resolve, or archive with a reason.
+    refs: []
+    source: guardduty:ListFindings
+  - id: sh_critical_findings
+    area: detection
+    severity: high
+    title: Open critical Security Hub findings
+    why: AWS security checks report critical issues that are still open.
+    fix: Resolve them, or suppress with a recorded risk acceptance.
+    refs: []
+    source: securityhub:GetFindings
+  - id: sh_high_aged
+    area: detection
+    severity: medium
+    title: High Security Hub findings open for more than 90 days
+    why: Findings that stay open for months show remediation is not happening.
+    fix: Set remediation deadlines by severity and track them.
+    refs: []
+    source: securityhub:GetFindings
+  - id: external_access_findings
+    area: detection
+    severity: high
+    title: Open IAM Access Analyzer external access findings
+    why: Resources are shared outside the account and nobody has reviewed it.
+    fix: Remove the sharing, or archive the finding as intended.
+    refs: []
+    source: access-analyzer:ListFindingsV2
+  - id: config_noncompliant
+    area: detection
+    severity: medium
+    title: AWS Config rules out of compliance
+    why: Resources fail the organisation's own Config rules.
+    fix: Fix the resources or the rules.
+    refs: []
+    source: config:DescribeComplianceByConfigRule
+  - id: trusted_advisor_red
+    area: detection
+    severity: high
+    title: Trusted Advisor action recommended (red)
+    why: Trusted Advisor security or fault-tolerance checks flag action recommended, for example open buckets, exposed access keys or open ports.
+    fix: Work through the recommendations in Trusted Advisor.
+    refs: []
+    source: trustedadvisor:ListOrganizationRecommendations, trustedadvisor:ListRecommendations
+  - id: trusted_advisor_yellow
+    area: detection
+    severity: low
+    title: Trusted Advisor investigation recommended (yellow)
+    why: Trusted Advisor security or fault-tolerance checks ask for investigation.
+    fix: Review the recommendations in Trusted Advisor.
+    refs: []
+    source: trustedadvisor:ListOrganizationRecommendations, trustedadvisor:ListRecommendations
+  - id: guardduty_partial
+    area: detection
+    severity: low
+    title: GuardDuty protection plans off
+    why: GuardDuty runs but S3, malware or runtime protection is off.
+    fix: Turn on the protection plans that match the workloads.
+    refs: [FSBP GuardDuty.5, FSBP GuardDuty.6]
+    source: guardduty:GetDetector
+  - id: sh_standards_missing
+    area: detection
+    severity: low
+    title: Security Hub without a security standard
+    why: Security Hub is on but neither the AWS Foundational Security Best Practices nor the CIS standard is enabled.
+    fix: Enable the AWS Foundational Security Best Practices standard.
+    refs: []
+    source: securityhub:GetEnabledStandards
+  - id: inspector_partial
+    area: detection
+    severity: low
+    title: Inspector not scanning containers or functions
+    why: Inspector is on for servers but not for ECR images or Lambda functions.
+    fix: Turn on ECR and Lambda scanning.
+    refs: [FSBP Inspector.2, FSBP Inspector.3]
+    source: inspector2:BatchGetAccountStatus
+  - id: vuln_critical
+    area: detection
+    severity: high
+    title: Open critical vulnerabilities
+    why: Inspector reports critical software vulnerabilities on servers, images or functions.
+    fix: Patch or rebuild the affected workloads; track to closure.
+    refs: []
+    source: inspector2:ListFindings
+  - id: vuln_high_aged
+    area: detection
+    severity: medium
+    title: High vulnerabilities open for more than 30 days
+    why: High-severity vulnerabilities have stayed open longer than a 30-day patch window.
+    fix: Patch within the window, or record an exception.
+    refs: []
+    source: inspector2:ListFindings
+  - id: macie_off
+    area: detection
+    severity: low
+    scope: sensitive
+    title: Macie off where sensitive data is held
+    why: The account holds sensitive buckets but Amazon Macie is not finding and classifying the data in them.
+    fix: Turn on Macie automated sensitive data discovery.
+    refs: []
+    source: macie2:GetMacieSession
+
+  # ---------------------------------------------------------------- data protection and location
+  - id: ebs_default_encryption
+    area: data
+    severity: medium
+    title: EBS encryption by default off
+    why: New disks are created unencrypted unless every team remembers.
+    fix: Turn on EBS encryption by default in every region.
+    refs: [CIS 2.2.1, FSBP EC2.7]
+    source: ec2:GetEbsEncryptionByDefault
+  - id: ebs_unencrypted
+    area: data
+    severity: medium
+    title: Unencrypted EBS volumes
+    why: Data on these disks is stored unencrypted.
+    fix: Copy to encrypted volumes (snapshot, copy encrypted, restore).
+    refs: [FSBP EC2.3]
+    source: ec2:DescribeVolumes
+  - id: rds_unencrypted
+    area: data
+    severity: high
+    title: Unencrypted databases
+    why: Database storage, backups and snapshots are unencrypted.
+    fix: Restore an encrypted copy from a snapshot.
+    refs: [CIS 2.3.1, FSBP RDS.3]
+    source: rds:DescribeDBInstances, rds:DescribeDBClusters
+  - id: kms_rotation
+    area: data
+    severity: low
+    title: Customer KMS keys without rotation
+    why: Keys that never rotate widen the impact of a key compromise.
+    fix: Turn on automatic rotation.
+    refs: [CIS 3.6, FSBP KMS.4]
+    source: kms:ListKeys, kms:DescribeKey, kms:GetKeyRotationStatus
+  - id: secrets_no_rotation
+    area: data
+    severity: low
+    title: Secrets without rotation
+    why: Secrets Manager secrets that never rotate stay valid after they leak.
+    fix: Turn on rotation where the secret type supports it.
+    refs: [FSBP SecretsManager.1]
+    source: secretsmanager:ListSecrets
+  - id: data_location
+    area: data
+    severity: medium
+    title: Data held outside the allowed locations
+    why: The account stores data (storage, database or backup spend) in regions outside the allowed countries or jurisdictions set in the report.
+    fix: Move the data, or record the approval for the location.
+    refs: []
+    source: Cost Explorer spend by region (ce:GetCostAndUsage)
+  - id: s3_tls_only
+    area: data
+    severity: low
+    title: S3 buckets that accept unencrypted connections
+    why: The bucket policy does not deny requests over plain HTTP (aws:SecureTransport).
+    fix: Add a deny statement for aws:SecureTransport false.
+    refs: [FSBP S3.5]
+    source: s3:GetBucketPolicy
+  - id: s3_acls
+    area: data
+    severity: low
+    title: S3 buckets still using ACLs
+    why: Object ownership is not 'bucket owner enforced', so ACLs can grant access outside the bucket policy.
+    fix: Set object ownership to bucket owner enforced.
+    refs: [FSBP S3.12]
+    source: s3:GetBucketOwnershipControls
+  - id: efs_unencrypted
+    area: data
+    severity: medium
+    title: Unencrypted file systems
+    why: An EFS file system is not encrypted at rest.
+    fix: Create an encrypted file system and copy the data.
+    refs: [FSBP EFS.1]
+    source: elasticfilesystem:DescribeFileSystems
+  - id: redshift_unencrypted
+    area: data
+    severity: high
+    title: Unencrypted Redshift clusters
+    why: A data warehouse cluster is not encrypted at rest.
+    fix: Turn on encryption with a KMS key.
+    refs: [FSBP Redshift.10]
+    source: redshift:DescribeClusters
+  - id: elasticache_unencrypted
+    area: data
+    severity: medium
+    title: Caches without encryption
+    why: An ElastiCache replication group is not encrypted at rest or in transit.
+    fix: Create an encrypted replication group and move to it.
+    refs: [FSBP ElastiCache.4, FSBP ElastiCache.5]
+    source: elasticache:DescribeReplicationGroups
+  - id: opensearch_unencrypted
+    area: data
+    severity: medium
+    title: OpenSearch domains without encryption
+    why: A domain is not encrypted at rest or between nodes.
+    fix: Turn on encryption at rest and node-to-node encryption.
+    refs: [FSBP Opensearch.1, FSBP Opensearch.3]
+    source: es:DescribeDomains
+  - id: kms_pending_deletion
+    area: data
+    severity: medium
+    title: KMS keys scheduled for deletion
+    why: "A customer key is about to be deleted: anything still encrypted with it becomes unreadable for good."
+    fix: Confirm nothing uses the key, or cancel the deletion.
+    refs: [FSBP KMS.3]
+    source: kms:DescribeKey
+
+  # ---------------------------------------------------------------- sensitive data
+  - id: sensitive_human_write
+    area: sensitive
+    severity: high
+    title: People can change sensitive files with no alert
+    why: Human roles (IAM Identity Center permission sets, federated roles or IAM users) can write or delete objects in a sensitive bucket, and changes are not logged as data events with an alert.
+    fix: Remove human write access (only the pipeline or application role writes), or log S3 data events and alert on changes.
+    refs: [CIS 3.8]
+    source: iam:GetAccountAuthorizationDetails, cloudtrail:GetEventSelectors, events:ListRules, guardduty:GetDetector
+  - id: sensitive_no_versioning
+    area: sensitive
+    severity: high
+    title: Sensitive buckets without versioning
+    why: A changed or deleted payment or customer file cannot be recovered or compared.
+    fix: Turn on versioning on the bucket.
+    refs: [FSBP S3.14]
+    source: s3:GetBucketVersioning
+  - id: sensitive_no_data_events
+    area: sensitive
+    severity: medium
+    title: Sensitive buckets without object-level logging
+    why: CloudTrail does not record who wrote or deleted files in the bucket.
+    fix: Log S3 write data events for the bucket on the organisation trail.
+    refs: [CIS 3.8]
+    source: cloudtrail:GetEventSelectors
+  - id: sensitive_no_lock
+    area: sensitive
+    severity: medium
+    title: Sensitive buckets without Object Lock
+    why: Files can be overwritten or deleted inside the retention period, so they are not tamper-proof evidence.
+    fix: Turn on Object Lock (governance or compliance mode) with a retention period.
+    refs: [FSBP S3.15]
+    source: s3:GetObjectLockConfiguration
+  - id: sensitive_no_replication
+    area: sensitive
+    severity: low
+    scope: production
+    title: Sensitive buckets not replicated
+    why: A copy in a second bucket or region is the recovery path if the bucket or region is lost.
+    fix: Turn on replication to a bucket in another region or account.
+    refs: [FSBP S3.7]
+    source: s3:GetReplicationConfiguration
+  - id: sensitive_no_kms
+    area: sensitive
+    severity: medium
+    title: Sensitive buckets not encrypted with a KMS key
+    why: The bucket uses S3-managed keys, so access to the data cannot be limited or audited through KMS.
+    fix: Use SSE-KMS with a customer managed key and a key policy for the owning team.
+    refs: [FSBP S3.17]
+    source: s3:GetBucketEncryption
+
+  # ---------------------------------------------------------------- change management
+  - id: manual_changes
+    area: change
+    severity: medium
+    scope: production
+    title: Changes made by hand in production
+    why: People made write calls in the last 7 days (sampled from CloudTrail) instead of releasing through a pipeline.
+    fix: Make production read-only for people; change it through pipelines with approval, and use break-glass for emergencies.
+    refs: []
+    source: cloudtrail:LookupEvents
+  - id: cfn_drift
+    area: change
+    severity: medium
+    title: CloudFormation stacks drifted from their templates
+    why: Resources were changed outside the pipeline after deployment.
+    fix: Bring the resources back in line, or update the template, and redeploy.
+    refs: []
+    source: cloudformation:ListStacks
+  - id: ssm_unmanaged
+    area: change
+    severity: low
+    title: Instances not managed by Systems Manager
+    why: Unmanaged instances are not patched, inventoried or reachable without SSH.
+    fix: Install the SSM agent and attach the managed instance role.
+    refs: [FSBP SSM.1]
+    source: ssm:DescribeInstanceInformation, ec2:DescribeInstances
+  - id: patch_noncompliant
+    area: change
+    severity: medium
+    title: Instances missing patches
+    why: Systems Manager reports missing patches.
+    fix: Run Patch Manager on a maintenance window.
+    refs: [FSBP SSM.2]
+    source: ssm:ListResourceComplianceSummaries
+  - id: config_rules_none
+    area: change
+    severity: low
+    title: No AWS Config rules
+    why: Config records changes but no rule or conformance pack checks them against policy.
+    fix: Deploy a conformance pack (for example the operational best practices for your framework).
+    refs: []
+    source: config:DescribeConfigRules
+
+  # ---------------------------------------------------------------- resilience and DR (production)
+  - id: rds_single_az
+    area: resilience
+    severity: high
+    scope: production
+    title: Production databases in one availability zone
+    why: The loss of one AZ takes the database down until it is restored from backup.
+    fix: Turn on Multi-AZ (RDS) or add a replica in another AZ (Aurora).
+    refs: [FSBP RDS.5]
+    source: rds:DescribeDBInstances, rds:DescribeDBClusters
+  - id: rds_no_backups
+    area: resilience
+    severity: high
+    scope: production
+    title: Production databases without automated backups
+    why: "Backup retention is 0: no point-in-time recovery."
+    fix: Set a backup retention period of 7 days or more.
+    refs: [FSBP RDS.11]
+    source: rds:DescribeDBInstances
+  - id: rds_no_deletion_protection
+    area: resilience
+    severity: low
+    scope: production
+    title: Production databases without deletion protection
+    why: One call can delete the database.
+    fix: Turn on deletion protection.
+    refs: [FSBP RDS.8]
+    source: rds:DescribeDBInstances, rds:DescribeDBClusters
+  - id: asg_single_az
+    area: resilience
+    severity: high
+    scope: production
+    title: Auto Scaling groups in one availability zone
+    why: The whole group stops if that AZ fails.
+    fix: Add subnets in at least two AZs.
+    refs: [FSBP AutoScaling.2]
+    source: autoscaling:DescribeAutoScalingGroups
+  - id: lb_single_az
+    area: resilience
+    severity: medium
+    scope: production
+    title: Load balancers in one availability zone
+    why: The service stops if that AZ fails.
+    fix: Enable at least two AZs on the load balancer.
+    refs: [FSBP ELB.10, FSBP ELB.13]
+    source: elasticloadbalancing:DescribeLoadBalancers
+  - id: ec2_one_az
+    area: resilience
+    severity: medium
+    scope: production
+    title: Stand-alone servers all in one availability zone
+    why: "Instances outside Auto Scaling all run in one AZ: no second copy if it fails."
+    fix: Run them in an Auto Scaling group across AZs, or keep a standby in a second AZ.
+    refs: []
+    source: ec2:DescribeInstances
+  - id: elasticache_no_failover
+    area: resilience
+    severity: medium
+    scope: production
+    title: Caches without automatic failover
+    why: A single cache node or a group without failover loses its data and stops if the node or AZ fails.
+    fix: Use a replication group with Multi-AZ and automatic failover.
+    refs: [FSBP ElastiCache.3]
+    source: elasticache:DescribeReplicationGroups, elasticache:DescribeCacheClusters
+  - id: opensearch_single_az
+    area: resilience
+    severity: medium
+    scope: production
+    title: OpenSearch domains in one availability zone
+    why: "Zone awareness is off: the domain stops if the AZ fails."
+    fix: Turn on zone awareness across two or three AZs.
+    refs: []
+    source: es:ListDomainNames, es:DescribeDomains
+  - id: efs_one_zone
+    area: resilience
+    severity: medium
+    scope: production
+    title: One Zone file systems in production
+    why: EFS One Zone storage is lost if its AZ fails.
+    fix: Use EFS Regional storage.
+    refs: []
+    source: elasticfilesystem:DescribeFileSystems
+  - id: dynamodb_no_pitr
+    area: resilience
+    severity: medium
+    scope: production
+    title: DynamoDB tables without point-in-time recovery
+    why: A bad write or deletion cannot be rolled back.
+    fix: Turn on point-in-time recovery.
+    refs: [FSBP DynamoDB.2]
+    source: dynamodb:ListTables, dynamodb:DescribeContinuousBackups
+  - id: backup_none
+    area: resilience
+    severity: medium
+    scope: production
+    title: No AWS Backup protection
+    why: The account runs databases or storage but AWS Backup protects nothing in it.
+    fix: Apply the organisation backup policy to the account.
+    refs: []
+    source: backup:ListProtectedResources
+  - id: backup_no_cross_region
+    area: resilience
+    severity: medium
+    scope: production
+    title: Backups not copied to a second region
+    why: A regional outage takes the backups with it.
+    fix: Add a cross-region copy rule to the backup plan.
+    refs: []
+    source: backup:ListBackupPlans, backup:GetBackupPlan
+  - id: restore_untested
+    area: resilience
+    severity: medium
+    scope: production
+    title: No restore tested in 90 days
+    why: Backups exist but nobody has proven they restore.
+    fix: Run restore tests (AWS Backup restore testing) at least quarterly.
+    refs: []
+    source: backup:ListRestoreJobs
+  - id: dr_drills_none
+    area: resilience
+    severity: low
+    scope: production
+    title: No failure tests in 90 days
+    why: No AWS Fault Injection Service experiment has tested an AZ or service failure.
+    fix: Run AZ failure experiments on a schedule.
+    refs: []
+    source: fis:ListExperiments
+  - id: single_region
+    area: resilience
+    severity: low
+    scope: production
+    title: Production in one region only
+    why: "All of the account's regional spend is in one region: a regional outage stops it."
+    fix: Decide and record the regional recovery strategy (see the Multi-region report).
+    refs: []
+    source: Cost Explorer spend by region (ce:GetCostAndUsage)
+  - id: rds_backup_short
+    area: resilience
+    severity: low
+    scope: production
+    title: Database backups kept less than 7 days
+    why: Automated backups are kept for fewer than 7 days, too short to notice and recover from a bad change.
+    fix: Keep automated backups for at least 7 days.
+    refs: [FSBP RDS.26]
+    source: rds:DescribeDBInstances, rds:DescribeDBClusters
+  - id: dynamodb_no_deletion_protection
+    area: resilience
+    severity: low
+    scope: production
+    title: DynamoDB tables without deletion protection
+    why: One call can delete the table.
+    fix: Turn on deletion protection.
+    refs: [FSBP DynamoDB.6]
+    source: dynamodb:DescribeTable
+  - id: nat_single_az
+    area: resilience
+    severity: medium
+    scope: production
+    title: Internet access through one availability zone
+    why: A VPC with subnets in several AZs has NAT gateways in only one, so losing that AZ cuts every subnet off.
+    fix: Add a NAT gateway in each AZ and route each AZ to its own.
+    refs: []
+    source: ec2:DescribeNatGateways, ec2:DescribeSubnets
+  - id: vpn_tunnel_down
+    area: resilience
+    severity: medium
+    title: Site-to-site VPN without a working second tunnel
+    why: A VPN connection has a tunnel down, so the link to the data centre has no redundancy.
+    fix: Bring both tunnels up (configure the second tunnel on the customer gateway).
+    refs: []
+    source: ec2:DescribeVpnConnections
+  - id: dx_no_redundancy
+    area: resilience
+    severity: high
+    title: Direct Connect without redundancy
+    why: "The account has one Direct Connect connection, or all in one location: a single fibre or site failure cuts the link."
+    fix: Add a second connection in a second Direct Connect location.
+    refs: []
+    source: directconnect:DescribeConnections
+  - id: ecs_single_task
+    area: resilience
+    severity: medium
+    scope: production
+    title: Container services running one copy
+    why: An ECS service runs a single task, so a task or AZ failure stops the service.
+    fix: Run at least two tasks spread across AZs.
+    refs: []
+    source: ecs:ListServices, ecs:DescribeServices
+  - id: backup_vault_unlocked
+    area: resilience
+    severity: medium
+    scope: production
+    title: Backups that can be deleted
+    why: No backup vault has Vault Lock, so ransomware or a rogue administrator can delete the backups.
+    fix: Turn on AWS Backup Vault Lock (compliance mode) on the vault that holds production backups.
+    refs: []
+    source: backup:ListBackupVaults
+  - id: resiliencehub_none
+    area: resilience
+    severity: low
+    scope: production
+    title: No resilience assessment
+    why: No application in the account is assessed by AWS Resilience Hub against recovery time and point objectives.
+    fix: Define the application and its RTO and RPO in Resilience Hub and assess it.
+    refs: []
+    source: resiliencehub:ListApps
+
+  # ---------------------------------------------------------------- lifecycle
+  - id: lambda_deprecated_runtime
+    area: lifecycle
+    severity: medium
+    title: Lambda functions on runtimes past end of support
+    why: Deprecated runtimes get no security patches, and AWS blocks updates to them.
+    fix: Upgrade the functions to a supported runtime.
+    refs: [FSBP Lambda.2]
+    source: lambda:ListFunctions
+  - id: eks_unsupported_version
+    area: lifecycle
+    severity: medium
+    title: EKS clusters past standard support
+    why: Old Kubernetes versions miss security fixes and are billed extended support.
+    fix: Upgrade the cluster.
+    refs: [FSBP EKS.2]
+    source: eks:ListClusters, eks:DescribeCluster
+  - id: rds_engine_eol
+    area: lifecycle
+    severity: medium
+    title: Databases past end of standard support
+    why: "A database runs an engine version past AWS standard support: it costs extra (RDS Extended Support) and will be upgraded for you."
+    fix: Plan and test the major version upgrade.
+    refs: []
+    source: rds:DescribeDBInstances, rds:DescribeDBClusters
+  - id: ec2_previous_generation
+    area: lifecycle
+    severity: low
+    title: Servers on previous-generation instance types
+    why: Old instance families (t2, m4, c4, r4 and earlier) cost more and are retired over time.
+    fix: Move to current generation types (for example t3, m7g, c7i).
+    refs: []
+    source: ec2:DescribeInstances
+  - id: ami_outdated
+    area: lifecycle
+    severity: low
+    title: Servers built from images older than 180 days
+    why: Running instances were launched from machine images more than 180 days old, so they depend on patching in place.
+    fix: Rebuild from a current golden image on a regular cycle.
+    refs: []
+    source: ec2:DescribeImages
+  - id: acm_expiring
+    area: lifecycle
+    severity: medium
+    title: Certificates expiring within 30 days
+    why: A certificate in use expires soon and is not set to renew automatically.
+    fix: Renew or replace the certificate, or move it to DNS validation for automatic renewal.
+    refs: [FSBP ACM.1]
+    source: acm:ListCertificates
+
+  # ---------------------------------------------------------------- third parties
+  - id: ram_external_shares
+    area: third_party
+    severity: medium
+    title: Resources shared outside the organisation
+    why: AWS RAM shares resources (subnets, Transit Gateways, endpoints) with accounts outside the organisation.
+    fix: Review the shares; remove those not covered by a contract.
+    refs: []
+    source: ram:ListPrincipals
+  - id: vendor_roles
+    area: third_party
+    severity: low
+    title: Roles for outside vendors
+    why: "Roles trust AWS accounts outside the organisation (with an external ID): third-party access to inventory and review."
+    fix: Keep a register of vendor roles with owner, purpose and contract; limit their permissions.
+    refs: []
+    source: iam:GetAccountAuthorizationDetails
+
+  # ---------------------------------------------------------------- ownership
+  - id: owner_missing
+    area: ownership
+    severity: medium
+    title: No owner tagged on the account
+    why: Nobody is accountable for the account's risks, costs and findings.
+    fix: Tag the account with its owner (Owner, or one of the owner tags in docs/GOVERNANCE.md).
+    refs: []
+    source: organizations:ListTagsForResource
+  - id: owner_not_found
+    area: ownership
+    severity: high
+    title: Owner not found in the directory
+    why: "The tagged owner's email is not a user in IAM Identity Center: they may have left."
+    fix: Reassign the account to a current owner (see Ownership in the report).
+    refs: []
+    source: identitystore:GetUserId
+  - id: security_contact
+    area: ownership
+    severity: low
+    title: No security contact on the account
+    why: AWS cannot reach the right team about abuse or a security event.
+    fix: Set the account's security alternate contact.
+    refs: [FSBP Account.1]
+    source: account:GetAlternateContact
+  - id: misplaced_account
+    area: ownership
+    severity: low
+    title: Non-production account in a production OU
+    why: The account name says development or test, but it sits in a production OU and gets production treatment (or the reverse risk).
+    fix: Move it to the right OU, or rename it.
+    refs: []
+    source: organizations:ListAccountsForParent
+  - id: billing_contact
+    area: ownership
+    severity: low
+    title: No billing contact on the account
+    why: Billing notices go only to the root email.
+    fix: Set the billing alternate contact.
+    refs: []
+    source: account:GetAlternateContact
+  - id: operations_contact
+    area: ownership
+    severity: low
+    title: No operations contact on the account
+    why: Notices about planned maintenance and retirements go only to the root email.
+    fix: Set the operations alternate contact.
+    refs: []
+    source: account:GetAlternateContact
+  - id: account_tags_missing
+    area: ownership
+    severity: low
+    title: Required account tags missing
+    why: The account lacks one or more of the tags the report requires (for example environment or cost centre).
+    fix: Tag the account in AWS Organizations.
+    refs: []
+    source: organizations:ListTagsForResource
+  - id: budgets_none
+    area: cost
+    severity: low
+    title: No budget on the account
+    why: Nobody is alerted when spend runs above plan.
+    fix: Create a monthly cost budget with an alert to the owner.
+    refs: []
+    source: budgets:DescribeBudgets
+
+  # ---------------------------------------------------------------- AI
+  - id: bedrock_no_logging
+    area: ai
+    severity: low
+    title: Bedrock used without invocation logging
+    why: "The account is billed for Bedrock but model calls are not logged: no record of prompts and answers."
+    fix: Turn on model invocation logging to the log archive.
+    refs: []
+    source: bedrock:GetModelInvocationLoggingConfiguration
+
+# Lambda runtimes and the date AWS deprecated them (no more security patches). From the AWS Lambda
+# runtimes page; add new ones as AWS announces them.
+  - id: bedrock_no_guardrails
+    area: ai
+    severity: low
+    title: Bedrock used without guardrails
+    why: The account is billed for Bedrock but has no guardrail to filter harmful content or sensitive data in prompts and answers.
+    fix: Create a Bedrock guardrail and require it in the applications.
+    refs: []
+    source: bedrock:ListGuardrails
+  - id: sagemaker_notebook_internet
+    area: ai
+    severity: medium
+    title: SageMaker notebooks with direct internet access
+    why: A notebook instance can reach the internet directly, outside the VPC controls.
+    fix: Turn off direct internet access and use the VPC.
+    refs: [FSBP SageMaker.2]
+    source: sagemaker:ListNotebookInstances, sagemaker:DescribeNotebookInstance
+  - id: ai_unapproved
+    area: ai
+    severity: low
+    title: AI services used where not approved
+    why: The account is billed for AI services (Bedrock, SageMaker, Comprehend, Rekognition, Textract and others) but is not in the list of accounts approved for AI.
+    fix: Record the approval or stop the use.
+    refs: []
+    source: Cost Explorer spend by service (ce:GetCostAndUsage)
+lambda_deprecated:
+  python2.7: 2021-07-15
+  python3.6: 2022-07-18
+  python3.7: 2023-12-04
+  python3.8: 2024-10-14
+  python3.9: 2025-12-15
+  nodejs10.x: 2021-07-30
+  nodejs12.x: 2023-03-31
+  nodejs14.x: 2023-12-04
+  nodejs16.x: 2024-06-12
+  nodejs18.x: 2025-09-01
+  java8: 2024-01-08
+  go1.x: 2024-01-08
+  provided: 2024-01-08
+  ruby2.5: 2021-07-30
+  ruby2.7: 2023-12-07
+  ruby3.2: 2026-03-31
+  dotnetcore2.1: 2022-01-05
+  dotnetcore3.1: 2023-04-03
+  dotnet5.0: 2022-05-10
+  dotnet6: 2024-12-20
+  dotnet7: 2024-05-14
+
+# Amazon EKS versions and the end of standard support (approximate, from the EKS Kubernetes version
+# calendar). After it, clusters move to paid extended support.
+eks_end_of_standard_support:
+  "1.23": 2023-10-11
+  "1.24": 2024-01-31
+  "1.25": 2024-05-01
+  "1.26": 2024-06-11
+  "1.27": 2024-07-24
+  "1.28": 2024-11-26
+  "1.29": 2025-03-23
+  "1.30": 2025-07-23
+  "1.31": 2025-11-26
+  "1.32": 2026-03-23
+  "1.33": 2026-07-29
+
+# Database engine major versions and the end of RDS standard support, after which AWS charges for
+# RDS Extended Support. Keys are "<engine> <major version>"; from the RDS and Aurora release calendars.
+rds_end_of_standard_support:
+  mysql 5.7: 2024-02-29
+  mysql 8.0: 2026-07-31
+  postgres 11: 2024-02-29
+  postgres 12: 2025-02-28
+  postgres 13: 2026-02-28
+  aurora-mysql 5.7: 2024-10-31
+  aurora-postgresql 11: 2024-02-29
+  aurora-postgresql 12: 2025-02-28
+  aurora-postgresql 13: 2026-02-28
