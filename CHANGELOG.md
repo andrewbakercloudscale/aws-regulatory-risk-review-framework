@@ -6,13 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-24
+
 ### Added
 
 - **Tools that shorten the move.** The catalog names migration tools for 64 services, for Azure, Google
   Cloud and any other target (Azure Migrate, Database Migration Service, AzCopy and Storage Transfer
   Service, MirrorMaker 2, Velero, OpenAPI and DNS zone import, Former2 and Terraformer, model gateways
   for Bedrock...), with a `tooling` rating. Section 4 lists them for the services with the most work, and
-  the Agentic Risk Review is asked to name the ones that fit.
+  the Agentic Risk Review is asked to name the ones that fit. Service catalog 2026.10.5.
 - **Exit model: how you will move.** "We will use migration tools" cuts each service's work by its tooling
   rating (never below 30% together with AI coding agents); "Services are built from developer-portal
   templates (for example Backstage)" lowers the repeat share from 35% to 15%. "How did the move into AWS

@@ -59,6 +59,9 @@ def render() -> str:
         "says teams use them: high about 50% (code and templates an agent can translate), medium about 25%, "
         "low about 10%, none for data moves, hardware, contracts and managed-service redesign.",
         "",
+        "**Migration tools** are named where tools do part of the move, with their help on the same scale when "
+        "the Exit model says they will be used (never below 30% of the work together with AI agents).",
+        "",
     ]
     for t in (5, 4, 3, 2, 1):
         group = sorted((s for s in services if s.tier == t), key=lambda s: (s.category, s.display))
@@ -66,15 +69,15 @@ def render() -> str:
             f"## Tier {t} - {cat.tier_label(t)} ({len(group)})",
             "",
             "| Service | Category | Why this tier | Recommended migration path | Azure | Google Cloud | "
-            "Cloud-neutral | Typical duration | Eng-weeks / workload | AI agent help |",
-            "|---|---|---|---|---|---|---|---|---|---|",
+            "Cloud-neutral | Typical duration | Eng-weeks / workload | AI agent help | Migration tools |",
+            "|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for s in group:
             tg = s.targets
             lines.append(
                 f"| **{cell(s.display)}** | {cell(s.category)} | {cell(s.why)} | {cell(s.migration)} | "
                 f"{cell(tg.get('azure', ''))} | {cell(tg.get('gcp', ''))} | {cell(tg.get('other', ''))} | "
-                f"{cell(s.duration)} | {s.effort_weeks:g} | {s.agentic} |"
+                f"{cell(s.duration)} | {s.effort_weeks:g} | {s.agentic} | {tools(s)} |"
             )
         lines.append("")
     excluded = [s for s in cat.services if s.excluded]
@@ -85,6 +88,13 @@ def render() -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def tools(s) -> str:
+    if not s.tools:
+        return ""
+    names = {"all": "", "azure": "Azure: ", "gcp": "Google Cloud: ", "other": "Other: "}
+    return cell(f"({s.tooling}) " + "; ".join(names.get(k, k + ": ") + v for k, v in s.tools.items()))
 
 
 def main() -> int:

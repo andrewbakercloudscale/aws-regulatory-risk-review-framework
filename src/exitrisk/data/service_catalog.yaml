@@ -33,7 +33,7 @@
 #
 # Contributions welcome: see CONTRIBUTING.md. Keep `why` factual and `migration` actionable.
 
-version: "2026.10.4"
+version: "2026.10.5"
 
 tiers:
   1: {label: Portable, score: 10}
