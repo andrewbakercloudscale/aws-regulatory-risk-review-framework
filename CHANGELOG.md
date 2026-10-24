@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-24
+
 ### Added
 
 - **Cloud Assurance Framework Report**, a new tab and PDF from the same scan. 139 rules in 13 areas,
