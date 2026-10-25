@@ -557,22 +557,22 @@ table.data.accounts td { vertical-align: middle; }
   .appendix .card, #sec-issues .card { break-inside: auto; }
 }
 
-/* Report views: exit risk / multi-region */
-/* Report views: two large tabs, the active one filled so it is obvious which report you are in. */
-/* Tabs on the left, Export PDF on the right: the export belongs to the report being read. */
-.report-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 18px; }
-.report-bar > .menu { margin-left: auto; }
+/* Report views: three equal tabs across the width, the active one filled so it is obvious which report
+   you are in; AI review and Export PDF sit under them on the right and belong to the report on screen. */
+.report-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin: 4px 0 18px; }
 .report-bar #btnExport svg:first-child { width: 16px; height: 16px; }
 body[data-view="multiregion"] #btnJumpAi { display: none; }
-.viewtabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; flex: 0 1 640px; min-width: 0; padding: 5px;
+.viewtabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; flex: 1 0 100%; min-width: 0; padding: 5px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; }
+@media (max-width: 760px) { .viewtabs { grid-template-columns: 1fr; } }
 .vtab { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
   font: inherit; color: var(--ink-2); text-align: left; cursor: pointer; transition: background-color .15s, color .15s, box-shadow .15s; }
 .vtab svg { width: 22px; height: 22px; }
 .vtab span { display: flex; flex-direction: column; min-width: 0; }
+.vtab b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vtab b { font-size: 16px; font-weight: 650; color: inherit; }
-.vtab small { font-size: 12.5px; color: var(--muted); }
+.vtab small { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vtab:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--ink); }
 .vtab:not([aria-pressed="true"]) svg { color: var(--accent); }
 .vtab[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent); }
