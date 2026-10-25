@@ -78,6 +78,7 @@ STAFF_TEAM_UPLIFT = (0.10, 0.35)  # share of the current core cloud team (on-cal
 STAFF_RESILIENCE = (1.0, 2.5)  # DR testing, game days, regulator evidence
 STAFF_PER_25_ACCOUNTS = (0.25, 1.0)  # workload operations as more accounts go multi-region
 STAFF_DATA = (0.5, 1.5)  # replication and DBA, scaled by √(data spend / 100k USD a month), max 3x
+STAFF_SECURITY = (0.10, 0.25)  # share of the security team: guardrails, keys, logging in a second region
 STAFF_FLOOR = (1.5, 4.0)
 STAFF_RANGE = (0.75, 1.4)
 WORKING_DAYS = 220
@@ -114,7 +115,13 @@ FAILOVER_LABELS = {
 }
 
 
+_Q = Questionnaire.model_fields  # the multi-region answers start from the same defaults, but are their own
+
+
 class MultiRegionAnswers(BaseModel):
+    """Everything the multi-region report asks. Nothing is read from the exit model: it is a separate
+    report for a different audience."""
+
     recovery: str = Field("rto_3h", pattern="^(rto_3h|instant)$")
     residency: str = Field("any", pattern="^(any|same_continent|same_jurisdiction|same_country)$")
     primary: str = Field("", max_length=30, pattern=r"^[a-z0-9-]*$")  # "" = the region with most spend
@@ -128,6 +135,37 @@ class MultiRegionAnswers(BaseModel):
     assume_available: list[Annotated[str, StringConstraints(max_length=160)]] = Field([], max_length=500)
     not_needed: list[Annotated[str, StringConstraints(max_length=120)]] = Field([], max_length=500)
     confirmed: bool = False
+    # Today's teams, so the report shows what a second region does to each one.
+    team_platform: int = Field(10, ge=0, le=5000)  # platform, cloud engineering and SRE
+    team_data: int = Field(3, ge=0, le=5000)  # databases and data engineering
+    team_security: int = Field(3, ge=0, le=5000)  # cloud security and IAM
+    team_app_ops: int = Field(5, ge=0, le=5000)  # application support and operations
+    team_resilience: int = Field(1, ge=0, le=5000)  # DR, continuity and resilience
+    app_engineers_fte: float = Field(_Q["app_engineers_fte"].default, ge=0, le=5000)
+    day_rate: float = Field(_Q["day_rate"].default, ge=0, le=100000)
+    currency: str = Field(_Q["currency"].default, pattern="^[A-Z]{3}$")
+    fx_per_usd: float = Field(_Q["fx_per_usd"].default, gt=0, le=100000)
+    cicd: str = Field(_Q["cicd"].default, pattern="^(standard|partial|manual)$")
+    iac: str = Field(_Q["iac"].default, pattern="^(terraform_current|terraform_drift|cloudformation|none)$")
+    regulated: bool = _Q["regulated"].default
+    contingency_pct: int = Field(_Q["contingency_pct"].default, ge=0, le=100)
+    materiality: float = Field(_Q["materiality"].default, ge=0, le=1_000_000)
+
+    def questionnaire(self) -> Questionnaire:
+        """These answers in the shape the shared estimating helpers take."""
+        return Questionnaire(
+            cloud_team_size=max(self.team_platform, 1),
+            cloud_team_allocation_pct=self.allocation_pct,
+            app_engineers_fte=self.app_engineers_fte,
+            day_rate=self.day_rate,
+            currency=self.currency,
+            fx_per_usd=self.fx_per_usd,
+            cicd=self.cicd,
+            iac=self.iac,
+            regulated=self.regulated,
+            contingency_pct=self.contingency_pct,
+            materiality=self.materiality,
+        )
 
 
 @lru_cache(maxsize=1)
@@ -583,31 +621,129 @@ def _account_risks(
     return out, totals
 
 
-def _people(q: Questionnaire, ri: int, totals: _Totals, any_selected: bool) -> tuple[dict, float]:
-    """Extra FTE to run two regions, by role, and the total."""
-    parts = {
-        "Platform and SRE: on-call and operations for two regions": STAFF_TEAM_UPLIFT[ri] * q.cloud_team_size,
-        "Resilience: DR testing, failover rehearsals, regulator evidence": STAFF_RESILIENCE[ri],
-        "Workload operations across multi-region accounts": STAFF_PER_25_ACCOUNTS[ri] * totals.material / 25,
-        "Data replication and database operations": STAFF_DATA[ri]
-        * min(math.sqrt(max(totals.data_monthly, 0) / 100_000), 3.0),
+def _people(mq: MultiRegionAnswers, ri: int, totals: _Totals, any_selected: bool) -> tuple[list[dict], float]:
+    """Each of today's teams with the people it gains to run two regions, and the total gained."""
+    teams = [
+        ("Platform, cloud engineering and SRE", mq.team_platform, STAFF_TEAM_UPLIFT[ri] * mq.team_platform,
+         "On-call, patching and changes in two regions; two of every shared component."),
+        ("Databases and data engineering", mq.team_data,
+         STAFF_DATA[ri] * min(math.sqrt(max(totals.data_monthly, 0) / 100_000), 3.0),
+         "Replication, consistency checks, failover and failback of the data."),
+        ("Cloud security and IAM", mq.team_security, STAFF_SECURITY[ri] * mq.team_security,
+         "Guardrails, keys, logging and monitoring in the second region."),
+        ("Application support and operations", mq.team_app_ops, STAFF_PER_25_ACCOUNTS[ri] * totals.material / 25,
+         "Runbooks, deployments and support for each account in two regions."),
+        ("DR, continuity and resilience", mq.team_resilience, STAFF_RESILIENCE[ri],
+         "Failover tests, game days and the evidence regulators ask for."),
+    ]  # fmt: skip
+    if not any_selected:
+        teams = [(n, today, 0.0, why) for n, today, _, why in teams]
+    gained = sum(t[2] for t in teams)
+    if any_selected and gained < STAFF_FLOOR[ri]:  # a second region needs a minimum crew, however small
+        n, today, extra, why = teams[0]
+        teams[0] = (n, today, extra + STAFF_FLOOR[ri] - gained, why)
+        gained = STAFF_FLOOR[ri]
+    rows = [
+        {
+            "team": n,
+            "today": today,
+            "extra": round(extra, 1),
+            "after": round(today + extra, 1),
+            "pct": round(100 * extra / today) if today else None,
+            "why": why,
+        }
+        for n, today, extra, why in teams
+    ]
+    return rows, gained
+
+
+def _hours(h: float) -> str:
+    """'15 min', '4 h', '2 days'."""
+    if h < 1:
+        return f"{max(round(h * 60 / 5) * 5, 0):.0f} min" if h > 0 else "0"
+    if h < 48:
+        return f"{h:.0f} h" if h >= 2 else f"{h:.1f} h".replace(".0 h", " h")
+    return f"{h / 24:.0f} days"
+
+
+def _hours_range(lo: float, hi: float) -> str:
+    if hi <= 0:
+        return "none"
+    a, b = _hours(lo), _hours(hi)
+    if a == b:
+        return b
+    if lo <= 0:
+        return f"up to {b}"
+    ua, ub = a.split(" ", 1)[1], b.split(" ", 1)[1]
+    return f"{a.split(' ')[0]} to {b}" if ua == ub else f"{a} to {b}"  # "1 to 4 h", "30 min to 3 h"
+
+
+RECOVERY_STRATEGY = {"rto_3h": "pilot_light", "instant": "active_active"}  # the cost model's two targets
+RTO_TARGET_HOURS = {"rto_3h": 3.0, "instant": 0.25}
+
+
+def _recovery(svc_spend: dict, status: dict, mq: MultiRegionAnswers, cfg: dict) -> dict:
+    """Estimated RTO and RPO of each service in the chosen accounts, under each DR strategy."""
+    rt = cfg["recovery_times"]
+    risk_cfg = cfg.get("risks") or {}
+    chosen = RECOVERY_STRATEGY[mq.recovery]
+    target = RTO_TARGET_HOURS[mq.recovery]
+    rows = []
+    for k, sv in sorted(svc_spend.items(), key=lambda kv: -kv[1]["monthly_spend"]):
+        if sv["class"] == "global" or sv["monthly_spend"] < 1:
+            continue
+        failover = (risk_cfg.get(k) or {}).get("failover") or cfg["classes"][sv["class"]]["failover"]
+        missing = status.get(k) == "missing"
+        scale = 1.0
+        if sv["class"] in rt["size_scaled"]:
+            scale = min(max(math.sqrt(sv["monthly_spend"] / rt["size_reference_monthly"]), 1.0), rt["size_max"])
+        by = {}
+        for st in rt["strategies"]:
+            lo, hi = rt["rto"][failover][st]
+            if st == "backup_restore" or failover == "rebuild":
+                lo, hi = lo * scale, hi * scale
+            plo, phi = rt["rpo"][failover][st]
+            by[st] = {"rto": _hours_range(lo, hi), "rto_high_h": round(hi, 2), "rpo": _hours_range(plo, phi)}
+            if missing:
+                by[st] = {"rto": "not available", "rto_high_h": None, "rpo": "not available"}
+        meets = not missing and (by[chosen]["rto_high_h"] or 0) <= target
+        needs = next((st for st in rt["strategies"] if not missing and (by[st]["rto_high_h"] or 0) <= target), None)
+        rows.append(
+            {
+                "service": sv["display"],
+                "class": sv["class"],
+                "failover": "missing" if missing else failover,
+                "failover_label": FAILOVER_LABELS["missing" if missing else failover],
+                "monthly_spend": round(sv["monthly_spend"], 2),
+                "accounts": len(sv["accounts"]),
+                "strategies": by,
+                "meets_target": meets,
+                "needs": None if meets or not needs else rt["strategies"][needs],
+            }
+        )
+    rows.sort(key=lambda r: (r["meets_target"], -r["monthly_spend"]))
+    return {
+        "strategy": chosen,
+        "strategy_label": rt["strategies"][chosen],
+        "strategies": rt["strategies"],
+        "target": _hours(target),
+        "services": rows,
+        "missing_target": sum(1 for r in rows if not r["meets_target"]),
+        "missing_target_spend": round(sum(r["monthly_spend"] for r in rows if not r["meets_target"]), 2),
     }
-    fte = max(sum(parts.values()), STAFF_FLOOR[ri]) if any_selected else 0.0
-    return parts, fte
 
 
 def build_multiregion(
     scan: dict,
     account_filter: AccountFilter | None = None,
-    q: Questionnaire | None = None,
     mq: MultiRegionAnswers | None = None,
     catalog: Catalog | None = None,
 ) -> dict:
     started = time.perf_counter()
     catalog = catalog or load_catalog()
     account_filter = account_filter or AccountFilter()
-    q = q or Questionnaire()
     mq = mq or MultiRegionAnswers()
+    q = mq.questionnaire()  # this report's own answers, never the exit model's
     cfg = load_region_data()
     regions, classes = cfg["regions"], cfg["classes"]
     ri = RECOVERY_INDEX[mq.recovery]
@@ -673,7 +809,7 @@ def build_multiregion(
     support = support_fee(scan_monthly + infra + transfer, mq.support_plan) - support_fee(scan_monthly, mq.support_plan)
 
     acct_out, totals = _account_risks(accounts, lines, chosen, secondary, mq, q, cfg)
-    fte_parts, fte = _people(q, ri, totals, bool(sel))
+    teams, fte = _people(mq, ri, totals, bool(sel))
     fte_cost = mq.fte_annual_cost or q.day_rate * WORKING_DAYS
     staff_annual = fte * fte_cost  # in ``cur``
 
@@ -690,7 +826,7 @@ def build_multiregion(
     base = delivery + lz + dr + pmo
     contingency = base * q.contingency_pct / 100
     total_weeks = base + contingency if sel else 0.0
-    capacity = max(q.cloud_team_size * mq.allocation_pct / 100 + q.app_engineers_fte, 0.5)
+    capacity = max((mq.team_platform + mq.team_data) * mq.allocation_pct / 100 + q.app_engineers_fte, 0.5)
     effort_bound = total_weeks / (capacity * PRODUCTIVE_PCT)
     calendar_weeks = math.ceil(max(effort_bound, CRITICAL_PATH_WEEKS[ri]) + REHEARSAL_WEEKS) if sel else 0
     infra_annual_fx = (infra + transfer) * 12 * fx
@@ -785,9 +921,13 @@ def build_multiregion(
         },
         "staff": {
             "fte": round(fte, 1),
-            "parts": [{"role": k, "fte": round(v, 1)} for k, v in fte_parts.items()],
+            "teams": teams,
+            "today": sum(t["today"] for t in teams),
+            "after": round(sum(t["after"] for t in teams), 1),
+            "pct": round(100 * fte / sum(t["today"] for t in teams)) if sum(t["today"] for t in teams) else None,
             "fte_annual_cost": round(fte_cost),
         },
+        "recovery": _recovery(svc_spend, status, mq, cfg) if target else None,
         "build": {
             "total_weeks": round(total_weeks, 1),
             "parts": [
@@ -935,9 +1075,32 @@ def _executive(s: dict, candidates: list, mq: MultiRegionAnswers, q: Questionnai
                 "lose the last seconds of writes unless applications are designed for it.",
             }
         )
+    st = s["staff"]
+    grow = ", ".join(f"{t['team'].split(',')[0].split(' and ')[0]} {t['today']:g} to {t['after']:g}"
+                     for t in st["teams"] if t["extra"] >= 0.5)  # fmt: skip
     findings.append(
-        {"lead": "People.", "text": f"About {rg['staff']} extra FTE to run two regions ({rg['staff_annual']} a year)."}
+        {
+            "lead": "People.",
+            "text": f"About {rg['staff']} extra FTE to run two regions ({rg['staff_annual']} a year)"
+            + (
+                f": today's teams grow from {st['today']:g} to about {round(st['after'])} people (+{st['pct']}%)"
+                if st["pct"]
+                else ""
+            )
+            + (f"; {grow}." if grow else "."),
+        }
     )
+    rec = s.get("recovery")
+    if rec and rec["missing_target"]:
+        worst = [r["service"] for r in rec["services"] if not r["meets_target"]][:3]
+        findings.append(
+            {
+                "lead": "Recovery time.",
+                "text": f"With {rec['strategy_label'].lower()}, {_n(rec['missing_target'], 'service')} "
+                f"({_money(rec['missing_target_spend'])}/month) would not be serving within {rec['target']}: "
+                f"{', '.join(worst)}. See the recovery table.",
+            }
+        )
     if s["no_second_region_in_country"]:
         actions.append(
             {
@@ -984,14 +1147,19 @@ def _assumptions(mq: MultiRegionAnswers, q: Questionnaire, cfg: dict, factor: fl
         + ". Services not listed there are 'not verified' and their effort is raised 25%.",
         f"Region score: parity {SCORE_WEIGHTS[mq.recovery][0]:.0%}, latency {SCORE_WEIGHTS[mq.recovery][1]:.0%}, "
         f"price {SCORE_WEIGHTS[mq.recovery][2]:.0%}, plus a bonus where the estate already runs.",
-        f"People: {STAFF_TEAM_UPLIFT[ri]:.0%} of the core cloud team ({q.cloud_team_size}) + {STAFF_RESILIENCE[ri]:g} "
-        f"resilience + {STAFF_PER_25_ACCOUNTS[ri]:g} per 25 material accounts + data operations scaled by data "
-        f"spend; at least {STAFF_FLOOR[ri]:g}. Cost per FTE {fte_cost:,.0f} {q.currency} a year.",
+        f"People, from today's teams: platform and SRE +{STAFF_TEAM_UPLIFT[ri]:.0%} of {mq.team_platform}; security "
+        f"+{STAFF_SECURITY[ri]:.0%} of {mq.team_security}; data +{STAFF_DATA[ri]:g} scaled by √(data spend / "
+        f"US$100k a month), up to 3x; application operations +{STAFF_PER_25_ACCOUNTS[ri]:g} per 25 material "
+        f"accounts; DR and resilience +{STAFF_RESILIENCE[ri]:g}; at least {STAFF_FLOOR[ri]:g} in all. Cost per FTE "
+        f"{fte_cost:,.0f} {q.currency} a year.",
+        "Recovery times (RTO, RPO) per service: indicative hours by failover type (native, manual, rebuild) and DR "
+        "strategy (data/regions.yaml), longer for large databases, storage and analytics under backup and restore "
+        "or rebuild. Prove each with a failover test.",
         f"Build: catalog-style engineer-weeks per service and account × delivery factor {factor:.2f} (CI/CD × IaC"
         + (" × regulated" if q.regulated else "")
         + f"), plus a second-region landing zone (halved where {EXISTING_FOOTPRINT_PCT:g}%+ of spend already runs "
         f"there), DR programme, {PMO_PCT:.0%} programme management and {q.contingency_pct}% contingency.",
-        f"Duration: the longer of effort ÷ capacity ({mq.allocation_pct}% of the cloud team + application "
+        f"Duration: the longer of effort ÷ capacity ({mq.allocation_pct}% of the platform and data teams + application "
         f"engineers, {PRODUCTIVE_PCT:.0%} productive) and a {CRITICAL_PATH_WEEKS[ri]}-week critical path, plus "
         f"{REHEARSAL_WEEKS} weeks of failover rehearsal. Build cost includes running the half-built region meanwhile.",
         "Figures are ranges (−25% / +50% on cost, −20% / +40% on time), widened to round numbers.",

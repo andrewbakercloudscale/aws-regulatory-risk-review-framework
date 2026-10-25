@@ -534,7 +534,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             flt = AccountFilter(**req.filter.model_dump())
         except FilterError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return build_multiregion(scan, flt, req.questionnaire, req.multiregion)
+        return build_multiregion(scan, flt, req.multiregion)
 
     # ------------------------------------------------------------------ Cloud Assurance Framework
     def _assurance(req: AssuranceRequest) -> dict:

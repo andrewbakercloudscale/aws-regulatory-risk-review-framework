@@ -1,5 +1,4 @@
 from exitrisk.demo import build_demo_scan
-from exitrisk.estimate import Questionnaire
 from exitrisk.filtering import AccountFilter
 from exitrisk.multiregion import MultiRegionAnswers, build_multiregion, latency_ms, load_region_data, support_fee
 
@@ -107,8 +106,8 @@ def test_scan_without_region_data_assumes_one_region_and_says_so():
 
 def test_staff_and_filter():
     scan = build_demo_scan(12)
-    small = build_multiregion(scan, q=Questionnaire(cloud_team_size=5))["summary"]["staff"]["fte"]
-    big = build_multiregion(scan, q=Questionnaire(cloud_team_size=60))["summary"]["staff"]["fte"]
+    small = build_multiregion(scan, mq=MultiRegionAnswers(team_platform=5))["summary"]["staff"]["fte"]
+    big = build_multiregion(scan, mq=MultiRegionAnswers(team_platform=60))["summary"]["staff"]["fte"]
     assert big > small
     prod = build_multiregion(scan, AccountFilter(include="prod"))["summary"]
     assert prod["accounts_in_scope"] < build_multiregion(scan)["summary"]["accounts_in_scope"]
@@ -238,9 +237,9 @@ def test_regulation_follows_the_primary_and_the_border():
     names = [x["name"] for x in za["regulation"]]
     assert names[0].startswith("POPIA section 72") and any("Prudential Authority" in n for n in names)
     assert "Germany" in za["regulation"][0]["text"]
-    unregulated = build_multiregion(
-        _connect_scan(), q=Questionnaire(regulated=False), mq=MultiRegionAnswers(secondary="eu-central-1")
-    )["summary"]
+    unregulated = build_multiregion(_connect_scan(), mq=MultiRegionAnswers(regulated=False, secondary="eu-central-1"))[
+        "summary"
+    ]
     assert [x["name"] for x in unregulated["regulation"]] == names[:1]
     # Inside one country there is no cross-border transfer to flag.
     costs = [
@@ -249,9 +248,7 @@ def test_regulation_follows_the_primary_and_the_border():
     rc = [
         {"account_id": "1", "service": "Amazon Elastic Compute Cloud - Compute", "region": "us-east-1", "monthly": 5000}
     ]
-    us = build_multiregion(
-        _scan(costs, rc), q=Questionnaire(regulated=False), mq=MultiRegionAnswers(secondary="us-west-2")
-    )
+    us = build_multiregion(_scan(costs, rc), mq=MultiRegionAnswers(regulated=False, secondary="us-west-2"))
     assert us["summary"]["regulation"] == []
 
 
@@ -278,3 +275,39 @@ def test_correction_can_remove_a_region():
     }
     _apply_corrections(cfg)
     assert cfg["availability"] == {"X": {"a"}, "Y": {"c"}}
+
+
+def test_each_team_shows_today_extra_and_after():
+    mq = MultiRegionAnswers(team_platform=12, team_data=4, team_security=2, team_app_ops=6, team_resilience=0)
+    staff = build_multiregion(build_demo_scan(12), mq=mq)["summary"]["staff"]
+    teams = {t["team"]: t for t in staff["teams"]}
+    assert len(teams) == 5 and staff["today"] == 24
+    sre = teams["Platform, cloud engineering and SRE"]
+    assert sre["today"] == 12 and sre["after"] > 12 and sre["pct"] > 0
+    assert teams["DR, continuity and resilience"]["pct"] is None  # no team today: no percentage
+    assert abs(sum(t["extra"] for t in staff["teams"]) - staff["fte"]) < 0.2
+
+
+def test_no_accounts_chosen_means_no_extra_people():
+    staff = build_multiregion(build_demo_scan(12), mq=MultiRegionAnswers(accounts=[]))["summary"]["staff"]
+    assert all(t["extra"] == 0 for t in staff["teams"])
+
+
+def test_recovery_time_per_service_and_strategy():
+    scan = build_demo_scan(12)
+    slow = build_multiregion(scan, mq=MultiRegionAnswers(recovery="rto_3h"))["summary"]["recovery"]
+    fast = build_multiregion(scan, mq=MultiRegionAnswers(recovery="instant"))["summary"]["recovery"]
+    assert slow["strategy"] == "pilot_light" and fast["strategy"] == "active_active"
+    rows = {r["service"]: r for r in slow["services"]}
+    assert set(rows["EC2"]["strategies"]) == {"backup_restore", "pilot_light", "warm_standby", "active_active"}
+    assert rows["EC2"]["meets_target"]  # manual failover from a pilot light makes 3 hours
+    assert not rows["Redshift"]["meets_target"]  # rebuilt from a snapshot: hours to days
+    assert slow["services"][0]["meets_target"] is False  # misses first
+    assert slow["missing_target"] == sum(1 for r in slow["services"] if not r["meets_target"])
+
+
+def test_a_service_missing_in_the_second_region_has_no_recovery_time():
+    rec = build_multiregion(_connect_scan(), mq=MultiRegionAnswers(secondary="eu-west-1"))["summary"]["recovery"]
+    connect = next(r for r in rec["services"] if r["service"] == "Connect")
+    assert connect["failover"] == "missing" and not connect["meets_target"]
+    assert connect["strategies"]["active_active"]["rto"] == "not available"

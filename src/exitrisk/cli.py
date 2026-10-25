@@ -294,7 +294,7 @@ def _report(args) -> int:
         from .multiregion import MultiRegionAnswers, build_multiregion
 
         mq = MultiRegionAnswers(**(_answers(args.multiregion, "multi-region answers") or {}))
-        report = build_multiregion(scan, flt, q, mq)
+        report = build_multiregion(scan, flt, mq)
     elif args.view == "assurance":
         from .assurance import AssuranceAnswers, build_assurance
 
