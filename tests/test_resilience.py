@@ -59,9 +59,9 @@ def test_demo_resilience_finds_shared_region_and_stuck_spend(demo):
     assert res["stressed_exit"]["accounts"][0]["name"] == "cards-processing-prod"
     flagged = {a["name"] for a in r["accounts"] if a["critical"]}
     assert "cards-processing-prod" in flagged and "sandbox-innovation" not in flagged
-    # One finding and one action reach the executive summary.
+    # One action reaches the executive summary; losing a region belongs to the Multi-Region Report.
     ex = r["summary"]["executive"]
-    assert any("critical accounts" in f and "no anti-affinity" in f for f in ex["findings"])
+    assert not any("no anti-affinity" in f for f in ex["findings"])
     assert any(a.startswith("Pre-build a stressed-exit fallback") for a in ex["actions"])
 
 

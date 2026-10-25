@@ -782,7 +782,7 @@ def _executive_summary(
     defaults, empty = not q.confirmed, bool(est.get("empty"))
     headline = _headline(summary, est, defaults)
     context = _context(summary)
-    findings = _findings(summary, accounts) + _timing_findings(timing or {}) + _resilience_findings(resilience or {})
+    findings = _findings(summary, accounts) + _timing_findings(timing or {})  # one region failing: Multi-Region Report
     exit_facts, exit_line = _exit(est, q, defaults)
     links = (((resilience or {}).get("data") or {}).get("migration_links") or {}).get("options") or []
     if exit_facts and links:  # not in the one-off cost: say what copying the data adds beside it
@@ -1002,23 +1002,6 @@ def _written_off(tm: dict) -> dict | None:
         "note": f"still owed once the exit finishes: {_join([x for x in parts if x])}; more if it finishes sooner. "
         "They cover the whole organisation, even when the report is filtered to some accounts",
     }
-
-
-def _resilience_findings(r: dict) -> list[dict]:
-    """Correlated failure: how much of the critical estate one regional event would take down."""
-    c, crit = r.get("concentration") or {}, r.get("criticality") or {}
-    if not c.get("available") or c["pct"] < 70:
-        return []
-    who = (
-        f"the spend of {_plural(crit['critical_accounts'], 'critical account')}"
-        if c["basis"] == "critical"
-        else "in-scope spend (no account is marked critical yet)"
-    )
-    text = f"runs in {c['region_name']}, so one regional event takes down most of it at once."
-    if c["no_anti_affinity"]:
-        x = c["no_anti_affinity"][0]
-        text += f" Channels {_join(x['channels'])} share that region: no anti-affinity between them."
-    return [{"lead": f"{c['pct']:.0f}% of {who}", "text": text}]
 
 
 def _resilience_action(r: dict) -> dict | None:

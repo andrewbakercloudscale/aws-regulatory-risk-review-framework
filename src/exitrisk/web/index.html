@@ -350,26 +350,18 @@
     <!-- 7. Resilience -->
     <section class="section" id="sec-resilience">
       <h2><span class="num">7</span>Resilience: critical accounts, data and a stressed exit</h2>
-      <p class="muted section-lede">A planned exit is one question. Regulators also ask what happens to critical services if AWS, or one region, fails, and what could move in weeks rather than years. These figures inform; they do not change the score or the estimate.</p>
+      <p class="muted section-lede">A planned exit is one question. Regulators also ask what happens to critical services if AWS fails, and what could move in weeks rather than years. These figures inform; they do not change the score or the estimate. Losing one AWS region is covered by the Multi-Region Report.</p>
       <div class="model-strip"><dl class="answers inline" id="resAnswers"></dl><button type="button" class="btn no-print" data-model="resForm">Change critical accounts</button></div>
       <div class="est-full">
         <div class="est-results">
           <div class="tiles" id="resTiles"></div>
         </div>
       </div>
-      <div class="grid-2">
-        <div class="card">
-          <h3>Correlated failure: where the critical estate runs</h3>
-          <p class="muted small" id="resConcNote"></p>
-          <div id="resRegions" class="split-list"></div>
-          <div class="table-wrap"><table class="data compact" id="resChannels"></table></div>
-        </div>
-        <div class="card">
-          <h3>Stressed exit: what could move in a hurry</h3>
-          <p class="muted small" id="resStressNote"></p>
-          <div id="resStress" class="split-list"></div>
-          <div class="table-wrap"><table class="data compact" id="resStuck"></table></div>
-        </div>
+      <div class="card">
+        <h3>Stressed exit: what could move in a hurry</h3>
+        <p class="muted small" id="resStressNote"></p>
+        <div id="resStress" class="split-list"></div>
+        <div class="table-wrap"><table class="data compact" id="resStuck"></table></div>
       </div>
       <div class="card">
         <h3>Data held: what an exit has to move</h3>
@@ -526,7 +518,7 @@
     <section class="section" id="mr-questions">
       <h2><span class="num">2</span>Your choices</h2>
       <form class="card questionnaire mr-form" id="mrForm" autocomplete="off">
-        <p class="muted small">Saved in this browser only. Team, rates and delivery answers are shared with the exit estimate.</p>
+        <p class="muted small">Saved in this browser only. These answers belong to this report alone; the exit risk report has its own.</p>
         <p class="q-status" id="mrStatus"></p>
         <fieldset class="recovery">
           <legend>Recovery target after a region-wide event</legend>
@@ -538,15 +530,25 @@
           <label>Primary region<select name="primary"></select></label>
           <label>Second region<select name="secondary"></select></label>
           <label>AWS Support plan<select name="support_plan"></select></label>
-          <label>People in the core cloud team<input name="cloud_team_size" type="number" min="1" step="1" data-shared></label>
-          <label>% of their time on this programme<input name="allocation_pct" type="number" min="5" max="100" step="5"></label>
-          <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1" data-shared></label>
-          <label>Blended day rate<input name="day_rate" type="number" min="0" step="50" data-shared></label>
-          <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}" data-shared></label>
+          <label>Application engineers available (FTE)<input name="app_engineers_fte" type="number" min="0" step="1"></label>
+          <label>% of platform and data time on the build<input name="allocation_pct" type="number" min="5" max="100" step="5"></label>
+          <label>Blended day rate<input name="day_rate" type="number" min="0" step="50"></label>
+          <label>Currency<input name="currency" maxlength="3" pattern="[A-Za-z]{3}"></label>
           <label>Cost per extra FTE a year (0 = day rate × 220)<input name="fte_annual_cost" type="number" min="0" step="1000"></label>
-          <label>Standard CI/CD pipeline?<select name="cicd" data-shared></select></label>
-          <label>Terraform, and is it up to date?<select name="iac" data-shared></select></label>
+          <label>Standard CI/CD pipeline?<select name="cicd"></select></label>
+          <label>Terraform, and is it up to date?<select name="iac"></select></label>
+          <label class="check"><input name="regulated" type="checkbox"> Regulated (adds evidence and sign-off)</label>
         </div>
+        <fieldset class="teams">
+          <legend>Your teams today <span class="muted small">people now, so the report can show what a second region adds to each</span></legend>
+          <div class="mr-grid five">
+            <label>Platform, cloud and SRE<input name="team_platform" type="number" min="0" step="1"></label>
+            <label>Databases and data<input name="team_data" type="number" min="0" step="1"></label>
+            <label>Cloud security and IAM<input name="team_security" type="number" min="0" step="1"></label>
+            <label>Application support and ops<input name="team_app_ops" type="number" min="0" step="1"></label>
+            <label>DR and resilience<input name="team_resilience" type="number" min="0" step="1"></label>
+          </div>
+        </fieldset>
         <button type="button" id="btnMrConfirm" class="btn primary no-print">These answers are right: recalculate</button>
       </form>
     </section>
@@ -560,8 +562,9 @@
           <button type="button" class="btn" id="btnMrAll">Select all</button>
           <button type="button" class="btn" id="btnMrNone">Select none</button>
           <button type="button" class="btn" id="btnMrTop">Top 10 by spend</button>
+          <select id="mrOuPick" aria-label="Select the accounts in an organizational unit"><option value="">Select an OU…</option></select>
         </div>
-        <p class="muted small">Sorted by spend. Readiness is the worst failover risk among an account's material services for the chosen recovery target; open an account to see each service's risk.</p>
+        <p class="muted small">Tick the accounts that need a second region, or pick an OU. Sorted by spend. Readiness is the worst failover risk among an account's material services for the chosen recovery target; open an account to see each service's risk.</p>
         <div class="table-wrap"><table class="data mr-accounts" id="mrAcctTable"></table></div>
         <p class="table-more"><span id="mrAcctMoreNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnMrAcctMore" hidden></button></p>
       </div>
@@ -600,15 +603,29 @@
           <figcaption><h3>Second-region infrastructure by service class</h3><p class="muted">Monthly, after the recovery target's share and regional prices.</p></figcaption>
           <div class="chart-box short"><canvas id="chMrClass" role="img" aria-label="Bar chart of second-region monthly run cost by service class"></canvas></div>
         </figure>
-        <div class="card">
-          <h3>Extra people to run two regions</h3>
-          <table class="data compact" id="mrStaffTable"></table>
-        </div>
+        <figure class="card chart-card">
+          <figcaption><h3>Team sizes: today and with two regions</h3><p class="muted">People, central estimate.</p></figcaption>
+          <div class="chart-box short"><canvas id="chMrTeams" role="img" aria-label="Bar chart of each team's size today and with a second region"></canvas></div>
+        </figure>
+      </div>
+      <div class="card">
+        <h3>What a second region does to each team</h3>
+        <div class="table-wrap"><table class="data compact" id="mrStaffTable"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="mr-recovery">
+      <h2><span class="num">6</span>Recovery time by service</h2>
+      <div class="tiles" id="mrRecTiles"></div>
+      <div class="card">
+        <p class="muted small">Estimated time to be serving again (RTO) and data that could be lost (RPO) in the second region, for each service in the chosen accounts and each DR strategy. Your target's strategy is highlighted. Indicative: prove each one with a failover test.</p>
+        <div class="table-wrap"><table class="data compact mr-rto" id="mrRecTable"></table></div>
+        <p class="table-more"><span id="mrRecMoreNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnMrRecMore" hidden></button></p>
       </div>
     </section>
 
     <section class="section" id="mr-build">
-      <h2><span class="num">6</span>Cost and time to achieve</h2>
+      <h2><span class="num">7</span>Cost and time to achieve</h2>
       <div class="tiles" id="mrBuildTiles"></div>
       <figure class="card chart-card">
         <figcaption><h3>Where the effort goes</h3><p class="muted">Person-months, after the delivery-maturity adjustment.</p></figcaption>
@@ -617,7 +634,7 @@
     </section>
 
     <section class="section" id="mr-parity">
-      <h2><span class="num">7</span>Service parity in the second region</h2>
+      <h2><span class="num">8</span>Service parity in the second region</h2>
       <div class="card">
         <div class="table-wrap"><table class="data compact" id="mrParityTable"></table></div>
       </div>

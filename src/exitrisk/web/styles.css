@@ -584,6 +584,12 @@ body[data-view="multiregion"] #btnJumpAi { display: none; }
 .mr-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 14px; }
 .mr-acct-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .mr-acct-bar .spacer { flex: 1; }
+.mr-form fieldset.teams { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 4px 0 14px; }
+.mr-grid.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.mr-form label.check { flex-direction: row; align-items: center; gap: 8px; align-self: end; padding-bottom: 10px; }
+.mr-rto th.chosen, .mr-rto td.chosen { background: var(--focus-ring); font-weight: 600; }
+.mr-rto tr.miss td:first-child { box-shadow: inset 3px 0 0 var(--sev-critical); }
+.mr-staff .why { display: block; }
 table.mr-accounts td { vertical-align: top; }
 table.mr-accounts td.sel { width: 28px; }
 table.mr-accounts tr.off td:not(.sel) { color: var(--muted); }
@@ -591,8 +597,8 @@ table.mr-accounts details summary { cursor: pointer; font-weight: 600; }
 table.mr-accounts .risk-list { margin: 6px 0 2px; padding-left: 0; list-style: none; }
 table.mr-accounts .risk-list li { margin: 0 0 6px; font-size: 12.5px; line-height: 1.45; }
 table.data tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
-@media (max-width: 900px) { .mr-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 560px) { .mr-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .mr-grid, .mr-grid.five { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .mr-grid, .mr-grid.five { grid-template-columns: 1fr; } }
 @media print {
   .mr-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   table.mr-accounts tr.off { display: none; }

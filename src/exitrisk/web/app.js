@@ -454,7 +454,7 @@
   ];
   function tile(label, value, sub, provisional) {
     const tone = TILE_TONE.find(([re]) => re.test(label))?.[1] || "fact";
-    return `<div class="tile tone-${tone}${provisional ? " is-provisional" : ""}"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(String(value).replace(/person-/g, "person\u2011"))}${provisional ? ' <span class="prov-tag" title="Uses default answers: answer the questions under Exit model">Provisional</span>' : ""}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
+    return `<div class="tile tone-${tone}${provisional ? " is-provisional" : ""}"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(String(value).replace(/person-/g, "person\u2011"))}${provisional ? ' <span class="prov-tag" title="Uses default answers: answer the questions in this report to firm it up">Provisional</span>' : ""}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
   }
 
   // "team of 128 full-time people": capacity is headcount working in parallel, not years.
@@ -1063,7 +1063,7 @@
   }
 
   function renderResilience(r) {
-    const s = r.resilience, c = s.criticality, d = s.data, k = s.concentration, st = s.stressed_exit;
+    const s = r.resilience, c = s.criticality, d = s.data, st = s.stressed_exit;
     const crit = c.critical_accounts > 0;
     $("#resTagNote").textContent = !c.tags_read
       ? "Account tags were not read in this scan (older scan, or organizations:ListTagsForResource not granted). Name the critical accounts below."
@@ -1080,7 +1080,6 @@
     const none = st.buckets.find((b) => b.key === "none");
     const tiles = [
       tile("Critical accounts", crit ? num(c.critical_accounts) : "None marked", crit ? `${pct(c.pct_spend)} of spend · ${money(c.monthly_spend * 12)} a year` : "Figures below cover all in-scope accounts"),
-      k.available ? tile("Correlated failure", `${k.level} · ${k.score}`, `${pct(k.pct)} of ${basis} in ${k.region_name}`) : tile("Correlated failure", EMPTY, k.reason),
       tile("No rapid exit", pct(none.pct), `of ${basis} is on AWS-only services`),
     ];
     if (d.available && !d.empty) {
@@ -1088,20 +1087,6 @@
       tiles.push(tile("Data to move", tb(d.move_tb), `${days(o.at(-1).days).replace(/ days$/, days(o[0].days).endsWith(" days") ? "" : " days")} to ${days(o[0].days)} on ${o[0].links} to ${o.at(-1).links} new ${d.migration_links.link_gbps} Gbps links`));
     }
     $("#resTiles").innerHTML = tiles.join("");
-
-    // Correlated failure.
-    if (k.available) {
-      $("#resConcNote").textContent = `Share of ${basis} by region${crit ? ` (${plural(c.critical_accounts, "critical account")})` : ""}. One regional event takes out everything in the top bar at once.${k.global_pct ? ` A further ${pct(k.global_pct, 1)} is global services (IAM, Route 53, CloudFront), which share a control plane across regions.` : ""}`;
-      $("#resRegions").innerHTML = splitList(k.regions.slice(0, 5).map((x, i) => ({ label: x.name, pct: x.pct, color: i ? css("--ink-2") : tierColor(k.level === "High" ? 5 : k.level === "Elevated" ? 4 : 3) })));
-      const shared = new Set(k.no_anti_affinity.flatMap((x) => x.channels));
-      $("#resChannels").innerHTML = k.channels.length
-        ? `<thead><tr><th>Channel</th><th>Runs mainly in</th><th>Isolated from other channels?</th></tr></thead><tbody>${k.channels.map((ch) => `<tr><td>${esc(ch.channel)}</td><td>${esc(ch.name)} <span class="hint">${pct(ch.pct)}</span></td><td>${shared.has(ch.channel) ? '<span class="sev" style="--dot:var(--t5)">No</span>' : '<span class="sev" style="--dot:var(--t1)">Yes</span>'}</td></tr>`).join("")}</tbody>`
-        : `<tbody><tr><td class="hint">No Channel tag on the accounts. Tag accounts with Channel (cards, mobile app, payments) to test whether tier 1 channels are isolated from each other.</td></tr></tbody>`;
-    } else {
-      $("#resConcNote").textContent = k.reason;
-      $("#resRegions").innerHTML = "";
-      $("#resChannels").innerHTML = "";
-    }
 
     // Stressed exit.
     $("#resStressNote").textContent = `If AWS stopped serving you with little notice, how fast could ${basis} (${money(st.monthly_spend * 12)} a year) move?`;
@@ -2256,7 +2241,8 @@
   const LS_MR = "exitrisk.multiregion.v1";
   const LS_MR_ACCTS = "exitrisk.multiregion.accounts."; // + scan id: the accounts ticked for a second region
   const MR_DEFAULTS = { recovery: "rto_3h", residency: "any", primary: "", secondary: "", support_plan: "enterprise", allocation_pct: 50, fte_annual_cost: 0, confirmed: false, assume_available: [], not_needed: [] };
-  const MR_NUM = ["allocation_pct", "fte_annual_cost"];
+  const MR_NUM = ["allocation_pct", "fte_annual_cost", "app_engineers_fte", "day_rate", "team_platform", "team_data", "team_security", "team_app_ops", "team_resilience"];
+  const MR_REC_ROWS = 20;
   const SEV_TIER = { Low: 1, Moderate: 3, High: 4, Critical: 5 };
   const AVAIL_LABEL = { available: "Available", missing: "Not available", unverified: "Not verified", global: "Global" };
   const AVAIL_TIER = { available: 1, missing: 5, unverified: 3, global: 2 };
@@ -2303,8 +2289,9 @@
     const f = $("#mrForm");
     const a = { confirmed: !!state.mrConfirmed, assume_available: state.mrFix.assume_available, not_needed: state.mrFix.not_needed };
     for (const el of f.elements) {
-      if (!el.name || el.hasAttribute("data-shared")) continue;
+      if (!el.name) continue;
       if (el.type === "radio") { if (el.checked) a[el.name] = el.value; }
+      else if (el.type === "checkbox") a[el.name] = el.checked;
       else if (MR_NUM.includes(el.name)) a[el.name] = el.value === "" ? undefined : Number(el.value);
       else a[el.name] = el.value;
     }
@@ -2325,7 +2312,7 @@
   async function loadMultiRegion() {
     if (!state.scanId) return;
     const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
-    const body = { scan_id: state.scanId, filter, questionnaire: readQuestionnaire(), multiregion: { ...readMr(), accounts: mrAccounts() } };
+    const body = { scan_id: state.scanId, filter, multiregion: { ...readMr(), accounts: mrAccounts() } };
     const seq = (state.mrSeq = (state.mrSeq || 0) + 1);
     try {
       const mr = await api("/api/multiregion", { method: "POST", body });
@@ -2366,8 +2353,8 @@
     f.iac.innerHTML = q.iac.innerHTML;
     for (const el of f.elements) {
       if (!el.name) continue;
-      if (el.hasAttribute("data-shared")) { el.value = q[el.name].value; continue; }
       if (el.type === "radio") el.checked = el.value === a[el.name];
+      else if (el.type === "checkbox") el.checked = !!a[el.name];
       else if (a[el.name] != null) el.value = a[el.name];
     }
     state.mrFilled = true;
@@ -2472,10 +2459,22 @@
       options: { indexAxis: "y", plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` ${money(c.raw)}/month` } } },
         scales: { x: { ticks: { callback: (v) => money(v) }, grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } } },
     });
-    $("#mrStaffTable").innerHTML = `<thead><tr><th>Role</th><th class="num-cell">FTE (midpoint)</th></tr></thead><tbody>` +
-      s.staff.parts.map((p) => `<tr><td>${esc(p.role)}</td><td class="num-cell">${num(p.fte, 1)}</td></tr>`).join("") +
-      `<tr class="total"><td><strong>Total</strong> <span class="muted small">(quoted as ${esc(rg.staff)})</span></td><td class="num-cell"><strong>${num(s.staff.fte, 1)}</strong></td></tr></tbody>` +
-      `<caption class="muted small" style="caption-side:bottom;text-align:left;padding-top:8px">At ${money(s.staff.fte_annual_cost, cur)} per FTE a year.</caption>`;
+    const st = s.staff, pct = (p) => (p == null ? EMPTY : `+${num(p)}%`);
+    $("#mrStaffTable").innerHTML = `<thead><tr><th>Team</th><th class="num-cell">Today</th><th class="num-cell">Extra</th><th class="num-cell">With two regions</th><th class="num-cell">Change</th></tr></thead><tbody>` +
+      st.teams.map((t) => `<tr><td><strong>${esc(t.team)}</strong><span class="why muted small">${esc(t.why)}</span></td><td class="num-cell">${num(t.today)}</td><td class="num-cell">+${num(t.extra, 1)}</td><td class="num-cell">${num(t.after, 1)}</td><td class="num-cell">${pct(t.pct)}</td></tr>`).join("") +
+      `<tr class="total"><td><strong>All teams</strong> <span class="muted small">(extra quoted as ${esc(rg.staff)} FTE)</span></td><td class="num-cell"><strong>${num(st.today)}</strong></td><td class="num-cell"><strong>+${num(st.fte, 1)}</strong></td><td class="num-cell"><strong>${num(st.after, 1)}</strong></td><td class="num-cell"><strong>${pct(st.pct)}</strong></td></tr></tbody>` +
+      `<caption class="muted small" style="caption-side:bottom;text-align:left;padding-top:8px">Central estimate, at ${money(st.fte_annual_cost, cur)} per extra FTE a year. Set today's team sizes in section 2.</caption>`;
+    $("#mrStaffTable").classList.add("mr-staff");
+    chart("chMrTeams", {
+      type: "bar",
+      data: { labels: st.teams.map((t) => t.team.split(",")[0]), datasets: [
+        { label: "Today", data: st.teams.map((t) => t.today), backgroundColor: css("--axis"), borderRadius: 4, barPercentage: 0.8 },
+        { label: "With two regions", data: st.teams.map((t) => t.after), backgroundColor: css("--accent"), borderRadius: 4, barPercentage: 0.8 },
+      ] },
+      options: { indexAxis: "y", plugins: { legend: { position: "bottom" }, tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${num(c.raw, 1)} people` } } },
+        scales: { x: { grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } } },
+    });
+    renderMrRecovery(m);
 
     $("#mrBuildTiles").innerHTML = [
       tile("Cost to achieve (one-off)", rg.build_cost, "engineering, plus running the region while it is built", prov),
@@ -2499,7 +2498,48 @@
     if (state.view === "multiregion") document.body.dataset.ready = "1";
   }
 
+  function renderMrRecovery(m) {
+    const rec = m.summary.recovery;
+    $("#mr-recovery").hidden = !rec;
+    if (!rec) return;
+    const order = Object.keys(rec.strategies);
+    const rows = rec.services;
+    const shown = PRINT ? rows.filter((r) => !r.meets_target || r.monthly_spend >= 1000) : state.mrRecAll ? rows : rows.slice(0, MR_REC_ROWS);
+    const met = rows.length - rec.missing_target;
+    $("#mrRecTiles").innerHTML = [
+      tile("Your recovery target", `within ${rec.target}`, `${rec.strategy_label}, from section 2`),
+      tile("Services that meet it", `${num(met)} of ${num(rows.length)}`, "as built today, with that strategy"),
+      tile("Services that miss it", num(rec.missing_target), rec.missing_target ? `${money(rec.missing_target_spend)}/month of spend` : "none"),
+    ].join("");
+    $("#mrRecTable").innerHTML = `<thead><tr><th>Service</th><th class="num-cell">Spend / month</th><th>Failover</th>` +
+      order.map((k) => `<th class="${k === rec.strategy ? "chosen" : ""}">RTO: ${esc(rec.strategies[k])}</th>`).join("") +
+      `<th class="chosen">RPO: ${esc(rec.strategy_label)}</th><th>Meets ${esc(rec.target)}?</th></tr></thead><tbody>` +
+      shown.map((r) => `<tr class="${r.meets_target ? "" : "miss"}"><td><strong>${esc(r.service)}</strong><div class="muted small">${plural(r.accounts, "account")}</div></td><td class="num-cell">${money(r.monthly_spend)}</td><td class="small">${esc(r.failover_label)}</td>` +
+        order.map((k) => `<td class="nowrap${k === rec.strategy ? " chosen" : ""}">${esc(r.strategies[k].rto)}</td>`).join("") +
+        `<td class="nowrap chosen">${esc(r.strategies[rec.strategy].rpo)}</td>` +
+        `<td>${r.meets_target ? '<span class="ok-tag">Yes</span>' : `<span class="badge" style="--dot:${tierColor(5)}">No</span>${r.failover === "missing" ? '<div class="muted small">not in the second region</div>' : r.needs ? `<div class="muted small">needs ${esc(r.needs.toLowerCase())}</div>` : '<div class="muted small">needs a redesign</div>'}`}</td></tr>`).join("") + "</tbody>";
+    const more = rows.length > MR_REC_ROWS && !PRINT;
+    $("#btnMrRecMore").hidden = !more;
+    $("#btnMrRecMore").textContent = state.mrRecAll ? "Show fewer" : `Show all ${num(rows.length)}`;
+    $("#mrRecMoreNote").textContent = PRINT && shown.length < rows.length ? `Services under ${money(1000)}/month that meet the target are left out (${num(rows.length - shown.length)}).`
+      : more && !state.mrRecAll ? `Showing ${MR_REC_ROWS} of ${num(rows.length)}: misses first, then by spend.` : "";
+  }
+
+  // Every OU path, and each OU above it, so a pick can take a whole branch.
+  function fillMrOus(m) {
+    const paths = new Map();
+    for (const a of m.accounts) {
+      const parts = (a.ou_path || "").split(" / ").filter(Boolean);
+      for (let i = 1; i <= parts.length; i++) { const p = parts.slice(0, i).join(" / "); paths.set(p, (paths.get(p) || 0) + 1); }
+    }
+    const sel = $("#mrOuPick");
+    sel.innerHTML = `<option value="">Select an OU…</option>` + [...paths].sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([p, n]) => `<option value="${esc(p)}">${esc(p)} (${n})</option>`).join("");
+    sel.hidden = paths.size < 2;
+  }
+
   function renderMrAccounts(m) {
+    fillMrOus(m);
     const rows = m.accounts;
     const shown = PRINT ? rows : state.mrShowAll ? rows : rows.slice(0, MR_ROWS);
     const counts = (c) => ["Critical", "High", "Moderate", "Low"].filter((k) => c[k]).map((k) => `<span class="chip"><span class="sev" style="--dot:${tierColor(SEV_TIER[k])}">${esc(k)} ${c[k]}</span></span>`).join("");
@@ -2527,7 +2567,6 @@
     for (const b of document.querySelectorAll(".vtab")) b.addEventListener("click", () => setView(b.dataset.view));
     $("#mrForm").addEventListener("change", (ev) => {
       const el = ev.target;
-      if (el.hasAttribute?.("data-shared")) { $("#qForm")[el.name].value = el.value; readQuestionnaire(); state.report && loadReport(); }
       state.mrConfirmed = true;
       loadMultiRegion();
     });
@@ -2544,6 +2583,13 @@
     $("#btnMrAll").addEventListener("click", () => setMrSelection(null));
     $("#btnMrNone").addEventListener("click", () => setMrSelection([]));
     $("#btnMrTop").addEventListener("click", () => state.mr && setMrSelection(state.mr.accounts.slice(0, 10).map((a) => a.id)));
+    $("#mrOuPick").addEventListener("change", (ev) => {
+      const p = ev.target.value;
+      if (!p || !state.mr) return;
+      setMrSelection(state.mr.accounts.filter((a) => a.ou_path === p || (a.ou_path || "").startsWith(`${p} / `)).map((a) => a.id));
+      ev.target.value = "";
+    });
+    $("#btnMrRecMore").addEventListener("click", () => { state.mrRecAll = !state.mrRecAll; renderMrRecovery(state.mr); });
     $("#btnMrAcctMore").addEventListener("click", () => { state.mrShowAll = !state.mrShowAll; renderMrAccounts(state.mr); });
     const toggleFix = (kind, key, on) => {
       const list = new Set(state.mrFix[kind]);
