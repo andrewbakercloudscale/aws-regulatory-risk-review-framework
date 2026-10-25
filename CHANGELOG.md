@@ -6,6 +6,28 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- The console is now **AWS Cloud Risk Review**, with three separate reports: Exit Risk Report,
+  Multi-Region Report and Cloud Assurance Report.
+- **Multi-Region Report** is its own report with its own answers; nothing comes from the exit model.
+  It shows what a second region does to each team (platform/SRE, data, security, application
+  operations, DR: today, extra, after, change), and an estimated **RTO and RPO per service** under
+  each DR strategy, with the services that miss the target. Accounts can be picked by OU.
+- The Exit Risk Report no longer covers losing one region (the correlated-failure tile, card and
+  finding): that is the Multi-Region Report's job.
+- "Agentic Risk Review" is now called **AI review**. Exit effort is shown in person-years.
+- Check access runs its independent checks in parallel.
+
+### Added
+- **AI insights per report**: New scan step 5 has a tick for each report; the Multi-Region and Cloud
+  Assurance reports get their own AI section for their readers (`POST /api/ai/insights`), also
+  runnable later from the report.
+- **Stop scan**: a running scan can be stopped (nothing is saved); a *Scan running* button in the
+  top bar reopens its progress after Close.
+
+### Fixed
+- The page behind the New scan dialog no longer scrolls; low-contrast labels on the exit facts.
+
 ## [0.20.0] - 2026-10-24
 
 ### Added

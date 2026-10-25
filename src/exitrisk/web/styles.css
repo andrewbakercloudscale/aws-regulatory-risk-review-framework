@@ -821,3 +821,5 @@ table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 
 @media print { .as-hide-print { display: none; } .as-bar { width: 60px; } #as-rules .as-ruleset-bar .btn { display: none; } }
 .scan-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .scan-running .spin { border-color: var(--accent); border-top-color: transparent; }
+.mr-form fieldset.teams legend .muted { font-weight: 400; }
+#mrAi, #asAi { margin-top: 16px; }

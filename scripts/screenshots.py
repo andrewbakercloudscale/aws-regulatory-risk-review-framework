@@ -209,6 +209,7 @@ def main() -> int:
         print("wrote", OUT / "multiregion-accounts.png")
         shoot(page, "#mr-region", "multiregion-region.png")
         shoot(page, "#mr-run", "multiregion-run.png")
+        shoot(page, "#mr-recovery", "multiregion-recovery.png")
         shoot(page, "#mr-build", "multiregion-build.png")
 
         # Cloud Assurance Framework Report: summary, the rule picker, a finding and an account opened.

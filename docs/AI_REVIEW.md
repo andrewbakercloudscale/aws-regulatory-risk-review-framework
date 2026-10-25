@@ -107,3 +107,19 @@ Keys are saved in `~/.exitrisk/ai.json`, created readable only by you, or read f
 variables above. The browser sees whether a key is set and its last four characters, and the whole key
 only when you click **Show** beside it (the console listens on this computer only, and that request
 needs the console's own header, so another web page cannot read it).
+
+## AI insights on the Multi-Region and Cloud Assurance reports
+
+The AI review above belongs to the Exit Risk Report. The other two reports each have their own,
+shorter AI read, written for their own readers:
+
+- **Multi-Region Report**: for the CIO, risk and infrastructure leads. The model sees the chosen
+  accounts (up to 40 by spend, with their failover risks), the cost and people ranges, each team's
+  growth, the services that miss the recovery target and the candidate regions.
+- **Cloud Assurance Report**: for the CISO, risk and audit. The model sees the summary, the control
+  areas, the 25 most serious failing rules and the 40 highest-risk accounts with their top findings.
+
+Each answer has a headline, key points, risks (with accounts), actions (owner, when), questions to
+ask and the model's confidence. One call, asked again if cut off or not JSON; account ids the model
+invents are dropped; names are masked as for the AI review. Tick them in New scan, step 5, or press
+*Run AI insights* in the report. Stored per scan in `ai/<scan>.<report>.json`.

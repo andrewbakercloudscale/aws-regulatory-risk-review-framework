@@ -1,5 +1,15 @@
 # AWS Regulatory Risk Review Framework
 
+The console is **AWS Cloud Risk Review**: three separate reports for three audiences, from one scan.
+
+| Report | For | Answers |
+|---|---|---|
+| **Exit Risk Report** | Executive committee, board | How hard, costly and slow it would be to leave AWS |
+| **Multi-Region Report** | CIO, risk, infrastructure | What a second AWS region costs to run, adds to each team, and how fast each service recovers |
+| **Cloud Assurance Report** | CISO, risk, audit | How well each account is controlled, scored against the rules you choose |
+
+Each can have its own optional AI read, ticked in New scan or run later from the report.
+
 **How hard would it be to leave AWS?** This tool answers that for an entire AWS Organizational
 Unit, in a form an executive committee can act on: one exit-risk score, weighted by where the money
 is actually spent, the services and accounts that drive it, and an indicative cost and time to exit.
@@ -225,7 +235,7 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 
 ![Appendix](docs/images/appendix-catalog.png)
 
-**Multi-region**: The cost of a second region: run, build, people, and where to put it.
+**Multi-Region Report**: A second AWS region for the accounts you choose: run cost, people by team, recovery time per service, build, and where to put it.
 
 ![Multi-region summary](docs/images/multiregion-summary.png)
 
@@ -236,6 +246,10 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 **Second region**: Candidates ranked by service parity, latency and price.
 
 ![Second region](docs/images/multiregion-region.png)
+
+**Recovery time by service**: RTO and RPO per service under each DR strategy; the services that miss your target first.
+
+![Recovery time](docs/images/multiregion-recovery.png)
 
 **Getting started**: Connect, check access, scan.
 
@@ -309,7 +323,7 @@ Full detail, including the estimate model and its limitations: [docs/METHODOLOGY
 | [METHODOLOGY.md](docs/METHODOLOGY.md) | Scoring, weighting and estimate formulas; assumptions; limitations |
 | [AI_REVIEW.md](docs/AI_REVIEW.md) | The optional AI review: providers, passes, what is sent, keys |
 | [CLOUD_ASSURANCE.md](docs/CLOUD_ASSURANCE.md) | The Cloud Assurance Framework Report: every rule, rulesets, scoring, permissions |
-| [MULTI_REGION.md](docs/MULTI_REGION.md) | The multi-region view: run and build cost, staff, region choice, failover risks |
+| [MULTI_REGION.md](docs/MULTI_REGION.md) | The Multi-Region Report: run and build cost, team growth, recovery time per service, region choice |
 | [SERVICE_CATALOG.md](docs/SERVICE_CATALOG.md) | Every service's tier, rationale, migration path, equivalents, duration |
 | [IAM_PERMISSIONS.md](docs/IAM_PERMISSIONS.md) | Exact permissions; StackSet / Terraform for the member role |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, data flow, security model, logging and error handling |

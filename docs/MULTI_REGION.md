@@ -1,8 +1,11 @@
-# Multi-region: the cost of a second AWS region
+# Multi-Region Report: a second AWS region
 
-The **Multi-region** tab answers the question a regulator asks once the exit plan is in place:
-*what would it take to survive the loss of a whole AWS region?* It uses the same scan as the exit
-report, so there is nothing new to collect and no new permission (Cost Explorer's `REGION`
+The **Multi-Region Report** is one of the three reports in AWS Cloud Risk Review, each for its own
+audience: the Exit Risk Report (leaving AWS), the Multi-Region Report (staying on AWS and surviving
+the loss of a region) and the Cloud Assurance Report (controls and governance). It answers
+*what would it take to survive the loss of a whole AWS region, for the accounts we choose?* It has
+nothing to do with an exit and takes none of the exit model's answers. It uses the same scan,
+so there is nothing new to collect and no new permission (Cost Explorer's `REGION`
 grouping is covered by `ce:GetCostAndUsage`).
 
 It gives, for the accounts you choose:
@@ -10,7 +13,10 @@ It gives, for the accounts you choose:
 - **Extra cost to run** a year: second-region infrastructure, replication traffic, the AWS Support
   uplift and the extra people.
 - **Cost and time to achieve**: engineering effort, plus running the region while it is built.
-- **Extra staff** (FTE) and what they do.
+- **What it does to each team**: today's platform/SRE, data, security, application operations and
+  DR teams, the people each gains, and the size after (for example SRE 10 to 11, +10%).
+- **Recovery time per service** (RTO and RPO) under each DR strategy (backup and restore, pilot
+  light, warm standby, active-active), and the services that would miss your target.
 - **A recommended second region**, from service parity, latency and price.
 - **Per-account failover risks**: for every service in each account, whether it fails over by
   itself, needs manual or scripted failover (EC2, most databases), must be restored or re-run
@@ -30,13 +36,14 @@ are confirmed.
 | Primary region | Detected from spend, or set | Where latency and prices are measured from |
 | Second region | Recommended, or any region | The region costed |
 | AWS Support plan | Enterprise, Enterprise On-Ramp, Business, none | Support is a percentage of usage, so a second region raises it |
-| Team, day rate, CI/CD, Terraform | Shared with the exit estimate | Build effort and capacity |
+| Your teams today | Platform, cloud and SRE; databases and data; cloud security and IAM; application support and operations; DR and resilience | Each team's growth, and build capacity (platform and data) |
+| Application engineers, share of time, day rate, currency, CI/CD, Terraform, regulated | This report's own answers | Build effort, capacity and cost |
 | Cost per extra FTE | 0 = day rate × 220 days | Staff cost |
 
 ## Accounts (section 3)
 
-All in-scope accounts, **sorted by spend**, ticked by default. *Select all*, *Select none* and
-*Top 10 by spend* help; the choice is remembered per scan. **Readiness** is the worst failover risk
+All in-scope accounts, **sorted by spend**, ticked by default. *Select all*, *Select none*,
+*Top 10 by spend* and *Select an OU* (an OU and everything below it) help; the choice is remembered per scan. **Readiness** is the worst failover risk
 among an account's material services for the chosen target; open the row for each service's risk
 and what has to be done, for example:
 
@@ -127,14 +134,43 @@ Then: × the candidate's price against the source region; **replication traffic*
 or 20% (instant) of data, storage and analytics spend; **AWS Support** is recalculated on the larger
 bill at list price (Enterprise: 10% to $150k, 7% to $500k, 5% to $1m, 3% above; minimum $15k).
 
-**People.** Extra FTE = 10% (3 hours) or 35% (instant) of the core cloud team for on-call and
-two-of-everything operations, plus 1.0 or 2.5 for DR testing and regulator evidence, plus 0.25 or 1.0
-per 25 material accounts, plus 0.5 or 1.5 for replication and database operations (scaled by
-√(database spend / $100k a month), at most 3×). At least 1.5 or 4 FTE.
+**People, by team.** You give today's size of each team; the report adds, for 3 hours or instant:
+
+| Team | Extra |
+|---|---|
+| Platform, cloud engineering and SRE | 10% or 35% of the team (on-call, two of everything) |
+| Databases and data engineering | 0.5 or 1.5, × √(database spend / $100k a month), at most 3× |
+| Cloud security and IAM | 10% or 25% of the team |
+| Application support and operations | 0.25 or 1.0 per 25 material accounts |
+| DR, continuity and resilience | 1.0 or 2.5 (failover tests, regulator evidence) |
+
+At least 1.5 or 4 FTE in all (the shortfall goes to platform). The table shows each team today,
+the extra, the size with two regions and the change in per cent.
 
 ![Cost to run](images/multiregion-run.png)
 
-## Cost and time to achieve (section 6)
+## Recovery time by service (section 6)
+
+For every service in the chosen accounts: the estimated time to be serving again in the second
+region (**RTO**) and the data that could be lost (**RPO**), under each DR strategy. The strategy
+behind your target is highlighted: pilot light for 3 hours, active-active for instant. Services
+that miss the target come first, with the strategy that would meet it or "needs a redesign".
+
+Hours come from `data/regions.yaml` (`recovery_times`) by failover type:
+
+| Failover type | Examples | Pilot light RTO | Active-active RTO |
+|---|---|---|---|
+| AWS replicates and fails over | S3, DynamoDB global tables | 15 min to 1 h | up to 5 min |
+| Manual or scripted | EC2, RDS, EKS, Lambda | 30 min to 3 h | up to 15 min |
+| No live replica: restore or re-run | Redshift, Glue, EMR, Athena | 4 to 24 h | 1 to 4 h |
+
+Backup and restore, and restore or re-run, take longer for large databases, storage and analytics
+(× √(monthly spend / $10k), up to 3×). A service not offered in the second region has no recovery
+time. These are planning figures: prove each with a failover test.
+
+![Recovery time](images/multiregion-recovery.png)
+
+## Cost and time to achieve (section 7)
 
 Bottom-up, like the exit estimate:
 
