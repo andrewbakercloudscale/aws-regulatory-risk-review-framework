@@ -62,6 +62,8 @@ p { margin: 0 0 .8em; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .error-text { color: var(--sev-critical); font-size: 13px; }
 [hidden] { display: none !important; }
+/* A modal dialog keeps the page behind it still: only the dialog scrolls. */
+html:has(dialog[open]) { overflow: hidden; }
 
 /* Top bar & scope */
 .topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
@@ -130,7 +132,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
 .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 11.5px; color: var(--ink-2); font-weight: 600; margin-bottom: 6px; }
 .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px 24px; margin: 14px 0 0; font-size: 13px; }
 .meta div { display: flex; flex-direction: column; }
-.meta dt { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+.meta dt { color: var(--ink-2); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
 .meta dd { margin: 0; overflow-wrap: anywhere; }
 .section { margin-top: 32px; }
 .num { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: var(--surface); font-size: 13px; font-weight: 700; flex: none; }
@@ -450,7 +452,7 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .exit-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0 0 18px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .exit-facts > div { padding: 10px 14px; border-left: 1px solid var(--border); background: var(--surface); }
 .exit-facts > div:first-child { border-left: none; }
-.exit-facts dt { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.exit-facts dt { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-2); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .exit-facts dd { margin: 2px 0 0; font-size: 20px; font-weight: 680; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 .exit-facts dd.note { font-size: 12px; font-weight: 400; color: var(--ink-2); letter-spacing: 0; }
 .is-provisional .tile-value, .exit-facts .is-provisional dd:not(.note) { color: var(--ink-2); }
@@ -811,3 +813,5 @@ table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 
 .as-form label, .as-save label, .as-ruleset-bar label, .as-own-actions label.inline { display: flex; flex-direction: column; gap: 4px; }
 .as-rule-table select { min-width: 96px; }
 @media print { .as-hide-print { display: none; } .as-bar { width: 60px; } #as-rules .as-ruleset-bar .btn { display: none; } }
+.scan-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.scan-running .spin { border-color: var(--accent); border-top-color: transparent; }

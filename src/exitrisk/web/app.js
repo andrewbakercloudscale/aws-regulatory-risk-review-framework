@@ -11,7 +11,7 @@
   const LS_Q = "exitrisk.questionnaire.v1";
   const LS_THEME = "exitrisk.theme";
   const LS_ORG_PROFILE = "exitrisk.orgProfile"; // last profile that could read the OU tree
-  const LS_AI_SCAN = "exitrisk.aiWithScan"; // tick Agentic Risk Review in New scan again next time
+  const LS_AI_SCAN = "exitrisk.aiWithScan"; // tick AI review in New scan again next time
   const MGMT_RE = /mgmt|management|payer|master|org/i;
   const state = { exclude: new Set(), scanId: null, report: null, catalog: null, options: null, charts: {}, pollTimer: null };
 
@@ -338,7 +338,13 @@
 
   // ------------------------------------------------------------------ scans
   async function refreshScans(selectId) {
-    const { scans } = await api("/api/scans");
+    const { scans, running } = await api("/api/scans");
+    // A scan started before this page loaded (another tab, or a reload): follow it here too.
+    if (running?.length && !state.runningScan && !PRINT) {
+      state.runningScan = running[0];
+      showScanRunning();
+      pollScan(running[0]);
+    }
     const sel = $("#scanSelect");
     sel.innerHTML = scans.length
       ? scans.map((s) => `<option value="${esc(s.id)}">${esc(s.label || s.ou || "Scan")} · ${esc(s.id.slice(0, 13))}${s.mode === "demo" ? " · demo" : ""}${s.status !== "complete" ? " · " + esc(s.status) : ""}</option>`).join("")
@@ -1444,7 +1450,7 @@
       const frac = run.total ? run.done / run.total : null;
       const started = Date.parse(run.started_at || "") || state.aiSeen || (state.aiSeen = Date.now());
       el.innerHTML = `
-        <div class="card-head ai-head"><h3>${AI_ICON}Agentic Risk Review running</h3><span class="no-print"><button type="button" class="btn danger" id="btnAiStop">Stop</button></span></div>
+        <div class="card-head ai-head"><h3>${AI_ICON}AI review running</h3><span class="no-print"><button type="button" class="btn danger" id="btnAiStop">Stop</button></span></div>
         <div class="busy" role="status" aria-live="polite" data-started="${started}"><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text">${esc(run.stage)}${run.pass ? ` (pass ${run.pass} of 3)` : ""}</span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar${frac == null ? "" : " det"}" aria-hidden="true"><i${frac == null ? "" : ` style="width:${Math.round(frac * 100)}%"`}></i></div><div class="busy-sub">${esc(run.message || "")}${run.usage?.calls ? ` · ${plural(run.usage.calls, "call")} so far` : ""}</div></div>
         ${state.aiLost ? `<p class="warn-text">${esc(state.aiLost)}</p>` : ""}
         <p class="hint">Keep reading the report: this section fills in when the review finishes, usually 5 to 40 minutes.</p>`;
@@ -1453,20 +1459,20 @@
       return;
     }
     if (!res && PRINT) {
-      el.innerHTML = `<h3>${AI_ICON}Not run for this report</h3><p class="small">The Agentic Risk Review is optional: an AI second opinion on what matters most, the accounts to focus on and how to tackle them. Tick it in New scan, or run it on the report in the console.</p>`;
+      el.innerHTML = `<h3>${AI_ICON}Not run for this report</h3><p class="small">The AI review is optional: an AI second opinion on what matters most, the accounts to focus on and how to tackle them. Tick it in New scan, or run it on the report in the console.</p>`;
       return;
     }
     if (!res) {
       const ready = aiReady();
       const last = run?.status === "failed" ? `<p class="warn-text">The last review did not finish: ${esc(run.message)}</p>` : run?.status === "cancelled" ? '<p class="warn-text">The last review was stopped.</p>' : "";
       el.innerHTML = `
-        <h3>${AI_ICON}No Agentic Risk Review for this report</h3>
+        <h3>${AI_ICON}No AI review for this report</h3>
         ${last}
-        ${r.summary.scan_depth === "quick" ? '<p class="warn-text">This is a quick scan (billing only): the model would see spend, not resources or integrations, so its view is thin. For a full review, start a new scan with Agentic Risk Review ticked; it runs a dependency scan.</p>' : ""}
+        ${r.summary.scan_depth === "quick" ? '<p class="warn-text">This is a quick scan (billing only): the model would see spend, not resources or integrations, so its view is thin. For a full review, start a new scan with AI review ticked; it runs a dependency scan.</p>' : ""}
         <p class="small">${ready
-          ? `Run it now on the report as shown, with ${esc(ready)}. It takes 5 to 40 minutes and you can keep reading meanwhile. Next time, tick <strong>Agentic Risk Review</strong> when you start the scan.`
-          : "Set up the AI model once under <strong>Settings, AI configuration</strong>; then tick <strong>Agentic Risk Review</strong> when you start a scan, or run it here on any report."}</p>
-        <p class="no-print">${ready ? '<button type="button" class="btn primary" id="btnAiRun">Run Agentic Risk Review</button> ' : ""}<button type="button" class="btn" id="btnAiCfgHere">AI configuration</button></p>`;
+          ? `Run it now on the report as shown, with ${esc(ready)}. It takes 5 to 40 minutes and you can keep reading meanwhile. Next time, tick <strong>AI review</strong> when you start the scan.`
+          : "Set up the AI model once under <strong>Settings, AI configuration</strong>; then tick <strong>AI review</strong> when you start a scan, or run it here on any report."}</p>
+        <p class="no-print">${ready ? '<button type="button" class="btn primary" id="btnAiRun">Run AI review</button> ' : ""}<button type="button" class="btn" id="btnAiCfgHere">AI configuration</button></p>`;
       $("#btnAiRun")?.addEventListener("click", runAi);
       $("#btnAiCfgHere").addEventListener("click", openAiConfig);
       return;
@@ -1534,7 +1540,7 @@
       await api(`/api/ai/review/${encodeURIComponent(state.scanId)}?remove=true`, { method: "DELETE" });
       state.ai = null;
       renderAi(state.report);
-      toast("Agentic Risk Review removed");
+      toast("AI review removed");
     });
   }
 
@@ -1575,8 +1581,8 @@
           const was = state.ai?.run?.status;
           state.ai = got;
           if (!run || run.status !== "running") {
-            if (run?.status === "complete" && was === "running") toast("Agentic Risk Review ready: section 2", 6000);
-            else if (run?.status === "failed") toast(`Agentic Risk Review did not finish: ${run.message}`, 8000);
+            if (run?.status === "complete" && was === "running") toast("AI review ready: section 2", 6000);
+            else if (run?.status === "failed") toast(`AI review did not finish: ${run.message}`, 8000);
             renderAi(state.report);
             break;
           }
@@ -1616,11 +1622,11 @@
       await saveAi();
       state.aiCfg = await api("/api/ai/settings");
       $("#aiDialog").close();
-      toast(aiReady() ? `AI configuration saved: ${aiReady()}` : "Saved. Add a key to use the Agentic Risk Review.", 5000);
+      toast(aiReady() ? `AI configuration saved: ${aiReady()}` : "Saved. Add a key to use the AI review.", 5000);
     } catch (e) { $("#aiError").textContent = e.message; }
   }
 
-  // The new-scan dialog's Agentic Risk Review option follows the saved configuration.
+  // The new-scan dialog's AI review option follows the saved configuration.
   function syncScanAi() {
     const ready = aiReady();
     $("#sAi").disabled = !ready;
@@ -2272,6 +2278,7 @@
     $("#btnPdf b").textContent = mr ? "Multi-region report" : as ? "Cloud Assurance Framework Report" : "Full report";
     $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : as ? "Every assurance section, as on screen" : "Every section and the appendix";
     $("#btnOnePage").hidden = mr || as;
+    $("#btnJumpAi").hidden = mr || as; // the AI review belongs to the exit risk report
     if (!PRINT) {
       const url = new URL(location.href);
       if (state.view !== "exit") url.searchParams.set("view", state.view); else url.searchParams.delete("view");
@@ -2564,8 +2571,6 @@
   async function openScanDialog(selectProfile) {
     const dlg = $("#scanDialog");
     $("#scanError").textContent = "";
-    $("#scanProgress").hidden = true;
-    $("#btnStartScan").disabled = false;
     $("#sTarget").innerHTML = Object.entries(state.options.target).map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
     $("#sTarget").value = $("#qForm").target.value || "azure";
     try {
@@ -2574,6 +2579,8 @@
     } catch (e) { $("#scanError").textContent = e.message; }
     await loadAiCfg();
     syncScanAi();
+    $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked;
+    showScanRunning();
     dlg.showModal();
   }
 
@@ -2665,6 +2672,8 @@
     $("#scanProgress").hidden = false;
     try {
       const job = await api("/api/scans", { method: "POST", body });
+      state.runningScan = job.id;
+      showScanRunning();
       pollScan(job.id);
     } catch (e) {
       $("#scanProgress").hidden = true;
@@ -2672,6 +2681,26 @@
       $("#btnStartScan").disabled = false;
       if (e.status === 401) openSsoDialog(null, true);  // the AWS sign-in has ended
     }
+  }
+
+  // A scan carries on in the console when the dialog is closed: the top bar shows it, and New scan
+  // reopens on its progress with Stop scan instead of letting a second one start.
+  function showScanRunning() {
+    const on = !!state.runningScan;
+    $("#btnScanRunning").hidden = !on;
+    $("#btnStopScan").hidden = !on;
+    $("#btnStopScan").disabled = false;
+    $("#btnStartScan").disabled = on;
+    if (on) $("#scanProgress").hidden = false;
+    else if (!$("#scanError").textContent) $("#scanProgress").hidden = true;
+  }
+
+  async function stopScan() {
+    if (!state.runningScan) return;
+    $("#btnStopScan").disabled = true;
+    $("#scanMsg").textContent = "Stopping the scan…";
+    try { await api(`/api/scans/${encodeURIComponent(state.runningScan)}/cancel`, { method: "POST" }); }
+    catch (e) { $("#scanError").textContent = e.message; $("#btnStopScan").disabled = false; }
   }
 
   function pollScan(id) {
@@ -2701,8 +2730,11 @@
         } else if (!s.needs_sign_in) state.scanWaitsForSignIn = false;
         $("#scanBar").style.width = `${s.pct}%`;
         $("#scanMsg").textContent = `${s.message || s.phase}${s.issues ? ` · ${plural(s.issues, "issue")} so far (listed under Issues when the scan finishes)` : ""}`;
+        $("#scanRunPct").textContent = `${s.pct}%`;
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
-        $("#btnStartScan").disabled = false;
+        state.runningScan = null;
+        showScanRunning();
+        if (s.status === "cancelled") { toast("Scan stopped. Nothing was saved."); return; }
         if (s.status === "failed") {
           $("#scanError").textContent = `Scan failed: ${s.message}. See section 9 and the log for details.`;
         } else {
@@ -2717,7 +2749,8 @@
         $("#scanError").textContent = /scan not found/i.test(e.message)
           ? "The console restarted while this scan was running, so it was lost. Start the scan again."
           : e.message;
-        $("#btnStartScan").disabled = false;
+        state.runningScan = null;
+        showScanRunning();
       }
     };
     tick();
@@ -3239,6 +3272,8 @@
       if (state.report) render();
     });
     $("#btnNewScan").addEventListener("click", () => openScanDialog());
+    $("#btnScanRunning").addEventListener("click", () => openScanDialog());
+    $("#btnStopScan").addEventListener("click", stopScan);
     $("#btnSso").addEventListener("click", openSsoDialog);
     $("#btnGsSso").addEventListener("click", openSsoDialog);
     $("#btnGsCheck").addEventListener("click", () => openAccessDialog());
@@ -3281,7 +3316,7 @@
       if (e.target.value === "quick" && $("#sAi").checked) {
         $("#sAi").checked = false;
         try { localStorage.setItem(LS_AI_SCAN, "0"); } catch { /* ignore */ }
-        toast("Agentic Risk Review unticked: it needs a deep scan", 5000);
+        toast("AI review unticked: it needs a deep scan", 5000);
       }
     });
     $("#showAllCatalog").addEventListener("change", () => state.report && renderAppendix(state.report));

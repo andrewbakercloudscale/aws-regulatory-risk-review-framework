@@ -217,7 +217,8 @@ ASSURANCE_ORG_PROBES = [
 
 def probe_actions(session, account_id: str, probes: list) -> tuple[list[str], list[str]]:
     """Make each probe call, several at once; return (denied actions, other failures as "action: code")."""
-    session = ClientCache(session)  # one session, many threads: clients are made one at a time
+    if not isinstance(session, ClientCache):  # one session, many threads: clients are made one at a time
+        session = ClientCache(session)
     results = pmap(lambda probe: _probe(session, account_id, *probe), probes, workers=len(probes))
     return [a for kind, a in results if kind == "denied"], [a for kind, a in results if kind == "other"]
 
@@ -266,8 +267,9 @@ def run_checks(
     def skip(check_id: str, label: str, why: str) -> None:
         checks.append(Check(check_id, label, "skip", why))
 
+    ai = background(_ai_check)  # needs no AWS: test the model while the AWS checks run
     try:
-        session = make_session(profile)
+        session = ClientCache(make_session(profile))  # shared by the checks that run at once below
         ident = session.client("sts", config=BOTO_CONFIG).get_caller_identity()
         ctx.update(account_id=ident["Account"], arn=ident["Arn"])
         m = SSO_ROLE_RE.search(ident["Arn"])
@@ -298,10 +300,30 @@ def run_checks(
                 "Sign in with AWS sign-in (SSO) at the top, or pick a profile that has credentials.",
             )
         )
-        for cid, label in _LATER:
+        for cid, label in _LATER[:-1]:
             skip(cid, label, "Needs a working sign-in first.")
+        checks.append(ai.result())
         return _result(checks, ctx)
 
+    # The Cost Explorer calls depend on nothing: start them now, read them in their turn.
+    start, end = month_window(1)
+    ce = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
+    cost_call = background(
+        lambda: ce.get_cost_and_usage(
+            TimePeriod={"Start": start, "End": end},
+            Granularity="MONTHLY",
+            Metrics=["AmortizedCost"],
+            # Region too, so the one paid call also proves the multi-region view's data is readable.
+            GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}, {"Type": "DIMENSION", "Key": "REGION"}],
+        )
+    )
+    commit_calls = [
+        (action, background(lambda call=call: call(TimePeriod={"Start": start, "End": end})))
+        for action, call in (
+            ("ce:GetSavingsPlansUtilizationDetails", ce.get_savings_plans_utilization_details),
+            ("ce:GetReservationUtilization", ce.get_reservation_utilization),
+        )
+    ]
     org = session.client("organizations", region_name="us-east-1", config=BOTO_CONFIG)
     try:
         o = org.describe_organization()["Organization"]
@@ -370,15 +392,16 @@ def run_checks(
             c.status, c.fix = "warn", "Without it, accounts are not grouped by criticality or product tags."
             checks.append(c)
 
-    start, end = month_window(1)
+    # The rest at once: the organisation probes and the member account need only what is known by now.
+    if ctx.get("management_account_id") == ctx.get("account_id"):
+        org_probes = background(lambda: probe_actions(session, ctx["account_id"], ASSURANCE_ORG_PROBES))
+    else:
+        org_probes = None
+    member_checks: list[Check] = []
+    member = background(lambda: _member_checks(member_checks, session, profile, role_name, member_id, ctx, counted))
+
     try:
-        resp = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG).get_cost_and_usage(
-            TimePeriod={"Start": start, "End": end},
-            Granularity="MONTHLY",
-            Metrics=["AmortizedCost"],
-            # Region too, so the one paid call also proves the multi-region view's data is readable.
-            GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}, {"Type": "DIMENSION", "Key": "REGION"}],
-        )
+        resp = cost_call.result()
         groups = resp["ResultsByTime"][0].get("Groups", []) if resp["ResultsByTime"] else []
         n = len({g["Keys"][0] for g in groups})
         n_regions = len({g["Keys"][1] for g in groups if g["Keys"][1] not in ("global", "NoRegion", "")})
@@ -405,14 +428,10 @@ def run_checks(
         )
         checks.append(_fail("cost", "Read Cost Explorer", exc, "ce:GetCostAndUsage", fix))
 
-    ce = session.client("ce", region_name="us-east-1", config=BOTO_CONFIG)
     denied = []
-    for action, call in (
-        ("ce:GetSavingsPlansUtilizationDetails", ce.get_savings_plans_utilization_details),
-        ("ce:GetReservationUtilization", ce.get_reservation_utilization),
-    ):
+    for action, call in commit_calls:
         try:
-            call(TimePeriod={"Start": start, "End": end})
+            call.result()
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in DENIED:
                 denied.append(action)
@@ -430,14 +449,17 @@ def run_checks(
         )
     )
 
-    if ctx.get("management_account_id") == ctx.get("account_id"):
-        denied, other = probe_actions(session, ctx["account_id"], ASSURANCE_ORG_PROBES)
+    if org_probes:
+        denied, other = org_probes.result()
         what = "The organisation-level assurance checks will show as not measured"
         checks.append(_probe_check("assurance_org", ASSURANCE_ORG_LABEL, ASSURANCE_ORG_PROBES, denied, other,
                                    ctx["account_id"], what, "iam/management-account-policy.json"))  # fmt: skip
     else:
         skip("assurance_org", ASSURANCE_ORG_LABEL, "Only in the management account.")
-    _member_checks(checks, session, profile, role_name, member_id, ctx, counted)
+    member.result()
+    for check in member_checks:  # in their order, after the ones above
+        checks.append(check)
+    checks.append(ai.result())
     return _result(checks, ctx)
 
 
@@ -554,7 +576,9 @@ def _member_with_role(pair: tuple[str, str], preferred: str | None, own: str | N
     """A member account where the permission set is assigned: the preferred one, else the first of a few."""
     candidates = [preferred] if preferred else []
     candidates += [a for a in sso.portal_account_ids(pair[0]) if a not in (preferred, own)][:10]
-    return next((a for a in candidates if a and pair[1] in sso.list_roles(pair[0], a)), None)
+    candidates = [a for a in candidates if a]
+    has = pmap(lambda a: pair[1] in sso.list_roles(pair[0], a), candidates, workers=max(1, len(candidates)))
+    return next((a for a, ok in zip(candidates, has, strict=True) if ok), None)
 
 
 def _assignment_check(checks, pair, ctx, counted) -> None:

@@ -138,6 +138,10 @@ class ScanFailed(RuntimeError):
     pass
 
 
+class ScanCancelled(BaseException):
+    """Stopped from the console. A BaseException, so no collector's ``except Exception`` swallows it."""
+
+
 @dataclass
 class ScanJob:
     id: str
@@ -154,10 +158,20 @@ class ScanJob:
     _sign_in_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _sign_in_gave_up: bool = False
     finished_at: float | None = field(default=None, repr=False)  # time.monotonic() once finished
+    _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
+
+    def cancel(self) -> None:
+        """Ask the scan to stop: it does at its next progress step, without saving anything."""
+        self._cancel.set()
+        log.info("scan %s: stop asked from the console", self.id)
+
+    def check_cancelled(self) -> None:
+        if self._cancel.is_set():
+            raise ScanCancelled
 
     def finish(self, status: str, message: str) -> None:
         """Status, phase and message in one step, so a poll never sees "complete" with a stale message."""
-        phase = "failed" if status == "failed" else "complete"
+        phase = status if status in ("failed", "cancelled") else "complete"
         with self._lock:
             self.status, self.phase, self.pct, self.message = status, phase, 100, message
             self.finished_at = time.monotonic()
@@ -168,6 +182,7 @@ class ScanJob:
             self.needs_sign_in = session_name
 
     def update(self, phase: str, pct: int, message: str) -> None:
+        self.check_cancelled()
         with self._lock:
             self.phase, self.pct, self.message = phase, pct, message
         log.info("[%s %d%%] %s", phase, pct, message, extra={"phase": phase})
@@ -267,6 +282,8 @@ def _run_safely(job: ScanJob) -> None:
     token = run_id_var.set(job.id)
     try:
         run_scan(job)
+    except ScanCancelled:
+        job.finish("cancelled", "Stopped. Nothing was saved.")
     except Exception as exc:  # last line of defence: record it, never lose it
         record_failure(job, exc)
     finally:
@@ -736,6 +753,7 @@ def _each_account(job: ScanJob, session, active, caller: str, read, what: str, v
         )
 
     def one(account):
+        job.check_cancelled()  # an account still queued when the scan is stopped is not started
         try:
             try:
                 sess = (

@@ -374,9 +374,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         if req.ai_review is not None:
             # On billing alone the model sees spend, not resources or integrations: not worth a review.
             if not req.inventory:
-                raise HTTPException(
-                    400, "the Agentic Risk Review needs a deep scan: choose a dependency (or inventory) scan"
-                )
+                raise HTTPException(400, "the AI review needs a deep scan: choose a dependency (or inventory) scan")
             # Fail before the scan, not half an hour later, if the AI review is not set up.
             if not ai_providers.settings_saved():
                 raise HTTPException(400, "the AI review is not set up yet: open Settings, AI configuration")
@@ -411,6 +409,9 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         if not job or job.status == "failed":
             ai_review.give_up(scan_id, "the scan failed, so there is no report to review")
             return
+        if job.status == "cancelled":
+            ai_review.give_up(scan_id, "the scan was stopped, so there is no report to review")
+            return
         try:
             _start_ai(scan_id, want)
         except HTTPException as exc:
@@ -420,6 +421,14 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             ai_review.give_up(scan_id, f"could not start: {exc}")
         else:
             ai_review.started(scan_id)
+
+    @app.post("/api/scans/{scan_id}/cancel")
+    def cancel_scan(scan_id: str):
+        job = get_job(scan_id)
+        if not job or job.status != "running":
+            raise HTTPException(409, "this scan is not running")
+        job.cancel()
+        return job.snapshot()
 
     @app.post("/api/scans/demo")
     def demo():

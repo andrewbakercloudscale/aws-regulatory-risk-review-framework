@@ -39,10 +39,16 @@ def pmap(
 
     if len(items) <= 1:
         return [run(x) for x in items]
-    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
-        # Copy the caller's context once per item, here: a context can run on one thread at a time.
-        futures = [pool.submit(contextvars.copy_context().run, run, x) for x in items]
-        return [f.result() for f in futures]
+    pool = ThreadPoolExecutor(max_workers=min(workers, len(items)))
+    # Copy the caller's context once per item, here: a context can run on one thread at a time.
+    futures = [pool.submit(contextvars.copy_context().run, run, x) for x in items]
+    try:
+        out = [f.result() for f in futures]
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)  # a failure or a stopped scan: start no more items
+        raise
+    pool.shutdown()
+    return out
 
 
 def background(fn: Callable[[], R]) -> Future[R]:

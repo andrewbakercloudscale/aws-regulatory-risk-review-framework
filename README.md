@@ -100,7 +100,7 @@ exit" (a fact a board can govern).
 - **Names the areas of focus** (section 8): the accounts whose complexity or risk will decide the
   exit (AWS-only services with no like-for-like target, critical services, AWS-only integrations, data
   to move, share of the effort, evidence and owner gaps), how to tackle each, and in which phase.
-- **Optional Agentic Risk Review** (section 2): tick it in New scan and it runs when the scan finishes; an overall AI summary of what matters most, the accounts to focus on and how to tackle them, as a second opinion from Claude (Bedrock, Claude Enterprise/API, OpenRouter) or
+- **Optional AI review** (section 2): tick it in New scan and it runs when the scan finishes; an overall AI summary of what matters most, the accounts to focus on and how to tackle them, as a second opinion from Claude (Bedrock, Claude Enterprise/API, OpenRouter) or
   GLM (Together AI) on entrenchment, cost, time and focus, in three passes with an independent review
   for inconsistencies. See [AI_REVIEW.md](docs/AI_REVIEW.md).
 - **Exports a board-ready PDF** with charts, an executive narrative, a data-quality section, and an
@@ -213,7 +213,7 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 
 ![Resilience](docs/images/resilience.png)
 
-**Areas of focus**: The accounts that will decide the exit, why, how to tackle each and in which phase, with programme themes and a plan by phase. The optional Agentic Risk Review in section 2 gives the AI's view.
+**Areas of focus**: The accounts that will decide the exit, why, how to tackle each and in which phase, with programme themes and a plan by phase. The optional AI review in section 2 gives the AI's view.
 
 ![Areas of focus](docs/images/focus.png)
 

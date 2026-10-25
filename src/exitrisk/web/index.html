@@ -20,6 +20,7 @@
     <select id="scanSelect" title="Stored scans"></select>
     <button id="btnSso" class="btn" title="Sign in through your AWS access portal (IAM Identity Center)"><span class="dot" id="ssoDot"></span><span id="ssoLabel">AWS sign-in</span></button>
     <button id="btnNewScan" class="btn primary">New scan</button>
+    <button id="btnScanRunning" class="btn scan-running" title="A scan is running: open it to follow or stop it" hidden><span class="spin" aria-hidden="true"></span>Scan running <span id="scanRunPct"></span></button>
     <span class="tb-sep" aria-hidden="true"></span>
     <button id="btnExcl" class="btn" title="AWS products left out of the score and estimate">Exclusions<span id="exclCount" class="count-badge" hidden></span></button>
     <button id="btnModel" class="btn" title="Your answers behind the cost, time, deadline and resilience figures">Exit model</button>
@@ -35,7 +36,7 @@
           <button type="button" data-theme-pick="" aria-pressed="false">System</button>
         </div>
         <hr>
-        <button id="btnAiConfig" role="menuitem"><b>AI configuration</b><span>Provider, model and key for the optional Agentic Risk Review</span></button>
+        <button id="btnAiConfig" role="menuitem"><b>AI configuration</b><span>Provider, model and key for the optional AI review</span></button>
         <hr>
         <button id="btnDemo" role="menuitem"><b>Load demo data</b><span>Synthetic organisation, no AWS access needed</span></button>
         <button id="btnCompare" role="menuitem"><b>Compare scans</b><span>What changed since an earlier scan</span></button>
@@ -119,7 +120,7 @@
       <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-region</b><small>Cost of a second AWS region</small></span></button>
       <button type="button" class="vtab" data-view="assurance" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span><b>Cloud assurance</b><small>Controls and governance by account</small></span></button>
     </nav>
-    <button type="button" id="btnJumpAi" class="btn ai-jump" title="Go to the Agentic Risk Review (section 2)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>Agentic Risk Review<span id="aiDot" class="dot" hidden></span></button>
+    <button type="button" id="btnJumpAi" class="btn ai-jump" title="Go to the AI review (section 2)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>AI review<span id="aiDot" class="dot" hidden></span></button>
     <div class="menu">
       <button id="btnExport" class="btn" aria-haspopup="menu" aria-expanded="false" aria-controls="exportMenu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>Export PDF<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>
       <div id="exportMenu" class="menu-pop right" role="menu" hidden>
@@ -204,9 +205,9 @@
       </div>
     </section>
 
-    <!-- 2. Agentic Risk Review (optional) -->
+    <!-- 2. AI review (optional) -->
     <section class="section" id="sec-ai">
-      <h2><span class="num">2</span>Agentic Risk Review</h2>
+      <h2><span class="num">2</span>AI review</h2>
       <p class="muted section-lede">An AI model reads the whole report in three passes (every material account, the whole estate, then an independent consistency review) and gives a second opinion: what matters most, which accounts to focus on and how to tackle them. Optional; the report's own figures do not change.</p>
       <div id="aiPanel" class="card ai-panel"></div>
     </section>
@@ -390,7 +391,7 @@
     <!-- 8. Areas of focus -->
     <section class="section" id="sec-focus">
       <h2><span class="num">8</span>Areas of focus: where the exit will be won or lost</h2>
-      <p class="muted section-lede">The accounts whose complexity or risk needs attention, why, and how to tackle each one during the project. Derived from this scan with fixed rules, so the same scan always gives the same list; it does not change the score or the estimate. The AI's view is in the Agentic Risk Review, section 2.</p>
+      <p class="muted section-lede">The accounts whose complexity or risk needs attention, why, and how to tackle each one during the project. Derived from this scan with fixed rules, so the same scan always gives the same list; it does not change the score or the estimate. The AI's view is in the AI review, section 2.</p>
       <div class="tiles" id="focusTiles"></div>
       <div class="card">
         <h3>Programme themes</h3>
@@ -897,7 +898,7 @@
           <option value="dependency">Dependency scan: resources and the integrations between them</option>
         </select><span class="fd-hint" id="sDepthHint">Spend and account data from the management account. Effort is sized from spend, so confidence stays lower.</span></label>
         <div id="invOpts" class="fd-grid" hidden>
-          <label><span>Role to assume in member accounts <span class="opt">blank = your own permission set</span></span><input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"><span class="fd-hint">With an IAM Identity Center sign-in, leave blank to use the permission set you signed in with in each account.</span></label>
+          <label><span>Member account role <span class="opt">optional</span></span><input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"><span class="fd-hint">With an IAM Identity Center sign-in, leave blank to use the permission set you signed in with in each account.</span></label>
           <label><span>Regions <span class="opt">blank = all enabled</span></span><input name="regions" placeholder="eu-west-1,us-east-1"></label>
           <label class="check fd-check span-2"><input type="checkbox" name="material_only" id="sMaterial"><span><strong>Only material accounts</strong><br><span class="fd-hint">Deep-scan the accounts that make up 95% of spend, plus any with AWS-only services; the rest stay sized from spend.</span></span></label>
           <label class="check fd-check span-2"><input type="checkbox" name="spend_regions" id="sSpendRegions" checked><span><strong>Only regions with spend</strong><br><span class="fd-hint">In each account, read only the regions billing US$1 a month or more: several times faster, as most accounts bill in 3 or 4 of the 17 or more enabled regions. Resources in regions that cost nothing yet are not counted; untick to read every enabled region.</span></span></label>
@@ -906,11 +907,11 @@
       </section>
       <section class="fd-sec">
         <h3><span class="step">4</span>Cloud Assurance Framework <span class="opt">optional</span></h3>
-        <label class="check fd-check"><input type="checkbox" name="assurance" id="sAssurance"><span><strong>Run the Cloud Assurance Framework checks</strong><br><span class="fd-hint">Reads each account's controls (access, internet exposure, audit trail, threat detection, data protection, change management, resilience and DR, lifecycle, ownership) and the organisation's guardrails, for the Cloud assurance report. Read-only; needs the assurance read permissions (Check access tests them). Adds about a minute per 8 accounts.</span></span></label>
+        <label class="check fd-check"><input type="checkbox" name="assurance" id="sAssurance" checked><span><strong>Run the Cloud Assurance Framework checks</strong><br><span class="fd-hint">Reads each account's controls (access, internet exposure, audit trail, threat detection, data protection, change management, resilience and DR, lifecycle, ownership) and the organisation's guardrails, for the Cloud assurance report. Read-only; needs the assurance read permissions (Check access tests them). Adds about a minute per 8 accounts.</span></span></label>
       </section>
       <section class="fd-sec">
-        <h3><span class="step">5</span>Agentic Risk Review <span class="opt">optional</span></h3>
-        <label class="check fd-check"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Add an Agentic Risk Review to the report</strong><br><span class="fd-hint" id="sAiInfo"></span></span></label>
+        <h3><span class="step">5</span>AI review <span class="opt">optional</span></h3>
+        <label class="check fd-check"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Add an AI review to the report</strong><br><span class="fd-hint" id="sAiInfo"></span></span></label>
         <p class="fd-hint">Needs a deep scan: ticking it switches Scan depth to a dependency scan. Starts when the scan finishes and takes 5 to 40 minutes; the report is ready to read meanwhile and the review appears in section 2. <button type="button" class="link-btn" id="lnkAiConfig">AI configuration</button></p>
       </section>
     </div>
@@ -923,7 +924,8 @@
         </div>
         <p id="scanError" class="error-text" role="alert"></p>
       </div>
-      <button value="cancel" class="btn" formnovalidate>Close</button>
+      <button type="button" id="btnStopScan" class="btn danger" title="Stop the running scan; nothing is saved" hidden>Stop scan</button>
+      <button value="cancel" class="btn" formnovalidate title="Close this window; a running scan carries on">Close</button>
       <button type="button" id="btnStartScan" class="btn primary">Start scan</button>
     </footer>
   </form>
@@ -1049,7 +1051,7 @@
   <form method="dialog" id="aiForm">
   <header class="fd-head">
     <h2 id="aiTitle">AI configuration</h2>
-    <p>The model behind the optional Agentic Risk Review. Choose it here once; then tick Agentic Risk Review when you start a scan, or run it on an open report from section 2.</p>
+    <p>The model behind the optional AI review. Choose it here once; then tick AI review when you start a scan, or run it on an open report from section 2.</p>
   </header>
   <div class="fd-body">
     <div class="fd-grid">

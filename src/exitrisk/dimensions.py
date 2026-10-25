@@ -5,7 +5,7 @@ not answer "how hard is it to leave?". This module reports that separately, so n
 other:
 
 * three measures: **technical portability** (0-100, weighted by engineering effort, not spend),
-  **exit effort** (engineer-days) and **exit window** (months);
+  **exit effort** (person-years) and **exit window** (months);
 * five dimensions kept visible on their own: service portability, dependency complexity, data
   gravity, engineering effort and operational criticality;
 * **critical-account readiness**, so many easy moves cannot hide one immovable critical account;
@@ -15,7 +15,8 @@ other:
 from __future__ import annotations
 
 from .collectors.dependencies import EDGE_SOURCES, NOT_DISCOVERED
-from .estimate import COST_RANGE, count_range
+from .estimate import COST_RANGE, WEEKS_PER_MONTH
+from .estimate import effort_range as person_range
 
 SCAN_DEPTHS = {
     "quick": "Quick scan (billing only)",
@@ -139,8 +140,10 @@ def build_dimensions(
 
     total_weeks = estimate["effort"]["total_weeks"]
     lo_f, hi_f = (estimate.get("range_factors") or {}).get("cost") or COST_RANGE
+    # In person-years (or months), like the engineering figure: thousands of engineer-days mean little.
     days = (total_weeks * DAYS_PER_WEEK * lo_f, total_weeks * DAYS_PER_WEEK * hi_f)
-    effort_range = None if empty else count_range(*days) + " engineer-days"
+    months = total_weeks / WEEKS_PER_MONTH
+    effort_range = None if empty else person_range(months * lo_f, months * hi_f)
     measures = {
         "portability": {
             "score": portability,

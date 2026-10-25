@@ -163,7 +163,7 @@ Kafka with MirrorMaker 2, DNS zone import), medium 0.75 where they carry part of
 streams, OpenAPI import for API Gateway), low 0.9. Integration redesign gets no tool factor. Agents and
 tools overlap, so together they never cut a service below 30% of its work. The report names the tools
 for the chosen target for the services with the most work (section 4, Tools that shorten the move), and
-the Agentic Risk Review is asked to name the ones that fit.
+the AI review is asked to name the ones that fit.
 
 **Developer-portal templates.** When services are built from templates (golden paths, for example
 Backstage), the templates are changed once for the target and re-run: the repeat discount on resources

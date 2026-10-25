@@ -414,3 +414,40 @@ def test_regions_with_spend_falls_back_to_all_without_spend_by_region(monkeypatc
     doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=params))
     assert asked == [None, None]
     assert any(i["severity"] == "warning" and "every region" in i["message"] for i in doc["issues"])
+
+
+def test_a_stopped_scan_ends_cancelled_and_saves_nothing(monkeypatch):
+    from exitrisk import scanner
+
+    saved = []
+    monkeypatch.setattr(scanner.store, "save_scan", saved.append)
+
+    def run(job):
+        job.update("cost", 10, "reading")
+        job.cancel()
+        job.update("cost", 20, "never shown")  # the next progress step stops it
+        raise AssertionError("not reached")
+
+    monkeypatch.setattr(scanner, "run_scan", run)
+    job = scanner.ScanJob(id="x", params=scanner.ScanParams(profile=None))
+    scanner._run_safely(job)
+    assert job.status == "cancelled" and job.phase == "cancelled" and not saved
+
+
+def test_pmap_starts_no_more_items_after_a_failure():
+    from exitrisk.parallel import pmap
+
+    started = []
+
+    def fn(x):
+        started.append(x)
+        if x == 0:
+            raise ValueError("boom")
+        import time
+
+        time.sleep(0.05)
+        return x
+
+    with pytest.raises(ValueError):
+        pmap(fn, range(40), workers=2)
+    assert len(started) < 40
