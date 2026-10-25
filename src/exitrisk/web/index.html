@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AWS Exit Risk Review</title>
+  <title>AWS Cloud Risk Review</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/vendor/chart.umd.js" defer></script>
@@ -13,7 +13,7 @@
 <header class="topbar no-print">
   <div class="brand">
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2 3 6v6c0 5 3.8 9.3 9 10 5.2-.7 9-5 9-10V6l-9-4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m8 12 3 3 5-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-    <span>AWS Exit Risk Review</span>
+    <span>AWS Cloud Risk Review</span>
   </div>
   <div class="topbar-actions">
     <label class="sr-only" for="scanSelect">Scan</label>
@@ -116,9 +116,9 @@
 
   <div id="reportBar" class="report-bar no-print" hidden>
     <nav id="viewTabs" class="viewtabs" aria-label="Report">
-      <button type="button" class="vtab" data-view="exit" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></svg><span><b>Exit risk</b><small>How hard it is to leave AWS</small></span></button>
-      <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-region</b><small>Cost of a second AWS region</small></span></button>
-      <button type="button" class="vtab" data-view="assurance" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span><b>Cloud assurance</b><small>Controls and governance by account</small></span></button>
+      <button type="button" class="vtab" data-view="exit" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></svg><span><b>Exit Risk Report</b><small>How hard it is to leave AWS</small></span></button>
+      <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-Region Report</b><small>A second AWS region: cost, people, recovery</small></span></button>
+      <button type="button" class="vtab" data-view="assurance" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span><b>Cloud Assurance Report</b><small>Controls and governance by account</small></span></button>
     </nav>
     <button type="button" id="btnJumpAi" class="btn ai-jump" title="Go to the AI review (section 2)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>AI review<span id="aiDot" class="dot" hidden></span></button>
     <div class="menu">
@@ -134,7 +134,7 @@
     <!-- Cover (print) / title -->
     <section class="cover">
       <p class="eyebrow">Concentration &amp; exit risk assessment</p>
-      <h1 id="title">AWS exit risk review</h1>
+      <h1 id="title">Exit Risk Report</h1>
       <p id="subtitle" class="muted"></p>
       <div id="coverage" class="coverage" role="alert" hidden></div>
       <dl id="metaList" class="meta"></dl>
@@ -492,8 +492,8 @@
   <div id="mrContent" hidden>
     <section class="cover">
       <div class="eyebrow">Resilience review</div>
-      <h1 id="mrTitle">Multi-region: the cost of a second AWS region</h1>
-      <p id="mrSubtitle" class="muted">What it would take to survive the loss of a whole AWS region: run cost, build cost and time, people, and where to put it.</p>
+      <h1 id="mrTitle">Multi-Region Report: a second AWS region</h1>
+      <p id="mrSubtitle" class="muted">What it takes to survive the loss of a whole AWS region for the accounts you choose: run cost, people by team, recovery time per service, cost and time to build, and where to put it.</p>
       <div id="mrCoverage" class="coverage" role="alert" hidden></div>
       <dl id="mrMeta" class="meta"></dl>
     </section>
@@ -513,6 +513,7 @@
         </div>
       </div>
       <div class="tiles" id="mrTiles"></div>
+      <div class="card ai-panel" id="mrAi"></div>
     </section>
 
     <section class="section" id="mr-questions">
@@ -679,6 +680,7 @@
         </div>
       </div>
       <div class="tiles" id="asTiles"></div>
+      <div class="card ai-panel" id="asAi"></div>
       <div class="card">
         <h3>Control areas</h3>
         <p class="muted small">Share of measured checks that pass in each area, weakest first. Not measured checks are left out of the rate and shown on their own.</p>
@@ -927,9 +929,12 @@
         <label class="check fd-check"><input type="checkbox" name="assurance" id="sAssurance" checked><span><strong>Run the Cloud Assurance Framework checks</strong><br><span class="fd-hint">Reads each account's controls (access, internet exposure, audit trail, threat detection, data protection, change management, resilience and DR, lifecycle, ownership) and the organisation's guardrails, for the Cloud assurance report. Read-only; needs the assurance read permissions (Check access tests them). Adds about a minute per 8 accounts.</span></span></label>
       </section>
       <section class="fd-sec">
-        <h3><span class="step">5</span>AI review <span class="opt">optional</span></h3>
-        <label class="check fd-check"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Add an AI review to the report</strong><br><span class="fd-hint" id="sAiInfo"></span></span></label>
-        <p class="fd-hint">Needs a deep scan: ticking it switches Scan depth to a dependency scan. Starts when the scan finishes and takes 5 to 40 minutes; the report is ready to read meanwhile and the review appears in section 2. <button type="button" class="link-btn" id="lnkAiConfig">AI configuration</button></p>
+        <h3><span class="step">5</span>AI insights <span class="opt">optional</span></h3>
+        <p class="fd-hint" id="sAiInfo"></p>
+        <label class="check fd-check"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Exit Risk Report: AI review</strong><br><span class="fd-hint">For the executive committee: what matters most in an exit, the accounts to focus on and how to tackle them, in three passes. Needs a deep scan: ticking it switches Scan depth to a dependency scan. 5 to 40 minutes.</span></span></label>
+        <label class="check fd-check"><input type="checkbox" name="ai_mr" id="sAiMr"><span><strong>Multi-Region Report: AI insights</strong><br><span class="fd-hint">For the CIO, risk and infrastructure leads: where a second region is worth it, what it does to the teams, the recovery gaps and the region to use. Works on any scan. About a minute.</span></span></label>
+        <label class="check fd-check"><input type="checkbox" name="ai_as" id="sAiAs"><span><strong>Cloud Assurance Report: AI insights</strong><br><span class="fd-hint">For the CISO, risk and audit: the control gaps that matter, the accounts to fix first and what the regulator will ask. Needs the Cloud Assurance checks (step 4). About a minute.</span></span></label>
+        <p class="fd-hint">Each starts when the scan finishes and appears in its own report; the reports are ready to read meanwhile. Each can also be run later from its report. <button type="button" class="link-btn" id="lnkAiConfig">AI configuration</button></p>
       </section>
     </div>
     <footer class="fd-foot">

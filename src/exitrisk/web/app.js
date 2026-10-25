@@ -1,4 +1,4 @@
-/* AWS Exit Risk Review - dashboard client.
+/* AWS Cloud Risk Review - dashboard client.
  * Talks to the local API (see server.py). Every value from the API is escaped before it
  * reaches the DOM: account names and error messages come from AWS and are not trusted HTML.
  */
@@ -11,9 +11,9 @@
   const LS_Q = "exitrisk.questionnaire.v1";
   const LS_THEME = "exitrisk.theme";
   const LS_ORG_PROFILE = "exitrisk.orgProfile"; // last profile that could read the OU tree
-  const LS_AI_SCAN = "exitrisk.aiWithScan"; // tick AI review in New scan again next time
+  const LS_AI_SCAN = "exitrisk.aiWithScan"; // tick AI review in New scan again next time (+ ".mr", ".as")
   const MGMT_RE = /mgmt|management|payer|master|org/i;
-  const state = { exclude: new Set(), scanId: null, report: null, catalog: null, options: null, charts: {}, pollTimer: null };
+  const state = { exclude: new Set(), scanId: null, report: null, catalog: null, options: null, charts: {}, pollTimer: null, ins: {} };
 
   // ------------------------------------------------------------------ utils
   const $ = (sel) => document.querySelector(sel);
@@ -383,6 +383,7 @@
     if (state.ai?.run?.status === "running") pollAi();
     // The multi-region view follows the same scan and filter.
     state.mr = null;
+    state.ins = {};
     if (state.view === "multiregion") loadMultiRegion();
     state.as = null;
     state.asApproved = {};
@@ -427,7 +428,7 @@
 
   function renderCover(r) {
     const m = r.meta;
-    $("#title").textContent = m.mode === "demo" ? "AWS exit risk review: demo organisation" : `AWS exit risk review: ${m.ou?.path || "organisation"}`;
+    $("#title").textContent = m.mode === "demo" ? "Exit Risk Report: demo organisation" : `Exit Risk Report: ${m.ou?.path || "organisation"}`;
     $("#subtitle").textContent = m.mode === "demo"
       ? "Synthetic data for demonstration. Not a real organisation."
       : "How hard it would be to leave AWS, weighted by where the money is spent.";
@@ -1612,14 +1613,18 @@
   }
 
   // The new-scan dialog's AI review option follows the saved configuration.
+  const SCAN_AI = [["#sAi", ""], ["#sAiMr", ".mr"], ["#sAiAs", ".as"]];
   function syncScanAi() {
     const ready = aiReady();
-    $("#sAi").disabled = !ready;
-    if (!ready) $("#sAi").checked = false;
-    else { try { $("#sAi").checked = localStorage.getItem(LS_AI_SCAN) === "1"; } catch { /* ignore */ } }
+    for (const [id, suffix] of SCAN_AI) {
+      $(id).disabled = !ready;
+      if (!ready) $(id).checked = false;
+      else { try { $(id).checked = localStorage.getItem(LS_AI_SCAN + suffix) === "1"; } catch { /* ignore */ } }
+    }
     // A review of billing alone sees spend, not resources or integrations: it comes with a dependency scan.
     if ($("#sAi").checked) needDeepScan();
-    $("#sAiInfo").textContent = ready ? `With ${ready}. In section 2: what matters most, the accounts to focus on and how to tackle them.`
+    if ($("#sAiAs").checked) $("#sAssurance").checked = true;
+    $("#sAiInfo").textContent = ready ? `With ${ready}. Tick the reports that should get an AI read; each is written for that report's readers.`
       : "Not set up yet: choose the AI model under AI configuration first.";
   }
 
@@ -1881,7 +1886,7 @@
     if (!state.asAnswers) state.asAnswers = loadAsAnswers();
     const seq = (state.asSeq = (state.asSeq || 0) + 1);
     try {
-      await loadAsLists();
+      await Promise.all([loadAsLists(), state.ins.assurance ? null : fetchInsights("assurance")]);
       if (!state.asSets.some((s) => s.name === state.asAnswers.ruleset)) state.asAnswers.ruleset = "All rules";
       const r = await api("/api/assurance", { method: "POST", body: asBody() });
       if (seq !== state.asSeq) return;
@@ -1908,6 +1913,7 @@
   }
 
   function renderAs() {
+    renderInsights("assurance");
     const r = state.as;
     $("#reportBar").hidden = false;
     $("#empty").hidden = true;
@@ -2261,7 +2267,7 @@
     if (state.view !== "assurance") $("#asError").hidden = true;
     // Export follows the report on screen; the one-page summary exists only for exit risk.
     const mr = state.view === "multiregion", as = state.view === "assurance";
-    $("#btnPdf b").textContent = mr ? "Multi-region report" : as ? "Cloud Assurance Framework Report" : "Full report";
+    $("#btnPdf b").textContent = mr ? "Multi-Region Report" : as ? "Cloud Assurance Report" : "Exit Risk Report";
     $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : as ? "Every assurance section, as on screen" : "Every section and the appendix";
     $("#btnOnePage").hidden = mr || as;
     $("#btnJumpAi").hidden = mr || as; // the AI review belongs to the exit risk report
@@ -2315,6 +2321,7 @@
     const body = { scan_id: state.scanId, filter, multiregion: { ...readMr(), accounts: mrAccounts() } };
     const seq = (state.mrSeq = (state.mrSeq || 0) + 1);
     try {
+      if (!state.ins.multiregion) await fetchInsights("multiregion");
       const mr = await api("/api/multiregion", { method: "POST", body });
       if (seq !== state.mrSeq) return; // a newer request superseded this one
       state.mr = mr;
@@ -2475,6 +2482,7 @@
         scales: { x: { grid: { color: css("--grid") }, border: { display: false } }, y: { grid: { display: false } } } },
     });
     renderMrRecovery(m);
+    renderInsights("multiregion");
 
     $("#mrBuildTiles").innerHTML = [
       tile("Cost to achieve (one-off)", rg.build_cost, "engineering, plus running the region while it is built", prov),
@@ -2523,6 +2531,70 @@
     $("#btnMrRecMore").textContent = state.mrRecAll ? "Show fewer" : `Show all ${num(rows.length)}`;
     $("#mrRecMoreNote").textContent = PRINT && shown.length < rows.length ? `Services under ${money(1000)}/month that meet the target are left out (${num(rows.length - shown.length)}).`
       : more && !state.mrRecAll ? `Showing ${MR_REC_ROWS} of ${num(rows.length)}: misses first, then by spend.` : "";
+  }
+
+  // ------------------------------------------------------------------ AI insights (multi-region, assurance)
+  const INSIGHT = {
+    multiregion: { el: "#mrAi", label: "Multi-Region Report", body: () => ({ filter: currentFilter(), multiregion: { ...readMr(), accounts: mrAccounts() } }) },
+    assurance: { el: "#asAi", label: "Cloud Assurance Report", body: () => ({ filter: currentFilter(), assurance: asBody().answers }) },
+  };
+
+  async function fetchInsights(kind) {
+    const scan = state.scanId;
+    const got = await api(`/api/ai/insights/${encodeURIComponent(scan)}/${kind}`).catch(() => null);
+    if (scan !== state.scanId) return;
+    state.ins[kind] = got || { run: null, result: null };
+    clearTimeout(state.insTimer?.[kind]);
+    if (got?.run?.status === "running") {
+      state.insTimer = { ...(state.insTimer || {}), [kind]: setTimeout(async () => {
+        await fetchInsights(kind);
+        renderInsights(kind);
+        if (state.ins[kind]?.result && state.ins[kind]?.run?.status === "complete") toast(`AI insights ready in the ${INSIGHT[kind].label}`);
+      }, 3000) };
+    }
+  }
+
+  async function runInsights(kind) {
+    try {
+      await api("/api/ai/insights", { method: "POST", body: { scan_id: state.scanId, kind, ...INSIGHT[kind].body() } });
+      await fetchInsights(kind);
+      renderInsights(kind);
+    } catch (e) { toast(e.message, 6000); }
+  }
+
+  function renderInsights(kind) {
+    const el = $(INSIGHT[kind].el), st = state.ins[kind] || {}, res = st.result, run = st.run;
+    const head = (t, btns = "") => `<div class="card-head ai-head"><h3>${AI_ICON}${esc(t)}</h3><span class="no-print ai-actions">${btns}</span></div>`;
+    if (run?.status === "running") {
+      el.innerHTML = head("AI insights running", '<button type="button" class="btn danger" data-ins="stop">Stop</button>') +
+        `<div class="busy" role="status" aria-live="polite"><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text">${esc(run.stage)}</span></div><div class="busy-sub">${esc(run.message || "")}</div></div>`;
+    } else if (!res) {
+      const ready = aiReady();
+      if (PRINT) { el.hidden = true; return; }
+      const last = run?.status === "failed" ? `<p class="warn-text">The last run did not finish: ${esc(run.message)}</p>` : "";
+      el.innerHTML = head("AI insights", ready ? '<button type="button" class="btn primary" data-ins="run">Run AI insights</button>' : '<button type="button" class="btn" data-ins="cfg">AI configuration</button>') + last +
+        `<p class="small muted">Optional: a model reads this report's summary${kind === "multiregion" ? " for the accounts chosen in section 3" : ""} and gives its own view for this report's readers: key points, risks, actions and the questions to ask. ${ready ? `With ${esc(ready)}. About a minute.` : "Set up the AI model once under Settings, AI configuration."}</p>`;
+    } else {
+      const f = res.final || {}, c = f.confidence || {};
+      const same = res.basis?.filter === (state.report?.meta.filter.description || res.basis?.filter);
+      el.innerHTML = head("AI insights", '<button type="button" class="btn" data-ins="run">Run again</button> <button type="button" class="btn" data-ins="remove">Remove</button>') +
+        `<p class="ai-headline">${esc(f.headline || "")}</p>` +
+        (f.key_points?.length ? `<ul class="ai-points">${f.key_points.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "") +
+        (f.risks?.length ? `<h4>Risks</h4><ul class="ai-points">${f.risks.map((r) => `<li><strong>${esc(r.title)}.</strong> ${esc(r.why)}${r.account_names?.length ? ` <span class="muted small">(${esc(r.account_names.slice(0, 6).join(", "))}${r.account_names.length > 6 ? ", …" : ""})</span>` : ""}</li>`).join("")}</ul>` : "") +
+        (f.actions?.length ? `<h4>Actions</h4><div class="table-wrap"><table class="data compact"><thead><tr><th>Action</th><th>Owner</th><th>When</th></tr></thead><tbody>${f.actions.map((a) => `<tr><td><strong>${esc(a.title)}</strong><div class="small">${esc(a.detail)}</div></td><td class="small">${esc(a.owner)}</td><td class="small nowrap">${esc(a.when)}</td></tr>`).join("")}</tbody></table></div>` : "") +
+        (f.questions?.length ? `<h4>Questions to ask</h4><ul class="ai-points">${f.questions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "") +
+        `<p class="hint">${c.level ? `Confidence ${esc(c.level)}: ${esc(c.why || "")} · ` : ""}${esc(res.provider_label)} ${esc(res.model)}, ${esc(new Date(res.created_at).toLocaleString())}${res.cost_usd != null ? ` · about ${money(res.cost_usd)}` : ""} · ${plural(res.basis?.accounts || 0, "account")}, ${esc(res.basis?.filter || "")}${same ? "" : " (a different filter from the one shown)"}. A second opinion: the figures above are the source of record.</p>`;
+    }
+    el.hidden = false;
+    el.onclick = async (ev) => {
+      const b = ev.target.closest("[data-ins]");
+      if (!b) return;
+      const url = `/api/ai/insights/${encodeURIComponent(state.scanId)}/${kind}`;
+      if (b.dataset.ins === "run") runInsights(kind);
+      else if (b.dataset.ins === "cfg") openAiConfig();
+      else if (b.dataset.ins === "stop") { await api(url, { method: "DELETE" }).catch((e) => toast(e.message)); await fetchInsights(kind); renderInsights(kind); }
+      else if (b.dataset.ins === "remove") { await api(`${url}?remove=true`, { method: "DELETE" }).catch((e) => toast(e.message)); await fetchInsights(kind); renderInsights(kind); }
+    };
   }
 
   // Every OU path, and each OU above it, so a pick can take a whole branch.
@@ -2709,7 +2781,8 @@
     syncDatacenter();
     readQuestionnaire();
     // The review runs on the report as this console will show it: today's filter and Exit model answers.
-    if ($("#sAi").checked) body.ai_review = aiAsk();
+    const reports = [["#sAi", "exit"], ["#sAiMr", "multiregion"], ["#sAiAs", "assurance"]].filter(([id]) => $(id).checked).map(([, k]) => k);
+    if (reports.length) body.ai_review = { ...aiAsk(), reports, multiregion: { ...readMr(), accounts: null }, assurance: asBody().answers };
     $("#scanError").textContent = "";
     $("#btnStartScan").disabled = true;
     // Show the bar at once: the first AWS calls can take a few seconds before any progress comes back.
@@ -3355,7 +3428,10 @@
     enterDoes("#ssoForm", (el) => { if (el.closest("#ssoAdd")) ssoAddPortal(); });
     enterDoes("#accessForm", () => runAccessCheck());
     // The member role, regions and region scope apply to the assurance checks too.
-    $("#sAssurance").addEventListener("change", () => { $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked; });
+    $("#sAssurance").addEventListener("change", () => {
+      $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked;
+      if (!$("#sAssurance").checked && $("#sAiAs").checked) { $("#sAiAs").checked = false; toast("Cloud Assurance AI insights unticked: they need the assurance checks", 5000); }
+    });
     $("#sDepth").addEventListener("change", (e) => {
       $("#invOpts").hidden = e.target.value === "quick" && !$("#sAssurance").checked;
       $("#sDepthHint").textContent = DEPTH_HINT[e.target.value];
@@ -3377,6 +3453,11 @@
     // Tests save too, so whatever closes the dialog, the scan option and section 2 follow what is saved.
     $("#aiDialog").addEventListener("close", () => { syncScanAi(); if (state.report) renderAi(state.report); });
     $("#sAi").addEventListener("change", () => { if ($("#sAi").checked) needDeepScan(); try { localStorage.setItem(LS_AI_SCAN, $("#sAi").checked ? "1" : "0"); } catch { /* ignore */ } });
+    $("#sAiMr").addEventListener("change", () => { try { localStorage.setItem(`${LS_AI_SCAN}.mr`, $("#sAiMr").checked ? "1" : "0"); } catch { /* ignore */ } });
+    $("#sAiAs").addEventListener("change", () => {
+      if ($("#sAiAs").checked && !$("#sAssurance").checked) { $("#sAssurance").checked = true; $("#sAssurance").dispatchEvent(new Event("change")); }
+      try { localStorage.setItem(`${LS_AI_SCAN}.as`, $("#sAiAs").checked ? "1" : "0"); } catch { /* ignore */ }
+    });
     $("#aiProvider").addEventListener("change", () => aiProviderChanged(""));
     $("#aiModel").addEventListener("change", () => { $("#aiCustomWrap").hidden = $("#aiModel").value !== AI_CUSTOM; if (!$("#aiCustomWrap").hidden) $("#aiCustom").focus(); });
     $("#aiMask").addEventListener("change", () => { $("#aiMask").dataset.touched = "1"; });

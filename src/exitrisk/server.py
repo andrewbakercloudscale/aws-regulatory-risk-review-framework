@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__, preflight, rulesets, schedule, sso, store
+from .ai import insights as ai_insights
 from .ai import providers as ai_providers
 from .ai import review as ai_review
 from .assurance import AssuranceAnswers, build_assurance, evidence, ownership_export
@@ -151,6 +152,20 @@ class AIAfterScanRequest(BaseModel):
     filter: FilterModel = FilterModel()
     questionnaire: Questionnaire = Questionnaire()
     weighting: str = Field("spend", pattern=r"^(balanced|spend|equal)$")
+    # Which reports get an AI read when the scan finishes: each has its own audience and its own section.
+    reports: list[Annotated[str, Field(pattern="^(exit|multiregion|assurance)$")]] = Field(
+        default_factory=lambda: ["exit"], min_length=1, max_length=3
+    )
+    multiregion: MultiRegionAnswers = MultiRegionAnswers()
+    assurance: AssuranceAnswers = AssuranceAnswers()
+
+
+class AIInsightsRequest(BaseModel):
+    scan_id: str
+    kind: str = Field(pattern="^(multiregion|assurance)$")
+    filter: FilterModel = FilterModel()
+    multiregion: MultiRegionAnswers = MultiRegionAnswers()
+    assurance: AssuranceAnswers = AssuranceAnswers()
 
 
 ScanRequest.model_rebuild()
@@ -204,7 +219,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         stop.set()
 
     app = FastAPI(
-        title="AWS Exit Risk Review", version=__version__, docs_url="/api/docs", redoc_url=None, lifespan=lifespan
+        title="AWS Cloud Risk Review", version=__version__, docs_url="/api/docs", redoc_url=None, lifespan=lifespan
     )
 
     @app.middleware("http")
@@ -251,6 +266,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             "pid": os.getpid(),
             "scans_running": running_scans(),
             "reviews_running": ai_review.running_reviews(),
+            "insights_running": ai_insights.running(),
         }
 
     @app.get("/api/profiles")
@@ -372,9 +388,11 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
     @app.post("/api/scans")
     def create_scan(req: ScanRequest):
         if req.ai_review is not None:
-            # On billing alone the model sees spend, not resources or integrations: not worth a review.
-            if not req.inventory:
+            # On billing alone the model sees spend, not resources or integrations: not worth an exit review.
+            if "exit" in req.ai_review.reports and not req.inventory:
                 raise HTTPException(400, "the AI review needs a deep scan: choose a dependency (or inventory) scan")
+            if "assurance" in req.ai_review.reports and not req.assurance:
+                raise HTTPException(400, "AI insights on the Cloud Assurance Report need the Cloud Assurance checks")
             # Fail before the scan, not half an hour later, if the AI review is not set up.
             if not ai_providers.settings_saved():
                 raise HTTPException(400, "the AI review is not set up yet: open Settings, AI configuration")
@@ -391,7 +409,8 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if req.ai_review is not None:
-            ai_review.expect(job.id)
+            for kind in req.ai_review.reports:
+                ai_review.expect(job.id) if kind == "exit" else ai_insights.expect(job.id, kind)
             threading.Thread(
                 target=contextvars.copy_context().run,
                 args=(_ai_after_scan, job.id, req.ai_review),
@@ -401,26 +420,40 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         return job.snapshot()
 
     def _ai_after_scan(scan_id: str, want: AIAfterScanRequest) -> None:
-        """Wait for the scan, then start the AI review it was asked for with."""
+        """Wait for the scan, then start the AI reads it was asked for with, one per report."""
         while (job := get_job(scan_id)) and job.status == "running":
             time.sleep(2)
-        if not ai_review.waiting(scan_id):
-            return  # stopped from the console while the scan ran
-        if not job or job.status == "failed":
-            ai_review.give_up(scan_id, "the scan failed, so there is no report to review")
-            return
-        if job.status == "cancelled":
-            ai_review.give_up(scan_id, "the scan was stopped, so there is no report to review")
-            return
-        try:
-            _start_ai(scan_id, want)
-        except HTTPException as exc:
-            ai_review.give_up(scan_id, str(exc.detail))
-        except Exception as exc:
-            log.exception("AI review after scan %s could not start", scan_id)
-            ai_review.give_up(scan_id, f"could not start: {exc}")
-        else:
-            ai_review.started(scan_id)
+        for kind in want.reports:
+            if kind == "exit":
+                waiting, give_up = ai_review.waiting(scan_id), lambda m: ai_review.give_up(scan_id, m)
+            else:
+                waiting = ai_insights.waiting(scan_id, kind)
+                give_up = lambda m, k=kind: ai_insights.give_up(scan_id, k, m)  # noqa: E731
+            if not waiting:
+                continue  # stopped from the console while the scan ran
+            if not job or job.status == "failed":
+                give_up("the scan failed, so there is no report to review")
+                continue
+            if job.status == "cancelled":
+                give_up("the scan was stopped, so there is no report to review")
+                continue
+            try:
+                if kind == "exit":
+                    _start_ai(scan_id, want)
+                    ai_review.started(scan_id)
+                else:
+                    _start_insights(
+                        AIInsightsRequest(
+                            scan_id=scan_id,
+                            kind=kind,
+                            **want.model_dump(include={"filter", "multiregion", "assurance"}),
+                        )
+                    )
+            except HTTPException as exc:
+                give_up(str(exc.detail))
+            except Exception as exc:
+                log.exception("AI %s after scan %s could not start", kind, scan_id)
+                give_up(f"could not start: {exc}")
 
     @app.post("/api/scans/{scan_id}/cancel")
     def cancel_scan(scan_id: str):
@@ -701,6 +734,51 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
     @app.post("/api/ai/review")
     def ai_start(req: AIRunRequest):
         return _start_ai(req.scan_id, req)
+
+    def _start_insights(req: AIInsightsRequest) -> dict:
+        try:
+            scan = store.load_scan(req.scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        try:
+            flt = AccountFilter(**req.filter.model_dump())
+        except FilterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if req.kind == "multiregion":
+            rep = build_multiregion(scan, flt, req.multiregion)
+            if not rep["summary"]["accounts_selected"]:
+                raise HTTPException(409, "no accounts are chosen for a second region")
+            basis = {"filter": flt.to_dict()["description"], "accounts": rep["summary"]["accounts_selected"]}
+        else:
+            rep = build_assurance(scan, flt, req.assurance)
+            if not rep.get("available"):
+                raise HTTPException(409, "this scan has no Cloud Assurance checks: start a scan with them ticked")
+            basis = {"filter": flt.to_dict()["description"], "accounts": rep["summary"]["accounts"]}
+        try:
+            return ai_insights.start(req.scan_id, req.kind, rep, ai_providers.load_settings(), basis)
+        except (ValueError, ai_providers.AIError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/ai/insights")
+    def ai_insights_start(req: AIInsightsRequest):
+        return _start_insights(req)
+
+    @app.get("/api/ai/insights/{scan_id}/{kind}")
+    def ai_insights_get(scan_id: str, kind: str):
+        try:
+            return {"run": ai_insights.status(scan_id, kind), "result": ai_insights.load_result(scan_id, kind)}
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.delete("/api/ai/insights/{scan_id}/{kind}")
+    def ai_insights_stop(scan_id: str, kind: str, remove: bool = False):
+        try:
+            stopped = ai_insights.cancel(scan_id, kind)
+            if remove:
+                ai_insights.delete_result(scan_id, kind)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"stopped": stopped, "removed": remove}
 
     @app.post("/api/ai/key")
     def ai_key(req: AIKeyRequest):

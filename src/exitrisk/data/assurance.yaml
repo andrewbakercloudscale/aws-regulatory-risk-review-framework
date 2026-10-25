@@ -986,7 +986,7 @@ checks:
     scope: production
     title: Production in one region only
     why: "All of the account's regional spend is in one region: a regional outage stops it."
-    fix: Decide and record the regional recovery strategy (see the Multi-region report).
+    fix: Decide and record the regional recovery strategy (see the Multi-Region Report).
     refs: []
     source: Cost Explorer spend by region (ce:GetCostAndUsage)
   - id: rds_backup_short

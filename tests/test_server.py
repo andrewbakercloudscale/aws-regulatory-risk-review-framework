@@ -14,7 +14,7 @@ def test_health_and_index():
     h = c.get("/api/health").json()
     assert h["status"] == "ok" and h["scans_running"] == [] and h["pid"] > 0
     r = c.get("/")
-    assert r.status_code == 200 and "AWS Exit Risk Review" in r.text
+    assert r.status_code == 200 and "AWS Cloud Risk Review" in r.text
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
 
 
@@ -141,3 +141,11 @@ def test_scan_with_an_ended_sign_in_asks_to_sign_in_again(monkeypatch):
     monkeypatch.setattr(server.sso, "load_token", lambda name: None)
     r = client().post("/api/scans", json={"profile": "sso"}, headers=H)
     assert r.status_code == 401 and "Sign in again" in r.json()["detail"]
+
+
+def test_ai_insights_endpoints_check_their_input():
+    c = client()
+    assert c.get("/api/ai/insights/abc/assurance").json() == {"run": None, "result": None}
+    assert c.get("/api/ai/insights/abc/exit").status_code == 400
+    r = c.post("/api/ai/insights", json={"scan_id": "nope", "kind": "multiregion"}, headers={"X-ExitRisk": "1"})
+    assert r.status_code == 404
