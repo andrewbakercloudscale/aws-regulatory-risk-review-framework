@@ -53,6 +53,10 @@ authoritative; do not recompute them, but you may judge them and say where they 
 a rule in most accounts (the same role in every account, or one guardrail missing from otherwise present \
 SCPs), say it is one shared cause with one fix, not a fleet-wide collapse, and do not describe a partly met \
 control as absent.
+- When one administrator role is in every account it is usually the deployment pipeline's role: recommend \
+narrowing who can assume it and what it may do, not removing it.
+- Say a role can be assumed by anyone only for the count in trust_targets.anyone; trusts of a deleted role \
+or user are stale entries to clean up, and trusts of the bank's own accounts are internal, not outside access.
 - Write for executives: short, specific, plain English. No em dashes or en dashes.
 - Reply with one JSON object only, exactly in the requested shape, with no text before or after it."""
 
@@ -165,6 +169,30 @@ def _common_causes(rep: dict) -> dict[str, dict]:
     return out
 
 
+_TRUST = re.compile(r" trusts (\S+)$")
+_DELETED = re.compile(r"^A(ROA|IDA|GPA)[A-Z0-9]{12,}$")
+
+
+def _trust_targets(rep: dict) -> dict[str, int]:
+    """Accounts with a role trusting each kind of principal: anyone, a deleted role or user, an account in
+    this report, or an account outside it. Counts only, so no role or account names leave the laptop."""
+    own = {a["id"] for a in rep["accounts"]} | {a.get("id") for a in rep.get("not_checked") or []}
+    out = {"anyone": set(), "deleted_principal": set(), "own_account": set(), "other_account": set()}
+    for a in rep["accounts"]:
+        for f in a.get("findings") or []:
+            if f["id"] != "external_trust" or f["status"] != "fail":
+                continue
+            for ev in f.get("ev") or []:
+                m = _TRUST.search(ev)
+                if not m:
+                    continue
+                t = m.group(1)
+                kind = ("anyone" if t == "anyone" else "deleted_principal" if _DELETED.match(t)
+                        else "own_account" if t in own else "other_account")  # fmt: skip
+                out[kind].add(a["id"])
+    return {k: len(v) for k, v in out.items()}
+
+
 def _assurance_facts(rep: dict) -> tuple[dict, list[dict]]:
     titles = {r["id"]: r["title"] for r in rep["rules"]}
     ranked = sorted(rep["accounts"], key=lambda a: (-a["score"], -a["monthly_spend"]))
@@ -197,7 +225,9 @@ def _assurance_facts(rep: dict) -> tuple[dict, list[dict]]:
         else rep.get("ruleset"),
         "summary": rep["summary"],
         "areas": [
-            {k: a[k] for k in ("label", "fails", "unknown", "accounts_failing", "pass_rate")} for a in rep["areas"]
+            {k: a[k] for k in ("label", "fails", "unknown", "accounts_failing", "pass_rate")}
+            | {"failing_rules": [r["title"] for r in failing if r.get("area") == a.get("id")][:5]}
+            for a in rep["areas"]
         ],
         "failing_rules": [
             {k: r[k] for k in ("title", "area", "severity", "fail", "unknown")} | {"refs": r.get("refs", [])[:3]}
@@ -206,6 +236,7 @@ def _assurance_facts(rep: dict) -> tuple[dict, list[dict]]:
         "common_causes": {
             t: c for t, c in _common_causes(rep).items() if t in {r["title"] for r in failing[:25]} or "findings" in c
         },
+        "trust_targets": _trust_targets(rep),
         "accounts_not_listed": max(len(ranked) - MAX_ACCOUNTS, 0),
         "accounts_not_checked": len(rep.get("not_checked") or []),
         "ownership": {

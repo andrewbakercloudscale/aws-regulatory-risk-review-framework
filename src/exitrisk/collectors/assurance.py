@@ -315,7 +315,10 @@ def _trusted_accounts(doc: dict) -> list[tuple[str, bool]]:
         cond = json.dumps(st.get("Condition") or {}).lower()
         external_id = "sts:externalid" in cond
         org_bound = "aws:principalorgid" in cond or "aws:principalorgpaths" in cond
-        for p in aws:
+        # "*" narrowed by a condition on the caller (aws:PrincipalArn, aws:PrincipalAccount) trusts only the
+        # accounts the condition names, not anyone.
+        named = sorted(set(re.findall(r"\b\d{12}\b", cond))) if re.search(r"aws:principal(arn|account)", cond) else []
+        for p in [x for q in aws for x in (named if str(q) == "*" and named else [q])]:
             p = str(p)
             acct = "*" if p == "*" else p.split(":")[4] if p.startswith("arn:") and len(p.split(":")) > 4 else p
             if _DELETED_PRINCIPAL.match(p):

@@ -134,6 +134,23 @@ class _Account:
         self.set(cid, "fail" if items else "pass", items, note)
 
 
+def _bound_external_trust(ax: _Account, bounds: dict | None) -> None:
+    """Resource control policies that stop callers outside the organisation from assuming roles make a
+    role that trusts anyone trust only the organisation (and the accounts the policy lets in), and a trust
+    of any other outside account unusable. Those leave the finding; the note says how many."""
+    ext = ax.checks.get("external_trust") or {}
+    if not bounds or not bounds.get("org_only") or ext.get("status") != "fail":
+        return
+    allowed = set(bounds.get("accounts") or [])
+    ev = ext.get("ev") or []
+    kept = [e for e in ev if (t := e.rsplit(" trusts ", 1)[-1]) != "anyone" and t in allowed]
+    dropped = len(ev) - len(kept)
+    note = f"{dropped} trust(s) limited to the organisation by resource control policies" if dropped else ""
+    ax.set("external_trust", "fail" if kept or ext.get("n", 0) > len(ev) else "pass", kept, note)
+    if ax.checks["external_trust"]["status"] == "fail":
+        ax.checks["external_trust"]["n"] = ext.get("n", len(ev)) - dropped
+
+
 def build_assurance(scan: dict, account_filter: AccountFilter | None = None, a: AssuranceAnswers | None = None) -> dict:
     started = time.perf_counter()
     account_filter = account_filter or AccountFilter()
@@ -297,6 +314,7 @@ def _report_time(ax: _Account, acct, a, org, scan, sensitive, production, prod_p
         why = unavailable.get("scps", "not read (needs a scan from the management account)")
         for cid in ("scp_guardrails", "scp_region_deny"):
             ax.set(cid, "unknown", note=why)
+    _bound_external_trust(ax, (org.get("rcps") or {}).get(aid))
     root = org.get("root")
     if root is None:
         ax.set("central_root_off", "unknown", note=unavailable.get("root", "not read"))

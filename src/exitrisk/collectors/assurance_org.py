@@ -9,6 +9,7 @@ account in scope. Each part is optional: a refusal is an issue and leaves its ch
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
@@ -85,11 +86,10 @@ def _region_deny(statements: list[dict]) -> bool:
     )
 
 
-def scp_guardrails(session, tree: dict, accounts: list[dict]) -> dict:
-    """{account id: {"missing": [guardrails not set], "region_deny": bool}} from the SCPs on the
-    account, its OUs and the root. Deny statements anywhere on the path apply."""
+def _policies_on_path(session, tree: dict, accounts: list[dict], kind: str) -> dict[str, list[dict]]:
+    """{account id: statements of the policies of this kind on the account, its OUs and the root}."""
     org = _client(session, "organizations")
-    policies = _pages(org, "list_policies", "Policies", Filter="SERVICE_CONTROL_POLICY")
+    policies = _pages(org, "list_policies", "Policies", Filter=kind)
     content: dict[str, list[dict]] = {}
     targets: dict[str, list[str]] = {}
 
@@ -109,10 +109,42 @@ def scp_guardrails(session, tree: dict, accounts: list[dict]) -> dict:
         path = [a["id"], *_ancestors(a.get("ou_id") or tree["id"], parents)]
         if tree["id"] not in path:
             path.append(tree["id"])
-        sts = [s for node in path for pid in targets.get(node, []) for s in content.get(pid, [])]
-        missing = sorted({why for action, why in GUARDRAILS.items() if not _denies(sts, action)})
-        out[a["id"]] = {"missing": missing, "region_deny": _region_deny(sts)}
+        out[a["id"]] = [s for node in path for pid in targets.get(node, []) for s in content.get(pid, [])]
     return out
+
+
+def scp_guardrails(session, tree: dict, accounts: list[dict]) -> dict:
+    """{account id: {"missing": [guardrails not set], "region_deny": bool}} from the SCPs on the
+    account, its OUs and the root. Deny statements anywhere on the path apply."""
+    out = {}
+    for aid, sts in _policies_on_path(session, tree, accounts, "SERVICE_CONTROL_POLICY").items():
+        missing = sorted({why for action, why in GUARDRAILS.items() if not _denies(sts, action)})
+        out[aid] = {"missing": missing, "region_deny": _region_deny(sts)}
+    return out
+
+
+def rcp_trust_bounds(sts: list[dict]) -> dict:
+    """Whether resource control policies stop callers outside the organisation from assuming roles: a Deny
+    on sts:AssumeRole unless aws:PrincipalOrgID matches. "accounts" are the outside accounts the same
+    condition still lets in (aws:PrincipalAccount)."""
+    allowed: set[str] = set()
+    org_only = False
+    for st in sts:
+        cond = st.get("Condition") or {}
+        if st.get("Effect") != "Deny" or not _like(_listify(st.get("Action")), "sts:AssumeRole", True):
+            continue
+        keys = {k.lower(): v for c in cond.values() if isinstance(c, dict) for k, v in c.items()}
+        if "aws:principalorgid" in keys:
+            org_only = True
+            allowed |= {str(x) for x in _listify(keys.get("aws:principalaccount")) if re.fullmatch(r"\d{12}", str(x))}
+    return {"org_only": org_only, "accounts": sorted(allowed)}
+
+
+def rcp_bounds(session, tree: dict, accounts: list[dict]) -> dict:
+    return {
+        aid: rcp_trust_bounds(sts)
+        for aid, sts in _policies_on_path(session, tree, accounts, "RESOURCE_CONTROL_POLICY").items()
+    }
 
 
 def root_features(session) -> dict:
@@ -328,6 +360,8 @@ def org_checks(
     if tree:
         part("scps", "service control policies", lambda: scp_guardrails(session, tree, accounts),
              "the guardrail checks")  # fmt: skip
+        part("rcps", "resource control policies", lambda: rcp_bounds(session, tree, accounts),
+             "the organisation bound on external role trust")  # fmt: skip
         part("delegated", "delegated administrators", lambda: delegated_admins(session), "nothing")
     part("root", "central root access", lambda: root_features(session), "the central root check")
     part("trusted_advisor", "Trusted Advisor organisation view", lambda: trusted_advisor(session, ids),

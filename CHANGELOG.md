@@ -17,6 +17,13 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   finding): that is the Multi-Region Report's job.
 - "Agentic Risk Review" is now called **AI review**. Exit effort is shown in person-years.
 - Check access runs its independent checks in parallel.
+- Cloud Assurance reads **resource control policies**: a role that trusts anyone, or an outside
+  account, is not flagged when an RCP limits role assumption to the organisation (and the
+  accounts it lets in). A trust policy of "*" narrowed by `aws:PrincipalArn` or
+  `aws:PrincipalAccount` counts as trusting only those accounts.
+- AI insights for the assurance report get the kinds of role trust (anyone, deleted principal,
+  outside account) and each area's failing rules, and treat a shared deployment admin role as one
+  role to narrow, not remove.
 
 ### Added
 - **AI insights per report**: New scan step 5 has a tick for each report; the Multi-Region and Cloud

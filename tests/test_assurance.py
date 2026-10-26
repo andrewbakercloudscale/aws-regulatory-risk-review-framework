@@ -99,6 +99,11 @@ def test_policy_reading():
         "Statement": [{"Effect": "Allow", "Principal": {"AWS": "AROAQ3EGT6ODK4EXO3PTM"}, "Action": "sts:AssumeRole"}]
     }
     assert checks._trusted_accounts(stale) == [("deleted", False)]
+    narrowed = {
+        "Statement": [{"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:AssumeRole",
+                       "Condition": {"StringLike": {"aws:PrincipalArn": "arn:aws:iam::777777777777:role/x"}}}]
+    }  # fmt: skip
+    assert checks._trusted_accounts(narrowed) == [("777777777777", False)]
     cover = checks.s3_write_cover(
         {
             "AdvancedEventSelectors": [
@@ -497,3 +502,20 @@ def test_a_task_that_hits_a_server_error_runs_again(monkeypatch):
     checks._run(ctx, next(t for t in checks.REGION_TASKS if t[0] == "bedrock"), "eu-west-1")
     assert len(calls) == 2 and not ctx.issues
     assert ctx.r.finish()["bedrock_no_logging"]["status"] == "pass"
+
+
+def test_resource_control_policies_bound_roles_that_trust_anyone():
+    deny = {"Effect": "Deny", "Principal": "*", "Action": ["s3:*", "sts:AssumeRole"], "Resource": "*",
+            "Condition": {"StringNotEqualsIfExists": {"aws:PrincipalOrgID": "o-1",
+                                                      "aws:PrincipalAccount": ["777777777777"]}}}  # fmt: skip
+    bounds = assurance_org.rcp_trust_bounds([deny])
+    assert bounds == {"org_only": True, "accounts": ["777777777777"]}
+    assert assurance_org.rcp_trust_bounds([{**deny, "Action": "s3:*"}])["org_only"] is False
+    ev = ["a trusts anyone", "b trusts 999999999999", "c trusts 777777777777"]
+    ax = assurance._Account({"checks": {"external_trust": {"status": "fail", "n": 3, "ev": ev}}})
+    assurance._bound_external_trust(ax, bounds)
+    assert ax.checks["external_trust"]["ev"] == ["c trusts 777777777777"]
+    assert ax.checks["external_trust"]["n"] == 1 and "2 trust(s)" in ax.checks["external_trust"]["note"]
+    ax = assurance._Account({"checks": {"external_trust": {"status": "fail", "n": 1, "ev": ev[:1]}}})
+    assurance._bound_external_trust(ax, bounds)
+    assert ax.checks["external_trust"]["status"] == "pass"

@@ -76,3 +76,11 @@ def test_one_shared_cause_is_flagged_without_naming_the_resource():
     assert causes["Admin policies"]["accounts_with_the_most_common_finding"] == 3
     assert "shared cause" in causes["Admin policies"]["note"] and "base-adm-role" not in json.dumps(causes)
     assert causes["Missing guardrails"]["findings"] == {"no new IAM users": 3}
+
+
+def test_trust_targets_tell_anyone_from_stale_and_internal_trusts():
+    ev = ["a trusts anyone", "b trusts AROAQ3EGT6ODK4EXO3PTM", "c trusts 222222222222", "d trusts 999999999999"]
+    accounts = [{"id": "111111111111", "findings": [{"id": "external_trust", "status": "fail", "ev": ev}]},
+                {"id": "222222222222", "findings": []}]  # fmt: skip
+    t = insights._trust_targets({"accounts": accounts})
+    assert t == {"anyone": 1, "deleted_principal": 1, "own_account": 1, "other_account": 1}
