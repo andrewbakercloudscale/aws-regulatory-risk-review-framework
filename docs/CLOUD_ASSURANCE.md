@@ -234,7 +234,7 @@ Security services switched on, and the issues AWS itself reports being closed.
 | Security Hub off | `securityhub_off` | Medium | All | CIS 4.16 |
 | Inspector vulnerability scanning off | `inspector_off` | Medium | All | FSBP Inspector.1 |
 | Open high-severity GuardDuty findings | `guardduty_findings` | High | All |   |
-| Open critical Security Hub findings | `sh_critical_findings` | High | All |   |
+| Open critical Security Hub findings | `sh_critical_findings` | Critical | All |   |
 | High Security Hub findings open for more than 90 days | `sh_high_aged` | Medium | All |   |
 | Open IAM Access Analyzer external access findings | `external_access_findings` | High | All |   |
 | AWS Config rules out of compliance | `config_noncompliant` | Medium | All |   |
@@ -243,7 +243,7 @@ Security services switched on, and the issues AWS itself reports being closed.
 | GuardDuty protection plans off | `guardduty_partial` | Low | All | FSBP GuardDuty.5, FSBP GuardDuty.6 |
 | Security Hub without a security standard | `sh_standards_missing` | Low | All |   |
 | Inspector not scanning containers or functions | `inspector_partial` | Low | All | FSBP Inspector.2, FSBP Inspector.3 |
-| Open critical vulnerabilities | `vuln_critical` | High | All |   |
+| Open critical vulnerabilities | `vuln_critical` | Critical | All |   |
 | High vulnerabilities open for more than 30 days | `vuln_high_aged` | Medium | All |   |
 | Macie off where sensitive data is held | `macie_off` | Low | Sensitive data |   |
 

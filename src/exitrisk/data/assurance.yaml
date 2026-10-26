@@ -17,7 +17,7 @@
 # Which rules apply is chosen in the report (rulesets); this file is the full catalogue. Edit freely:
 # a check removed here disappears from the report; severities and areas can be changed without a
 # new scan. Bump the version when you do.
-version: 2026.10.2
+version: 2026.10.3
 
 points: {critical: 40, high: 15, medium: 5, low: 1}
 
@@ -557,7 +557,7 @@ checks:
     source: guardduty:ListFindings
   - id: sh_critical_findings
     area: detection
-    severity: high
+    severity: critical
     title: Open critical Security Hub findings
     why: AWS security checks report critical issues that are still open.
     fix: Resolve them, or suppress with a recorded risk acceptance.
@@ -629,7 +629,7 @@ checks:
     source: inspector2:BatchGetAccountStatus
   - id: vuln_critical
     area: detection
-    severity: high
+    severity: critical
     title: Open critical vulnerabilities
     why: Inspector reports critical software vulnerabilities on servers, images or functions.
     fix: Patch or rebuild the affected workloads; track to closure.

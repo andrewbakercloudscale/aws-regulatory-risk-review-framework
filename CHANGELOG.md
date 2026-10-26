@@ -21,6 +21,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   account, is not flagged when an RCP limits role assumption to the organisation (and the
   accounts it lets in). A trust policy of "*" narrowed by `aws:PrincipalArn` or
   `aws:PrincipalAccount` counts as trusting only those accounts.
+- Open critical Security Hub findings (`sh_critical_findings`) and open critical Inspector
+  vulnerabilities (`vuln_critical`) are now **critical** rules (were high), so an account with
+  either is rated Critical and counted under Critical findings. Assurance catalog 2026.10.3.
 - AI insights for the assurance report get the kinds of role trust (anyone, deleted principal,
   outside account) and each area's failing rules, and treat a shared deployment admin role as one
   role to narrow, not remove.
