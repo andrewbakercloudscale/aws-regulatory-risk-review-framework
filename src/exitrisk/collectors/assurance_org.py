@@ -199,15 +199,26 @@ def identity_center(session, region: str, account_ids: set[str], owner_emails: s
 
     def user_name(uid: str) -> str:
         if uid not in users:
-            u = ids.describe_user(IdentityStoreId=store_id, UserId=uid)
+            try:
+                u = ids.describe_user(IdentityStoreId=store_id, UserId=uid)
+            except ClientError as exc:  # removed from the directory but still assigned or in a group
+                if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+                    raise
+                u = {"DisplayName": f"deleted user {uid}"}
             users[uid] = u.get("DisplayName") or u.get("UserName") or uid
         return users[uid]
 
     def group_members(gid: str) -> list[str]:
         if gid not in members:
-            found = _pages(ids, "list_group_memberships", "GroupMemberships", IdentityStoreId=store_id, GroupId=gid)
-            members[gid] = [m["MemberId"]["UserId"] for m in found if "UserId" in (m.get("MemberId") or {})]
-            groups[gid] = ids.describe_group(IdentityStoreId=store_id, GroupId=gid).get("DisplayName", gid)
+            try:
+                found = _pages(ids, "list_group_memberships", "GroupMemberships", IdentityStoreId=store_id,
+                               GroupId=gid)  # fmt: skip
+                members[gid] = [m["MemberId"]["UserId"] for m in found if "UserId" in (m.get("MemberId") or {})]
+                groups[gid] = ids.describe_group(IdentityStoreId=store_id, GroupId=gid).get("DisplayName", gid)
+            except ClientError as exc:  # removed from the directory but still assigned
+                if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+                    raise
+                members[gid], groups[gid] = [], f"deleted group {gid}"
         return members[gid]
 
     def assignments(job: tuple[str, str]) -> tuple[str, list[dict]]:

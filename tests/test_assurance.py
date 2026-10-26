@@ -445,3 +445,51 @@ def test_access_denied_is_not_retried():
     with pytest.raises(ClientError):
         with_backoff(denied, sleep=lambda s: None)
     assert len(calls) == 1
+
+
+def test_many_buckets_are_read_in_parallel_without_sharing_a_context():
+    import time
+
+    buckets = [{"Name": f"b{i}", "CreationDate": "2024-01-01"} for i in range(40)]
+
+    def slow(**_kw):  # buckets overlap in time, as with real calls
+        time.sleep(0.01)
+        raise _denied("GetBucketVersioning")
+
+    clients = {"s3control": FakeClient({"get_public_access_block": {"PublicAccessBlockConfiguration": {}}}),
+               "s3": FakeClient({"list_buckets": {"Buckets": buckets}, "get_bucket_versioning": slow})}  # fmt: skip
+    ctx = _ctx(clients)
+    checks._run(ctx, next(t for t in checks.GLOBAL_TASKS if t[0] == "s3"), None)
+    out = ctx.r.finish()
+    assert not any("RuntimeError" in str(v) for v in out.values())
+    assert out["s3_account_bpa"]["status"] == "fail"
+
+
+def test_an_api_not_offered_to_the_account_in_a_region_is_not_an_issue():
+    def refused(**_kw):
+        raise ClientError({"Error": {"Code": "AccessDeniedException",
+                                     "Message": "Your account is not authorized to invoke this API operation."}},
+                          "ListGuardrails")  # fmt: skip
+
+    ctx = _ctx({"bedrock": FakeClient({"list_guardrails": refused})}, regions=("af-south-1",))
+    ctx.billed = lambda *_a: True
+    checks._run(ctx, next(t for t in checks.REGION_TASKS if t[0] == "bedrock-guardrails"), "af-south-1")
+    assert not ctx.issues
+
+
+def test_a_task_that_hits_a_server_error_runs_again(monkeypatch):
+    monkeypatch.setattr("exitrisk.aws_session.time.sleep", lambda _s: None)
+    calls = []
+
+    def flaky(**_kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ClientError({"Error": {"Code": "InternalFailure"}, "ResponseMetadata": {"HTTPStatusCode": 503}},
+                              "GetModelInvocationLoggingConfiguration")  # fmt: skip
+        return {"loggingConfig": {"textDataDeliveryEnabled": True}}
+
+    ctx = _ctx({"bedrock": FakeClient({"get_model_invocation_logging_configuration": flaky})})
+    ctx.billed = lambda *_a: True
+    checks._run(ctx, next(t for t in checks.REGION_TASKS if t[0] == "bedrock"), "eu-west-1")
+    assert len(calls) == 2 and not ctx.issues
+    assert ctx.r.finish()["bedrock_no_logging"]["status"] == "pass"

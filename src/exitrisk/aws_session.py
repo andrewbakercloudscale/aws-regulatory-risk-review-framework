@@ -16,7 +16,7 @@ from collections.abc import Callable
 import boto3
 import botocore.session
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectionClosedError, ConnectTimeoutError, ReadTimeoutError
 
 from .logging_config import get_logger
 
@@ -56,17 +56,37 @@ def is_throttle(exc: BaseException) -> bool:
     )
 
 
-def with_backoff(fn: Callable, *args, attempts: int = BACKOFF_ATTEMPTS, sleep: Callable = time.sleep, **kwargs):
-    """fn(*args, **kwargs), retried on throttling after 1, 2, 4 ... seconds (capped, with jitter)."""
+_TRANSIENT = (ConnectionClosedError, ConnectTimeoutError, ReadTimeoutError, TimeoutError)
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Throttling, a timeout, a dropped connection or an AWS 5xx: worth trying again."""
+    if isinstance(exc, _TRANSIENT) or is_throttle(exc):
+        return True
+    return isinstance(exc, ClientError) and exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) >= 500
+
+
+def with_backoff(
+    fn: Callable,
+    *args,
+    attempts: int = BACKOFF_ATTEMPTS,
+    transient: bool = False,
+    sleep: Callable | None = None,
+    **kwargs,
+):
+    """fn(*args, **kwargs), retried on throttling (and, with ``transient``, on timeouts, dropped
+    connections and 5xx) after 1, 2, 4 ... seconds, capped, with jitter."""
+    retry = is_transient if transient else is_throttle
     for attempt in range(attempts):
         try:
             return fn(*args, **kwargs)
-        except ClientError as exc:
-            if not is_throttle(exc) or attempt == attempts - 1:
+        except (ClientError, *_TRANSIENT) as exc:
+            if not retry(exc) or attempt == attempts - 1:
                 raise
             wait = min(BACKOFF_CAP, BACKOFF_BASE * 2**attempt) * random.uniform(0.5, 1.0)  # noqa: S311 (jitter)
-            log.info("throttled (%s), retrying in %.1fs", exc.response.get("Error", {}).get("Code", ""), wait)
-            sleep(wait)
+            code = exc.response.get("Error", {}).get("Code", "") if isinstance(exc, ClientError) else type(exc).__name__
+            log.info("%s, retrying in %.1fs", code, wait)
+            (sleep or time.sleep)(wait)
     raise AssertionError("unreachable")
 
 

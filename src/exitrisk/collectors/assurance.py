@@ -335,13 +335,26 @@ def _sso_label(name: str) -> str:
 # ---------------------------------------------------------------------------------- global tasks
 
 
+CREDENTIAL_REPORT_SECONDS = 60
+
+
 def _credential_report(iam) -> list[dict]:
-    deadline = time.monotonic() + 40
-    while iam.generate_credential_report().get("State") != "COMPLETE":
+    """The account's IAM credential report. IAM builds it on request, which can take a while in an
+    account with many users, and a report it just called complete can still be missing for a moment."""
+    deadline = time.monotonic() + CREDENTIAL_REPORT_SECONDS
+    wait = 1.0
+    while True:
+        if iam.generate_credential_report().get("State") == "COMPLETE":
+            try:
+                content = iam.get_credential_report()["Content"]
+                break
+            except ClientError as exc:
+                if _code(exc) not in ("ReportNotPresent", "ReportInProgress", "ReportExpired"):
+                    raise
         if time.monotonic() > deadline:
-            raise TimeoutError("the IAM credential report was not ready after 40 s")
-        time.sleep(2)
-    content = iam.get_credential_report()["Content"]
+            raise TimeoutError(f"the IAM credential report was not ready after {CREDENTIAL_REPORT_SECONDS} s")
+        time.sleep(wait)
+        wait = min(wait * 2, 8.0)
     text = content.decode("utf-8") if isinstance(content, bytes) else content
     return list(csv.DictReader(io.StringIO(text)))
 
@@ -595,7 +608,8 @@ def task_s3(ctx: Ctx) -> None:
         return out
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        details = list(pool.map(contextvars.copy_context().run, [one] * len(buckets), buckets)) if buckets else []
+        # A context copy each: one Context cannot be entered by two threads at once.
+        details = [f.result() for f in [pool.submit(contextvars.copy_context().run, one, b) for b in buckets]]
     measured = [b for b in details if b.get("public") is not None]
     if details and not measured:
         r.unknown("s3_public_bucket", "bucket policy status refused")
@@ -1603,6 +1617,14 @@ REGION_TASKS: list[tuple[str, tuple[str, ...], Callable, tuple[str, ...] | None]
 # Calls that fail this way mean the service is not offered (or not opted in) in that region.
 _NOT_HERE = ("OptInRequired", "UnrecognizedClientException", "InvalidClientTokenId", "EndpointConnectionError",
              "UnsupportedOperation", "InvalidAction", "SubscriptionRequiredException")  # fmt: skip
+# The account, not the caller, is refused: the API is not offered to it in that region (Bedrock
+# guardrails in af-south-1 answer AccessDeniedException this way). Not a missing permission.
+_ACCOUNT_NOT_AUTHORIZED = "your account is not authorized to invoke this api"
+TASK_ATTEMPTS = 3  # a task that fails on a timeout, a dropped connection or a 5xx runs again
+
+
+def _not_here(exc: BaseException, code: str) -> bool:
+    return code in _NOT_HERE or (code == "AccessDeniedException" and _ACCOUNT_NOT_AUTHORIZED in str(exc).lower())
 
 
 def _run(ctx: Ctx, task: tuple, region: str | None) -> None:
@@ -1612,11 +1634,11 @@ def _run(ctx: Ctx, task: tuple, region: str | None) -> None:
             ctx.r.na(cid, f"no {needs[0].replace('Amazon ', '').replace('AWS ', '')} billed in this account")
         return
     try:
-        fn(ctx) if region is None else fn(ctx, region)
+        with_backoff(fn, *((ctx,) if region is None else (ctx, region)), attempts=TASK_ATTEMPTS, transient=True)
     except (ClientError, BotoCoreError, TimeoutError) as exc:
         code = _code(exc)
         where = region or "global"
-        if region and region != "us-east-1" and code in _NOT_HERE:
+        if region and region != "us-east-1" and _not_here(exc, code):
             return  # the service is not offered there: nothing to measure, nothing failed
         code_, msg, hint = describe_exception(exc)
         for cid in checks:
