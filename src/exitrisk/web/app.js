@@ -18,6 +18,8 @@
   // ------------------------------------------------------------------ utils
   const $ = (sel) => document.querySelector(sel);
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // A label in mid-sentence: "Internet exposure" -> "internet exposure", but "AI services" and "IAM" keep their capitals.
+  const midSentence = (v) => { const t = String(v ?? ""); return /^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t; };
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const tierColor = (t) => css(`--t${t}`);
   const RATING_TIER = { Low: 1, Moderate: 2, Elevated: 3, High: 4, Critical: 5 };
@@ -1995,7 +1997,7 @@
     $("#asFindings").innerHTML = found.map((f) => `<li>${f}</li>`).join("");
     const acts = [];
     if (s.accounts_with_critical) acts.push(`Close the Critical findings first (section 3): they set an account's score to 80 or more.`);
-    if (worst) acts.push(`Give ${esc(worst.label.toLowerCase())} an owner and a plan: ${plural(worst.fails, "failing check")} across ${plural(worst.accounts_failing, "account")}.`);
+    if (worst) acts.push(`Give ${esc(midSentence(worst.label))} an owner and a plan: ${plural(worst.fails, "failing check")} across ${plural(worst.accounts_failing, "account")}.`);
     if (toFix) acts.push(`Confirm the proposed owners in section 5 and apply the exported tag changes.`);
     if (s.coverage < 95) acts.push(`Grant the missing read permissions so every check is measured (Check access lists them).`);
     acts.push("Run this report monthly and keep the evidence file (section 7) with the risk register.");
@@ -2105,7 +2107,7 @@
       <div class="as-rule-body">
         <p><strong>Why it matters.</strong> ${esc(x.why)}</p>
         <p><strong>Fix.</strong> ${esc(x.fix)}</p>
-        <p class="small muted">${esc(x.refs.join(", ") || "No public control reference")} · applies to ${esc((AS_SCOPE[x.scope] || "").toLowerCase())} · rule ${esc(x.id)}${x.severity !== x.catalog_severity ? ` · rated ${esc(x.severity)} in this ruleset (catalogue: ${esc(x.catalog_severity)})` : ""}</p>
+        <p class="small muted">${esc(x.refs.join(", ") || "No public control reference")} · applies to ${esc(midSentence(AS_SCOPE[x.scope]))} · rule ${esc(x.id)}${x.severity !== x.catalog_severity ? ` · rated ${esc(x.severity)} in this ruleset (catalogue: ${esc(x.catalog_severity)})` : ""}</p>
         <table class="data compact"><thead><tr><th>Account</th><th class="num-cell">Items</th><th>Examples</th></tr></thead><tbody>${
           x.accounts.slice(0, 15).map((acc) => `<tr><td>${esc(acc.name)}</td><td class="num-cell">${num(acc.n)}</td><td class="small">${esc(acc.ev.join(", ") || EMPTY)}</td></tr>`).join("")
         }</tbody></table>${x.accounts.length > 15 ? `<p class="muted small">and ${plural(x.accounts.length - 15, "more account")}.</p>` : ""}
@@ -2541,7 +2543,7 @@
       shown.map((r) => `<tr class="${r.meets_target ? "" : "miss"}"><td><strong>${esc(r.service)}</strong><div class="muted small">${plural(r.accounts, "account")}</div></td><td class="num-cell">${money(r.monthly_spend)}</td><td class="small">${esc(r.failover_label)}</td>` +
         order.map((k) => `<td class="nowrap${k === rec.strategy ? " chosen" : ""}">${esc(r.strategies[k].rto)}</td>`).join("") +
         `<td class="nowrap chosen">${esc(r.strategies[rec.strategy].rpo)}</td>` +
-        `<td>${r.meets_target ? '<span class="ok-tag">Yes</span>' : `<span class="badge" style="--dot:${tierColor(5)}">No</span>${r.failover === "missing" ? '<div class="muted small">not in the second region</div>' : r.needs ? `<div class="muted small">needs ${esc(r.needs.toLowerCase())}</div>` : '<div class="muted small">needs a redesign</div>'}`}</td></tr>`).join("") + "</tbody>";
+        `<td>${r.meets_target ? '<span class="ok-tag">Yes</span>' : `<span class="badge" style="--dot:${tierColor(5)}">No</span>${r.failover === "missing" ? '<div class="muted small">not in the second region</div>' : r.needs ? `<div class="muted small">needs ${esc(midSentence(r.needs))}</div>` : '<div class="muted small">needs a redesign</div>'}`}</td></tr>`).join("") + "</tbody>";
     const more = rows.length > MR_REC_ROWS && !PRINT;
     $("#btnMrRecMore").hidden = !more;
     $("#btnMrRecMore").textContent = state.mrRecAll ? "Show fewer" : `Show all ${num(rows.length)}`;
@@ -2856,11 +2858,11 @@
     $("#etaElapsed").textContent = spanText(s.elapsed_seconds);
     $("#etaIssues").textContent = String(s.issues || 0);
     $("#etaLeft").innerHTML = !e ? "not yet" : left == null ? "estimating…"
-      : `${spanText(left)}${e.then ? ` <small>then ${esc(e.then.toLowerCase())}</small>` : ""}`;
+      : `${spanText(left)}${e.then ? ` <small>then ${esc(midSentence(e.then))}</small>` : ""}`;
     $("#etaAt").textContent = left == null ? (e ? `after ${Math.min(e.total, Math.max(e.parallel || 1, 3))} accounts` : "not known yet")
       : new Date(Date.now() + left * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     box.title = e ? `${e.step}: ${e.done} of ${e.total} accounts. The time left is from the pace so far.` : "";
-    $("#btnScanRunning").title = left == null ? "Show the running scan" : `About ${spanText(left)} left in ${e.step.toLowerCase()}`;
+    $("#btnScanRunning").title = left == null ? "Show the running scan" : `About ${spanText(left)} left in ${midSentence(e.step)}`;
   }
 
   function pollScan(id) {
@@ -2894,6 +2896,7 @@
         $("#scanMsg").textContent = msg;
         $("#scanMsg").title = msg;
         $("#scanRunPct").textContent = `${s.pct}%`;
+        $("#btnScanRunning").style.setProperty("--pct", `${s.pct}%`);
         showEta(s);
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         state.runningScan = null;

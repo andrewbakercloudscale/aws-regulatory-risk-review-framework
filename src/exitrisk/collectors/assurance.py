@@ -21,6 +21,7 @@ import csv
 import fnmatch
 import io
 import json
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -296,8 +297,13 @@ def is_admin(doc: dict) -> bool:
     return False
 
 
+# IAM shows a trusted role or user that was deleted as its unique id (AROA..., AIDA...): nobody can
+# assume the role through it, so it is a stale entry to clean up, not access from outside.
+_DELETED_PRINCIPAL = re.compile(r"^A(ROA|IDA|GPA)[A-Z0-9]{12,}$")
+
+
 def _trusted_accounts(doc: dict) -> list[tuple[str, bool]]:
-    """(account id or "*", has external id) for each AWS principal an assume-role policy trusts."""
+    """(account id, "*" or "deleted"; has external id) for each AWS principal an assume-role policy trusts."""
     out = []
     for st in _listify(doc.get("Statement")):
         if not isinstance(st, dict) or st.get("Effect") != "Allow":
@@ -312,6 +318,8 @@ def _trusted_accounts(doc: dict) -> list[tuple[str, bool]]:
         for p in aws:
             p = str(p)
             acct = "*" if p == "*" else p.split(":")[4] if p.startswith("arn:") and len(p.split(":")) > 4 else p
+            if _DELETED_PRINCIPAL.match(p):
+                acct = "deleted"
             if not org_bound:
                 out.append((acct, external_id))
     return out
@@ -455,7 +463,7 @@ def _authorization(ctx: Ctx, d: dict) -> None:
             admins.append(f"IAM user {u['UserName']}")
         humans.append((f"IAM user {u['UserName']}", all_docs))
 
-    external, vendors, unused, support = [], [], [], []
+    external, vendors, unused, support, stale_trust = [], [], [], [], []
     admin_roles, admin_profiles = set(), set()
     for role in d["RoleDetailList"]:
         name, path = role["RoleName"], role.get("Path", "/")
@@ -477,6 +485,9 @@ def _authorization(ctx: Ctx, d: dict) -> None:
         for acct, external_id in _trusted_accounts(_doc(role.get("AssumeRolePolicyDocument"))):
             if acct == ctx.account_id or acct in ctx.org_ids:
                 continue
+            if acct == "deleted":
+                stale_trust.append(f"{name} trusts a deleted role or user")
+                continue
             if acct == "*" or not external_id:
                 external.append(f"{name} trusts {'anyone' if acct == '*' else acct}")
             else:
@@ -490,6 +501,7 @@ def _authorization(ctx: Ctx, d: dict) -> None:
     r.fail("admin_policy", local_admin + inline_admin)
     r.fail("user_direct_policies", direct)
     r.fail("external_trust", sorted(set(external)))
+    r.fact("stale_trust", sorted(set(stale_trust)))
     r.fail("vendor_roles", sorted(set(vendors)))
     r.fail("roles_unused", unused)
     groups_support = [

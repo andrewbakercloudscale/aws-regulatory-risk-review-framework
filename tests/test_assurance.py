@@ -95,6 +95,10 @@ def test_policy_reading():
         ]
     }  # fmt: skip
     assert checks._trusted_accounts(trust) == [("999999999999", False), ("888888888888", True)]
+    stale = {
+        "Statement": [{"Effect": "Allow", "Principal": {"AWS": "AROAQ3EGT6ODK4EXO3PTM"}, "Action": "sts:AssumeRole"}]
+    }
+    assert checks._trusted_accounts(stale) == [("deleted", False)]
     cover = checks.s3_write_cover(
         {
             "AdvancedEventSelectors": [
