@@ -574,11 +574,11 @@ checks:
   - id: external_access_findings
     area: detection
     severity: high
-    title: Open IAM Access Analyzer external access findings
-    why: Resources are shared outside the account and nobody has reviewed it.
-    fix: Remove the sharing, or archive the finding as intended.
+    title: Open IAM Access Analyzer findings for access from outside the organisation
+    why: Resources are public or shared with accounts outside the organisation and nobody has reviewed it. Access from the organisation's own accounts and Identity Center sign-in, which an account-scoped analyzer also reports, is left out.
+    fix: Remove the sharing, or archive the finding as intended. An organisation-scoped analyzer reports only outside access.
     refs: []
-    source: access-analyzer:ListFindingsV2
+    source: access-analyzer:ListFindings
   - id: config_noncompliant
     area: detection
     severity: medium

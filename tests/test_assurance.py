@@ -531,3 +531,14 @@ def test_drivers_rank_rules_by_what_fixing_them_takes_off_the_score():
         47.5 - 0.5 * (100 * (1 - 0.85 * 0.99) + 15), 1
     )
     assert d["fixed"][0]["top"] == 2 and d["fixed"][0]["ratings"]["Low"] == 2
+
+
+def test_access_findings_from_the_organisation_are_not_outside_access():
+    org = {"222222222222"}
+    sso = {"principal": {"Federated": "arn:aws:iam::111111111111:saml-provider/AWSSSO_x_DO_NOT_DELETE"}}
+    sibling = {"principal": {"AWS": "arn:aws:iam::222222222222:root"}}
+    partner = {"principal": {"AWS": "arn:aws:iam::999999999999:role/x"}}
+    bound = {"principal": {"AWS": "*"}, "condition": {"aws:PrincipalOrgID": "o-1"}}
+    assert not any(checks.outside_org_finding(f, "111111111111", org) for f in (sso, sibling, bound))
+    assert checks.outside_org_finding(partner, "111111111111", org)
+    assert checks.outside_org_finding({"isPublic": True, "principal": {"AWS": "*"}}, "111111111111", org)

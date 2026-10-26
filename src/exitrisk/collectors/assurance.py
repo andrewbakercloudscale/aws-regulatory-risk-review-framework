@@ -1476,6 +1476,32 @@ def task_inspector(ctx: Ctx, region: str) -> None:
                                         "firstObservedAt": [{"endInclusive": cutoff}]}))  # fmt: skip
 
 
+def _principals(f: dict) -> list[tuple[str, str]]:
+    return [(kind, str(v)) for kind, vals in (f.get("principal") or {}).items() for v in _listify(vals)]
+
+
+def _who(f: dict) -> str:
+    return "public" if f.get("isPublic") else ", ".join(v for _, v in _principals(f))[:120]
+
+
+def outside_org_finding(f: dict, account_id: str, org_ids: set[str]) -> bool:
+    """An account-scoped analyzer reports access from every other account, the organisation's own included,
+    and Identity Center's SAML sign-in to its permission-set roles. Only public access, or a principal in an
+    account outside the organisation, is access from outside."""
+    if f.get("isPublic"):
+        return True
+    if "aws:principalorgid" in json.dumps(f.get("condition") or {}).lower():
+        return False
+    own = org_ids | {account_id}
+    for kind, p in _principals(f):
+        if kind == "Service":
+            continue
+        acct = re.search(r"\b(\d{12})\b", p)
+        if p == "*" or not acct or acct.group(1) not in own:
+            return True
+    return False
+
+
 def task_access_analyzer(ctx: Ctx, region: str) -> None:
     c = ctx.client("accessanalyzer", region)
     analyzers = [
@@ -1491,9 +1517,12 @@ def task_access_analyzer(ctx: Ctx, region: str) -> None:
     ctx.r.ok("access_analyzer_off")
     found = []
     for a in analyzers:
-        found += _pages(c, "list_findings_v2", "findings", cap=FINDING_PAGES * 100, analyzerArn=a["arn"],
+        # ListFindings (not V2) carries the principal, which says whether the access is from outside.
+        found += _pages(c, "list_findings", "findings", cap=FINDING_PAGES * 100, analyzerArn=a["arn"],
                         filter={"status": {"eq": ["ACTIVE"]}})  # fmt: skip
-    ctx.r.fail("external_access_findings", [f"{f.get('resource', f.get('id'))} ({region})" for f in found])
+    outside = [f for f in found if outside_org_finding(f, ctx.account_id, ctx.org_ids)]
+    ctx.r.fail("external_access_findings", [f"{f.get('resource', f.get('id'))} ({region}): {_who(f)}" for f in outside])
+    ctx.r.fact("access_findings_in_org", len(found) - len(outside), region)
 
 
 def task_cloudformation(ctx: Ctx, region: str) -> None:

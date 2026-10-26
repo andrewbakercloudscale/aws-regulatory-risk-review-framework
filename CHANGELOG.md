@@ -21,6 +21,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   account, is not flagged when an RCP limits role assumption to the organisation (and the
   accounts it lets in). A trust policy of "*" narrowed by `aws:PrincipalArn` or
   `aws:PrincipalAccount` counts as trusting only those accounts.
+- **Access Analyzer findings** count only public access or access from accounts outside the
+  organisation. An account-scoped analyzer also reports the organisation's own accounts and
+  Identity Center sign-in to permission-set roles; those are left out (counted as a fact).
 - Cloud Assurance Report: **What drives the score** lists the rules that add most to the score
   (points off if each were fixed everywhere) and the score and ratings once the top 2, 5 and 10
   are fixed. The AI insights get the same figures.
