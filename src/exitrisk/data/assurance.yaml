@@ -353,7 +353,7 @@ checks:
   - id: external_trust
     area: access
     severity: high
-    title: Roles anyone outside the organisation can assume
+    title: Roles that accounts outside the organisation can assume
     why: A role trusts an AWS account outside the organisation (or anyone) without an external ID, and no resource control policy limits role assumption to the organisation.
     fix: Remove the trust, or require an external ID and limit the role's permissions.
     refs: []

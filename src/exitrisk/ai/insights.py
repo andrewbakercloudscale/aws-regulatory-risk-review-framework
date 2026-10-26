@@ -57,6 +57,8 @@ control as absent.
 narrowing who can assume it and what it may do, not removing it.
 - Say a role can be assumed by anyone only for the count in trust_targets.anyone; trusts of a deleted role \
 or user are stale entries to clean up, and trusts of the bank's own accounts are internal, not outside access.
+- summary, areas, failing_rules, common_causes and trust_targets cover every account checked; only the \
+account list is cut to the riskiest ones.
 - Write for executives: short, specific, plain English. No em dashes or en dashes.
 - Reply with one JSON object only, exactly in the requested shape, with no text before or after it."""
 

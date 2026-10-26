@@ -195,7 +195,7 @@ Who holds administrator rights, root and long-lived credentials, segregation of 
 | Custom policies granting full administrator access | `admin_policy` | High | All | CIS 1.16, FSBP IAM.1 |
 | Permissions attached directly to IAM users | `user_direct_policies` | Low | All | CIS 1.15, FSBP IAM.2 |
 | Too many people with administrator access | `admin_holders` | Medium | All |   |
-| Roles anyone outside the organisation can assume | `external_trust` | High | All |   |
+| Roles that accounts outside the organisation can assume | `external_trust` | High | All |   |
 | Roles unused for 90 days or more | `roles_unused` | Low | All |   |
 | IAM Access Analyzer not watching for external access | `access_analyzer_off` | Medium | All | CIS 1.20 |
 | Missing organisation guardrails (SCPs) | `scp_guardrails` | Medium | All |   |
