@@ -460,6 +460,18 @@
     return `<div class="tile tone-${tone}${provisional ? " is-provisional" : ""}"><div class="tile-label">${esc(label)}</div><div class="tile-value">${esc(String(value).replace(/person-/g, "person\u2011"))}${provisional ? ' <span class="prov-tag" title="Uses default answers: answer the questions in this report to firm it up">Provisional</span>' : ""}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}</div>`;
   }
 
+  // The assurance ratings (assurance.py RATINGS): a score of 0 to 100, higher is worse.
+  const RISK_BANDS = [["Low", 0, 20, "var(--good)"], ["Medium", 20, 50, "var(--sev-warning)"], ["High", 50, 80, "var(--sev-error)"], ["Critical", 80, 100, "var(--sev-critical)"]];
+  // A red-amber-green scale under a score tile, with a marker at the score.
+  function riskBar(score) {
+    const at = Math.max(0, Math.min(100, Number(score) || 0));
+    return `<div class="risk-bar" role="img" aria-label="Score ${num(at)} on a scale of Low 0 to 20, Medium 20 to 50, High 50 to 80, Critical 80 to 100">
+      <div class="risk-bands">${RISK_BANDS.map(([n, lo, hi, c]) => `<span style="flex:${hi - lo};background:${c}" title="${n}: ${lo} to ${hi}"></span>`).join("")}</div>
+      <i class="risk-mark" style="left:${at}%"></i>
+      <div class="risk-labels">${RISK_BANDS.map(([n, lo, hi]) => `<span style="flex:${hi - lo}"${at >= lo && (at < hi || hi === 100) ? ' class="on"' : ""}>${n}</span>`).join("")}</div>
+    </div>`;
+  }
+
   // "team of 128 full-time people": capacity is headcount working in parallel, not years.
   const teamSize = (fte) => `team of ${num(fte, Number.isInteger(fte) ? 0 : 1)} full-time people`;
 
@@ -2003,12 +2015,12 @@
     acts.push("Run this report monthly and keep the evidence file (section 7) with the risk register.");
     $("#asActions").innerHTML = acts.map((a) => `<li>${a}</li>`).join("");
     $("#asTiles").innerHTML = [
-      tile("Assurance risk score", `${num(s.score)}/100`, `${s.rating} · by spend`),
+      tile("Assurance risk score", `${num(s.score)}/100`, `${s.rating} · higher is worse · weighted by spend`).replace(/<\/div>$/, `${riskBar(s.score)}</div>`),
       tile("High/critical accounts", num(hi), `of ${num(s.accounts)} checked`),
       tile("Critical findings", num(s.fails.critical), `${num(s.fails.high)} high · ${num(s.fails.medium)} medium · ${num(s.fails.low)} low`),
-      tile("Checks measured", pct(s.coverage, 0), "of the applicable checks"),
+      tile("Checks measured", pct(s.coverage, 0), "of the applicable checks; the rest are under Not measured in section 2"),
       tile("Rules applied", num(r.ruleset.rules), r.ruleset.custom ? "custom selection" : r.ruleset.name),
-      tile("Owners to fix", num(toFix), `${num(own.verified || 0)} verified · ${num(own.unverified || 0)} unverified`),
+      tile("Accounts without a known owner", num(toFix), `${num(own.missing || 0)} with no owner tag · ${num(own["not found"] || 0)} owner not in the directory · ${num(own.unverified || 0)} more tagged with a name, not an email`),
     ].join("");
     $("#asAreas").innerHTML = `<thead><tr><th>Area</th><th class="as-hide-print">What it covers</th><th class="num-cell">Rules</th><th>Pass rate</th><th class="num-cell">Failing checks</th><th class="num-cell">Accounts failing</th><th class="num-cell">Not measured</th></tr></thead><tbody>${
       r.areas.map((a) => {

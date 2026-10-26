@@ -172,6 +172,12 @@ figure { margin: 0; }
 .tile-label { font-size: 12.5px; font-weight: 600; color: color-mix(in srgb, var(--tone) 55%, var(--ink-2)); }
 .tile-value { font-size: 26px; font-weight: 680; letter-spacing: -0.02em; line-height: 1.15; margin: 6px 0 4px; }
 .tile-sub { font-size: 12px; color: var(--muted); }
+.risk-bar { position: relative; margin-top: 10px; }
+.risk-bands { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; }
+.risk-mark { position: absolute; top: -4px; width: 3px; height: 16px; margin-left: -1.5px; background: var(--ink); border-radius: 2px; box-shadow: 0 0 0 2px var(--surface); }
+.risk-labels { display: flex; gap: 2px; margin-top: 4px; font-size: 11px; color: var(--muted); }
+.risk-labels span { text-align: center; white-space: nowrap; overflow: hidden; }
+.risk-labels span.on { color: var(--ink); font-weight: 700; }
 .narrative ul { margin: 0; padding-left: 18px; }
 .narrative li { margin: 4px 0; font-size: 14.5px; }
 
