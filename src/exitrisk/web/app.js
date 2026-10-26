@@ -1621,6 +1621,12 @@
       if (!ready) $(id).checked = false;
       else { try { $(id).checked = localStorage.getItem(LS_AI_SCAN + suffix) === "1"; } catch { /* ignore */ } }
     }
+    // The report on screen is the one the analyst is working on: its AI insights are ticked for them
+    // (and the assurance checks the Cloud Assurance Report needs). Not the exit AI review: it forces a
+    // dependency scan of 5 to 40 minutes, so that stays the analyst's choice.
+    const own = { multiregion: "#sAiMr", assurance: "#sAiAs" }[document.body.dataset.view];
+    if (ready && own) $(own).checked = true;
+    if (document.body.dataset.view === "assurance") $("#sAssurance").checked = true;
     // A review of billing alone sees spend, not resources or integrations: it comes with a dependency scan.
     if ($("#sAi").checked) needDeepScan();
     if ($("#sAiAs").checked) $("#sAssurance").checked = true;
@@ -1921,7 +1927,16 @@
     $("#asEmpty").hidden = !show || r.available;
     $("#asContent").hidden = !show || !r.available;
     if (!r.available) {
-      $("#asEmptyText").textContent = r.reason;
+      // A bookmark or the scan picker can land on an older scan: point at the newest one that has the checks.
+      const withChecks = (state.scans || []).find((s) => s.assurance && s.id !== state.scanId);
+      const running = state.runningScan ? " A scan is running now; it opens here when it finishes." : "";
+      $("#asEmptyText").textContent = r.reason + running;
+      $("#btnAsOpen").hidden = !withChecks;
+      if (withChecks) {
+        $("#btnAsOpen").textContent = `Open the scan of ${fmtDate(withChecks.created_at)} with the checks`;
+        $("#btnAsOpen").dataset.scan = withChecks.id;
+      }
+      $("#btnAsScan").classList.toggle("primary", !withChecks);
       if (show && PRINT) document.body.dataset.ready = "1";
       return;
     }
@@ -2176,6 +2191,7 @@
   function bindAssurance() {
     $("#btnAsRetry").addEventListener("click", () => loadAssurance());
     $("#btnAsLog").addEventListener("click", () => $("#btnLogs").click());
+    $("#btnAsOpen").addEventListener("click", (e) => { $("#scanSelect").value = e.currentTarget.dataset.scan; $("#scanSelect").dispatchEvent(new Event("change")); });
     $("#btnAsScan").addEventListener("click", () => { openScanDialog().then(() => { $("#sAssurance").checked = true; $("#sAssurance").dispatchEvent(new Event("change")); }); });
     $("#btnAsDemo").addEventListener("click", () => $("#btnDemo").click());
     $("#asRuleset").addEventListener("change", (e) => {
