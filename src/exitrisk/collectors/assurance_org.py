@@ -23,6 +23,8 @@ log = get_logger("assurance")
 
 ADMIN_ARN = "arn:aws:iam::aws:policy/AdministratorAccess"
 WORKERS = 8
+# Trusted Advisor's API allows only a few requests a second: fewer threads, so backoff is rarely needed.
+TA_WORKERS = 2
 # Guardrails a regulated organisation is expected to set with SCPs: the action an SCP should deny
 # and what it protects. A Deny with a condition (an exemption for the platform role) still counts.
 GUARDRAILS = {
@@ -149,7 +151,7 @@ def trusted_advisor(session, account_ids: set[str]) -> dict:
         )  # fmt: skip
         return rec, found
 
-    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=TA_WORKERS) as pool:
         for rec, found in pool.map(accounts_of, recs):
             for f in found:
                 aid = f.get("accountId")

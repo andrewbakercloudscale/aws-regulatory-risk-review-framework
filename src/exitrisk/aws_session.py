@@ -8,11 +8,15 @@ tool never reads, stores or logs the keys themselves.
 
 from __future__ import annotations
 
+import random
 import threading
+import time
+from collections.abc import Callable
 
 import boto3
 import botocore.session
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from .logging_config import get_logger
 
@@ -28,6 +32,42 @@ BOTO_CONFIG = Config(
     max_pool_connections=64,
     user_agent_extra="aws-regulatory-risk-review-framework",
 )
+
+
+# Throttling that botocore's own retries miss: some services (Trusted Advisor) answer 429 with a
+# combined code such as "ThrottlingException, TooManyRequestsException", which matches none of its
+# known codes, so the call fails at once. with_backoff retries those with exponential backoff.
+_THROTTLE_MARKS = ("throttl", "toomanyrequests", "requestlimitexceeded", "slowdown", "ratelimit")
+BACKOFF_ATTEMPTS = 7
+BACKOFF_BASE = 1.0
+BACKOFF_CAP = 30.0
+
+
+def is_throttle(exc: BaseException) -> bool:
+    if not isinstance(exc, ClientError):
+        return False
+    err = exc.response.get("Error", {})
+    code = str(err.get("Code", "")).replace(" ", "").lower()
+    status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return (
+        status == 429
+        or any(m in code for m in _THROTTLE_MARKS)
+        or "too many requests" in str(err.get("Message", "")).lower()
+    )
+
+
+def with_backoff(fn: Callable, *args, attempts: int = BACKOFF_ATTEMPTS, sleep: Callable = time.sleep, **kwargs):
+    """fn(*args, **kwargs), retried on throttling after 1, 2, 4 ... seconds (capped, with jitter)."""
+    for attempt in range(attempts):
+        try:
+            return fn(*args, **kwargs)
+        except ClientError as exc:
+            if not is_throttle(exc) or attempt == attempts - 1:
+                raise
+            wait = min(BACKOFF_CAP, BACKOFF_BASE * 2**attempt) * random.uniform(0.5, 1.0)  # noqa: S311 (jitter)
+            log.info("throttled (%s), retrying in %.1fs", exc.response.get("Error", {}).get("Code", ""), wait)
+            sleep(wait)
+    raise AssertionError("unreachable")
 
 
 class ClientCache:

@@ -402,3 +402,46 @@ def test_old_findings_age_is_read_from_strings():
     now = datetime.now(timezone.utc)
     assert checks._age_days((now - timedelta(days=10)).isoformat(), now) == pytest.approx(10, abs=0.01)
     assert checks._age_days("N/A", now) is None
+
+
+def test_combined_throttle_codes_are_retried_with_backoff():
+    from botocore.exceptions import ClientError
+
+    from exitrisk.aws_session import is_throttle, with_backoff
+
+    def throttled(code="ThrottlingException, TooManyRequestsException", status=429):
+        err = {"Error": {"Code": code, "Message": "Too Many Requests"}, "ResponseMetadata": {"HTTPStatusCode": status}}
+        return ClientError(err, "ListOrganizationRecommendations")
+
+    assert is_throttle(throttled())
+    assert not is_throttle(ClientError({"Error": {"Code": "AccessDeniedException"}}, "op"))
+    calls, waits = [], []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise throttled()
+        return "ok"
+
+    assert with_backoff(flaky, sleep=waits.append) == "ok"
+    assert len(calls) == 3 and len(waits) == 2 and waits[0] <= 1.0 < waits[1] * 2 + 1
+    calls.clear()
+    with pytest.raises(ClientError):
+        with_backoff(lambda: calls.append(1) or (_ for _ in ()).throw(throttled()), attempts=3, sleep=lambda s: None)
+    assert len(calls) == 3
+
+
+def test_access_denied_is_not_retried():
+    from botocore.exceptions import ClientError
+
+    from exitrisk.aws_session import with_backoff
+
+    calls = []
+
+    def denied():
+        calls.append(1)
+        raise ClientError({"Error": {"Code": "AccessDeniedException"}}, "op")
+
+    with pytest.raises(ClientError):
+        with_backoff(denied, sleep=lambda s: None)
+    assert len(calls) == 1

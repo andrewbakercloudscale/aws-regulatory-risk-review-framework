@@ -34,7 +34,7 @@ import boto3
 import yaml
 from botocore.exceptions import BotoCoreError, ClientError
 
-from ..aws_session import BOTO_CONFIG, ClientCache
+from ..aws_session import BOTO_CONFIG, ClientCache, with_backoff
 from ..issues import Issue, describe_exception
 from ..logging_config import get_logger
 from . import baseline
@@ -206,7 +206,12 @@ class Ctx:
 
 
 def _pages(client, op: str, key: str, cap: int | None = None, **kwargs) -> list:
-    """Every item under ``key`` across the pages of ``op``, stopping after ``cap`` items."""
+    """Every item under ``key`` across the pages of ``op``, stopping after ``cap`` items. Throttling
+    that botocore does not recognise is retried with backoff (with_backoff)."""
+    return with_backoff(_read_pages, client, op, key, cap, **kwargs)
+
+
+def _read_pages(client, op: str, key: str, cap: int | None, **kwargs) -> list:
     out: list = []
     if client.can_paginate(op):
         for page in client.get_paginator(op).paginate(**kwargs):
