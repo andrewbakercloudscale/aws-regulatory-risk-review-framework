@@ -1437,7 +1437,7 @@
       const started = Date.parse(run.started_at || "") || state.aiSeen || (state.aiSeen = Date.now());
       el.innerHTML = `
         <div class="card-head ai-head"><h3>${AI_ICON}AI review running</h3><span class="no-print"><button type="button" class="btn danger" id="btnAiStop">Stop</button></span></div>
-        <div class="busy" role="status" aria-live="polite" data-started="${started}"><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text">${esc(run.stage)}${run.pass ? ` (pass ${run.pass} of 3)` : ""}</span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar${frac == null ? "" : " det"}" aria-hidden="true"><i${frac == null ? "" : ` style="width:${Math.round(frac * 100)}%"`}></i></div><div class="busy-sub">${esc(run.message || "")}${run.usage?.calls ? ` · ${plural(run.usage.calls, "call")} so far` : ""}</div></div>
+        <div class="busy" role="status" aria-live="polite" data-started="${started}"><div class="busy-head">${spinner()}<span class="busy-text">${esc(run.stage)}${run.pass ? ` (pass ${run.pass} of 3)` : ""}</span><span class="busy-time" aria-hidden="true"></span></div><div class="busy-bar${frac == null ? "" : " det"}" aria-hidden="true"><i${frac == null ? "" : ` style="width:${Math.round(frac * 100)}%"`}></i></div><div class="busy-sub">${esc(run.message || "")}${run.usage?.calls ? ` · ${plural(run.usage.calls, "call")} so far` : ""}</div></div>
         ${state.aiLost ? `<p class="warn-text">${esc(state.aiLost)}</p>` : ""}
         <p class="hint">Keep reading the report: this section fills in when the review finishes, usually 5 to 40 minutes.</p>`;
       tickBusy();
@@ -2567,7 +2567,7 @@
     const head = (t, btns = "") => `<div class="card-head ai-head"><h3>${AI_ICON}${esc(t)}</h3><span class="no-print ai-actions">${btns}</span></div>`;
     if (run?.status === "running") {
       el.innerHTML = head("AI insights running", '<button type="button" class="btn danger" data-ins="stop">Stop</button>') +
-        `<div class="busy" role="status" aria-live="polite"><div class="busy-head"><span class="spin" aria-hidden="true"></span><span class="busy-text">${esc(run.stage)}</span></div><div class="busy-sub">${esc(run.message || "")}</div></div>`;
+        `<div class="busy" role="status" aria-live="polite"><div class="busy-head">${spinner()}<span class="busy-text">${esc(run.stage)}</span></div><div class="busy-sub">${esc(run.message || "")}</div></div>`;
     } else if (!res) {
       const ready = aiReady();
       if (PRINT) { el.hidden = true; return; }
@@ -2927,7 +2927,7 @@
 
   // A loading panel for content areas (the OU list): same look as busy(), built in place.
   function busyPanel(title, sub) {
-    return `<div class="busy" role="status" aria-live="polite" data-started="${Date.now()}"><div class="busy-head"><span class="spin" aria-hidden="true"></span><span>${esc(title)}</span><span class="busy-time" aria-hidden="true">0s</span></div>${sub ? `<p class="busy-sub">${esc(sub)}</p>` : ""}<div class="busy-bar" aria-hidden="true"><i></i></div></div>`;
+    return `<div class="busy" role="status" aria-live="polite" data-started="${Date.now()}"><div class="busy-head">${spinner()}<span>${esc(title)}</span><span class="busy-time" aria-hidden="true">0s</span></div>${sub ? `<p class="busy-sub">${esc(sub)}</p>` : ""}<div class="busy-bar" aria-hidden="true"><i></i></div></div>`;
   }
 
   // Seconds waited so far, on every visible loading panel: shows it is alive even with reduced motion.
@@ -3151,6 +3151,13 @@
         ${c.needs && c.status !== "ok" && c.status !== "skip" ? `<span class="n">Missing: ${c.needs.split(", ").map((a) => `<code>${esc(a)}</code>`).join(" ")}</span>` : ""}</li>`;
   }
 
+  // Progress lists are redrawn on every update, which would restart a spinner at 0° each time and make it
+  // flicker. A negative delay taken from the clock puts each new spinner at the angle the old one had
+  // reached (1.6s is a whole number of turns at both the normal and the reduced-motion speed).
+  function spinner() {
+    return `<span class="spin" aria-hidden="true" style="animation-delay:-${Math.round(performance.now() % 1600)}ms"></span>`;
+  }
+
   async function runAccessCheck() {
     $("#btnAccessRun").disabled = true;
     $("#aChecks").innerHTML = "";
@@ -3174,7 +3181,7 @@
       // The step being checked goes first, so it stays in view; the finished ones follow, then the rest.
       const order = [current, ...steps.filter((st) => done[st.id]), ...steps.filter((st) => !done[st.id] && st !== current)].filter(Boolean);
       $("#aChecks").innerHTML = order.map((st) => done[st.id] ? checkRow(done[st.id])
-        : st === current ? `<li class="pending"><span class="ic"><span class="spin" aria-hidden="true"></span></span><strong>${esc(st.label)}</strong><span class="d">${prog[st.id] ? `${num(prog[st.id].done)} of ${num(prog[st.id].total)} accounts checked` : "Checking…"}</span>${prog[st.id] ? `<span class="meter" aria-hidden="true"><i style="width:${(100 * prog[st.id].done / prog[st.id].total).toFixed(1)}%"></i></span>` : ""}</li>`
+        : st === current ? `<li class="pending"><span class="ic">${spinner()}</span><strong>${esc(st.label)}</strong><span class="d">${prog[st.id] ? `${num(prog[st.id].done)} of ${num(prog[st.id].total)} accounts checked` : "Checking…"}</span>${prog[st.id] ? `<span class="meter" aria-hidden="true"><i style="width:${(100 * prog[st.id].done / prog[st.id].total).toFixed(1)}%"></i></span>` : ""}</li>`
         : `<li class="wait"><span class="ic" aria-hidden="true">·</span><strong>${esc(st.label)}</strong></li>`).join("");
       if (current) {
         $("#aBusy .busy-text").textContent = `Step ${n + 1} of ${steps.length}: ${current.label}` +
