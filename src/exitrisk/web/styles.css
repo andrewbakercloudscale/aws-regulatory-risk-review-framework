@@ -305,6 +305,8 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .fd-foot { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 28px; border-top: 1px solid var(--grid); background: var(--surface-2); }
 .fd-status { flex: 1 1 220px; min-width: 0; margin-right: 8px; }
 .fd-status .progress { margin: 0; }
+/* A running scan's progress takes the footer's full width, with the buttons on the row below. */
+.fd-status:has(#scanProgress:not([hidden])) { flex-basis: 100%; margin-right: 0; }
 .fd-status .progress .bar { height: 10px; margin: 0 0 6px; background: var(--grid); }
 .fd-status #scanMsg { font-weight: 600; color: var(--ink); }
 .fd-status .error-text { margin: 0; }
@@ -821,12 +823,13 @@ table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 
 @media print { .as-hide-print { display: none; } .as-bar { width: 60px; } #as-rules .as-ruleset-bar .btn { display: none; } }
 .scan-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 /* The scan ETA: its own boxed row under the progress message. */
-.scan-eta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 14px; margin: 8px 0 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.scan-eta { display: flex; flex-wrap: wrap; gap: 4px 18px; width: fit-content; max-width: 100%; box-sizing: border-box; margin: 6px 0 0; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .scan-eta[hidden] { display: none; }
-.scan-eta dt { white-space: nowrap; font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--ink-2); }
-.scan-eta dd { white-space: nowrap; margin: 2px 0 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.scan-eta dd small { display: block; white-space: normal; font-weight: 400; color: var(--ink-2); }
-
+.scan-eta div { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.scan-eta dt { font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--ink-2); }
+.scan-eta dd { margin: 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.scan-eta dd small { font-weight: 400; color: var(--ink-2); }
+#scanMsg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scan-running .spin { border-color: var(--accent); border-top-color: transparent; }
 .mr-form fieldset.teams legend .muted { font-weight: 400; }
 #mrAi, #asAi { margin-top: 16px; }

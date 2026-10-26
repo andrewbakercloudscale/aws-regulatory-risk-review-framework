@@ -2854,8 +2854,9 @@
     const e = s.eta;
     const left = e?.seconds_left;
     $("#etaElapsed").textContent = spanText(s.elapsed_seconds);
+    $("#etaIssues").textContent = String(s.issues || 0);
     $("#etaLeft").innerHTML = !e ? "not yet" : left == null ? "estimating…"
-      : `${spanText(left)}${e.then ? `<small>then ${esc(e.then.toLowerCase())}</small>` : ""}`;
+      : `${spanText(left)}${e.then ? ` <small>then ${esc(e.then.toLowerCase())}</small>` : ""}`;
     $("#etaAt").textContent = left == null ? (e ? `after ${Math.min(e.total, Math.max(e.parallel || 1, 3))} accounts` : "not known yet")
       : new Date(Date.now() + left * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     box.title = e ? `${e.step}: ${e.done} of ${e.total} accounts. The time left is from the pace so far.` : "";
@@ -2888,7 +2889,10 @@
           if (!$("#ssoDialog").open) openSsoDialog(null, true);
         } else if (!s.needs_sign_in) state.scanWaitsForSignIn = false;
         $("#scanBar").style.width = `${s.pct}%`;
-        $("#scanMsg").textContent = `${s.message || s.phase}${s.issues ? ` · ${plural(s.issues, "issue")} so far (listed under Issues when the scan finishes)` : ""}`;
+        // One short line: the step and the account just read. The issue count is in the ETA panel.
+        const msg = (s.message || s.phase).replace(/ accounts (checked|scanned): /, " accounts · ");
+        $("#scanMsg").textContent = msg;
+        $("#scanMsg").title = msg;
         $("#scanRunPct").textContent = `${s.pct}%`;
         showEta(s);
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
