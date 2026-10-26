@@ -846,3 +846,5 @@ table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 
 .scan-running .spin { border-color: var(--accent); border-top-color: transparent; }
 .mr-form fieldset.teams legend .muted { font-weight: 400; }
 #mrAi, #asAi { margin-top: 16px; }
+.view-loading { max-width: 720px; margin: 32px auto; }
+.view-loading .busy { padding: 18px 20px; }

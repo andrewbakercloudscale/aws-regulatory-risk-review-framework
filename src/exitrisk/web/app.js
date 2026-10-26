@@ -362,6 +362,7 @@
     const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
     const weighting = $("#fWeighting").value || "spend";
     $("#filterError").textContent = "";
+    loading("exit", true);
     try {
       state.report = await api("/api/report", { method: "POST", body: { scan_id: state.scanId, filter, questionnaire: readQuestionnaire(), weighting } });
     } catch (e) {
@@ -372,6 +373,8 @@
       toast(msg);
       if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
       return false;
+    } finally {
+      loading("exit", false);
     }
     const url = new URL(location.href);
     url.searchParams.set("scan", state.scanId);
@@ -1905,6 +1908,7 @@
     if (!state.scanId) return;
     if (!state.asAnswers) state.asAnswers = loadAsAnswers();
     const seq = (state.asSeq = (state.asSeq || 0) + 1);
+    loading("assurance", true);
     try {
       await Promise.all([loadAsLists(), state.ins.assurance ? null : fetchInsights("assurance")]);
       if (!state.asSets.some((s) => s.name === state.asAnswers.ruleset)) state.asAnswers.ruleset = "All rules";
@@ -1915,6 +1919,8 @@
       if (seq !== state.asSeq) return;
       showAsError(e);
       return;
+    } finally {
+      if (seq === state.asSeq) loading("assurance", false);
     }
     $("#asError").hidden = true;
     renderAs();
@@ -2297,6 +2303,7 @@
     state.view = VIEWS.includes(v) ? v : "exit";
     document.body.dataset.view = state.view;
     for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
+    syncLoading();
     $("#content").hidden = state.view !== "exit" || !state.report;
     $("#mrContent").hidden = state.view !== "multiregion" || !state.mr;
     $("#asContent").hidden = state.view !== "assurance" || !state.as?.available;
@@ -2358,6 +2365,7 @@
     const filter = { include: $("#fInclude").value, exclude: $("#fExclude").value, mode: $("#fMode").value };
     const body = { scan_id: state.scanId, filter, multiregion: { ...readMr(), accounts: mrAccounts() } };
     const seq = (state.mrSeq = (state.mrSeq || 0) + 1);
+    loading("multiregion", true);
     try {
       if (!state.ins.multiregion) await fetchInsights("multiregion");
       const mr = await api("/api/multiregion", { method: "POST", body });
@@ -2367,6 +2375,8 @@
       if (seq !== state.mrSeq) return;
       showMrError(e);
       return;
+    } finally {
+      if (seq === state.mrSeq) loading("multiregion", false);
     }
     $("#mrError").hidden = true;
     renderMr();
@@ -2991,6 +3001,23 @@
     const bar = $(sel).querySelector(".busy-bar");
     bar.classList.add("det");
     bar.querySelector("i").style.width = `${Math.round(Math.min(1, Math.max(0, frac)) * 100)}%`;
+  }
+
+  // While a report is being built and nothing of it is on screen yet (a refresh, a new scan, a filter
+  // change on a view not shown before), say so instead of leaving the page blank.
+  const VIEW_NAMES = { exit: "Exit Risk Report", multiregion: "Multi-Region Report", assurance: "Cloud Assurance Report" };
+  function loading(view, on) {
+    state.loading = { ...(state.loading || {}), [view]: on };
+    syncLoading();
+  }
+  function syncLoading() {
+    const v = state.view || "exit";
+    const shown = v === "exit" ? state.report : v === "multiregion" ? state.mr : state.as;
+    const el = $("#viewLoading");
+    // Every view waits for the scan's report first.
+    const on = !!(state.loading?.[v] || state.loading?.exit) && !shown;
+    if (on && el.hidden) el.innerHTML = busyPanel(`Loading the ${VIEW_NAMES[v]}`, "Scoring the scan's accounts. A large organisation takes a few seconds.");
+    el.hidden = !on;
   }
 
   // A loading panel for content areas (the OU list): same look as busy(), built in place.
