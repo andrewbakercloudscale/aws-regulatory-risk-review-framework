@@ -229,6 +229,7 @@ def build_assurance(scan: dict, account_filter: AccountFilter | None = None, a: 
         **base,
         "available": True,
         "summary": _summary(rows, not_checked),
+        "drivers": _drivers(rows, points),
         "areas": _areas(rows, rules, cat["areas"], severity),
         "rules": _rules(rows, rules, severity),
         "accounts": rows,
@@ -439,22 +440,55 @@ def _sensitive(ax: _Account, sensitive: list[tuple[dict, str]], org_trails: list
         ax.fail_or_pass("sensitive_human_write", unwatched)
 
 
-def _score(acct, results, severity, points, critical, production, edge, sensitive, spend) -> dict:
-    weight = CRITICAL_ACCOUNT_WEIGHT if critical else 1.0
+def _points_score(failed: list[str], points: dict, weight: float) -> float:
+    """An account's score from the severities of the rules it fails (see the module notes)."""
     keep = 1.0
-    counts = Counter(r["status"] for r in results)
-    by_sev = Counter()
-    any_critical = False
-    for r in results:
-        if r["status"] != "fail":
-            continue
-        sev = severity[r["id"]]
-        by_sev[sev] += 1
-        any_critical |= sev == "critical"
+    for sev in failed:
         keep *= 1 - min(points[sev] * weight, 99) / 100
     score = 100 * (1 - keep)
-    if any_critical:
-        score = max(score, CRITICAL_FLOOR)
+    return max(score, CRITICAL_FLOOR) if "critical" in failed else score
+
+
+def _drivers(rows: list[dict], points: dict, top: int = 10) -> dict:
+    """What drives the score: for each failing rule, how far the overall score would fall if it passed
+    in every account, and the score and ratings once the top 2, 5 and 10 are fixed. Rules are taken in
+    order of their own effect; fixing several together falls further than the sum suggests because each
+    account's points compound."""
+    total = sum(r["monthly_spend"] for r in rows)
+
+    def overall(skip: set[str]) -> tuple[float, Counter]:
+        scores = [
+            (_points_score([f["severity"] for f in r["findings"] if f["status"] == "fail" and f["id"] not in skip],
+                           points, CRITICAL_ACCOUNT_WEIGHT if r["critical"] else 1.0), r["monthly_spend"])
+            for r in rows
+        ]  # fmt: skip
+        if total:
+            score = sum(sc * w for sc, w in scores) / total
+        else:
+            score = sum(sc for sc, _ in scores) / len(scores) if scores else 0.0
+        return score, Counter(_rating(sc) for sc, _ in scores)
+
+    base, _ = overall(set())
+    failing = Counter(f["id"] for r in rows for f in r["findings"] if f["status"] == "fail")
+    sev = {f["id"]: f["severity"] for r in rows for f in r["findings"]}
+    effect = sorted(((base - overall({cid})[0], cid) for cid in failing), reverse=True)[:top]
+    rules = [{"id": cid, "severity": sev[cid], "accounts": failing[cid], "points": round(d, 1)} for d, cid in effect]
+    fixed = []
+    for n in (2, 5, 10):
+        if len(effect) >= n:
+            score, ratings = overall({cid for _, cid in effect[:n]})
+            fixed.append({"top": n, "score": round(score, 1), "rating": _rating(score),
+                          "ratings": {label: ratings.get(label, 0) for _, label in RATINGS}})  # fmt: skip
+    return {"score": round(base, 1), "rules": rules, "fixed": fixed}
+
+
+def _score(acct, results, severity, points, critical, production, edge, sensitive, spend) -> dict:
+    weight = CRITICAL_ACCOUNT_WEIGHT if critical else 1.0
+    counts = Counter(r["status"] for r in results)
+    by_sev = Counter()
+    failed = [severity[r["id"]] for r in results if r["status"] == "fail"]
+    by_sev.update(failed)
+    score = _points_score(failed, points, weight)
     applicable = counts["pass"] + counts["fail"] + counts["unknown"]
     owner, executive = owner_of(acct)
     findings = sorted(

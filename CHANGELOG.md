@@ -21,6 +21,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   account, is not flagged when an RCP limits role assumption to the organisation (and the
   accounts it lets in). A trust policy of "*" narrowed by `aws:PrincipalArn` or
   `aws:PrincipalAccount` counts as trusting only those accounts.
+- Cloud Assurance Report: **What drives the score** lists the rules that add most to the score
+  (points off if each were fixed everywhere) and the score and ratings once the top 2, 5 and 10
+  are fixed. The AI insights get the same figures.
 - Open critical Security Hub findings (`sh_critical_findings`) and open critical Inspector
   vulnerabilities (`vuln_critical`) are now **critical** rules (were high), so an account with
   either is rated Critical and counted under Critical findings. Assurance catalog 2026.10.3.

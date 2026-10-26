@@ -239,6 +239,13 @@ def _assurance_facts(rep: dict) -> tuple[dict, list[dict]]:
             t: c for t, c in _common_causes(rep).items() if t in {r["title"] for r in failing[:25]} or "findings" in c
         },
         "trust_targets": _trust_targets(rep),
+        "score_drivers": {
+            "rules": [
+                {"title": titles.get(x["id"], x["id"]), "accounts": x["accounts"], "points_off_if_fixed": x["points"]}
+                for x in (rep.get("drivers") or {}).get("rules", [])[:6]
+            ],
+            "if_top_fixed": (rep.get("drivers") or {}).get("fixed", []),
+        },
         "accounts_not_listed": max(len(ranked) - MAX_ACCOUNTS, 0),
         "accounts_not_checked": len(rep.get("not_checked") or []),
         "ownership": {

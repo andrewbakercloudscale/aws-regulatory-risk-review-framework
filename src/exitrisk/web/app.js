@@ -2022,6 +2022,14 @@
       tile("Rules applied", num(r.ruleset.rules), r.ruleset.custom ? "custom selection" : r.ruleset.name),
       tile("Accounts without a known owner", num(toFix), `${num(own.missing || 0)} with no owner tag · ${num(own["not found"] || 0)} owner not in the directory · ${num(own.unverified || 0)} more tagged with a name, not an email`),
     ].join("");
+    const d = r.drivers;
+    $("#asDriversCard").hidden = !d?.rules?.length;
+    if (d?.rules?.length) {
+      const titles = Object.fromEntries(r.rules.map((x) => [x.id, x.title]));
+      $("#asDriversFixed").innerHTML = d.fixed.map((f) => `Fix the top ${f.top}: <strong>${num(f.score, 1)}/100 ${esc(f.rating)}</strong>, ${plural(f.ratings.Critical || 0, "account")} Critical`).join(" · ");
+      $("#asDrivers").innerHTML = `<thead><tr><th>Rule</th><th>Severity</th><th class="num-cell">Accounts failing</th><th class="num-cell">Points off the score if fixed</th></tr></thead><tbody>${
+        d.rules.map((x) => `<tr><td>${esc(titles[x.id] || x.id)}</td><td>${sevPill(x.severity)}</td><td class="num-cell">${num(x.accounts)}</td><td class="num-cell">${num(x.points, 1)}</td></tr>`).join("")}</tbody>`;
+    }
     $("#asAreas").innerHTML = `<thead><tr><th>Area</th><th class="as-hide-print">What it covers</th><th class="num-cell">Rules</th><th>Pass rate</th><th class="num-cell">Failing checks</th><th class="num-cell">Accounts failing</th><th class="num-cell">Not measured</th></tr></thead><tbody>${
       r.areas.map((a) => {
         const rate = a.pass_rate;

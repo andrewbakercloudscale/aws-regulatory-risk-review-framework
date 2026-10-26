@@ -519,3 +519,15 @@ def test_resource_control_policies_bound_roles_that_trust_anyone():
     ax = assurance._Account({"checks": {"external_trust": {"status": "fail", "n": 1, "ev": ev[:1]}}})
     assurance._bound_external_trust(ax, bounds)
     assert ax.checks["external_trust"]["status"] == "pass"
+
+
+def test_drivers_rank_rules_by_what_fixing_them_takes_off_the_score():
+    row = lambda fs, spend: {"monthly_spend": spend, "critical": False,  # noqa: E731
+                             "findings": [{"id": i, "severity": sv, "status": "fail"} for i, sv in fs]}  # fmt: skip
+    rows = [row([("crit", "critical"), ("hi", "high"), ("lo", "low")], 100), row([("hi", "high")], 100)]
+    d = assurance._drivers(rows, {"critical": 40, "high": 15, "medium": 5, "low": 1})
+    assert [x["id"] for x in d["rules"]] == ["crit", "hi", "lo"]
+    assert d["score"] == round((80 + 15) / 2, 1) and d["rules"][0]["points"] == round(
+        47.5 - 0.5 * (100 * (1 - 0.85 * 0.99) + 15), 1
+    )
+    assert d["fixed"][0]["top"] == 2 and d["fixed"][0]["ratings"]["Low"] == 2
