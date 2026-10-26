@@ -64,3 +64,15 @@ def test_bad_kind_or_id_is_refused():
         insights.status("../x", "assurance")
     with pytest.raises(ValueError):
         insights.status("abc", "exit")
+
+
+def test_one_shared_cause_is_flagged_without_naming_the_resource():
+    rules = [{"id": "admin_policy", "title": "Admin policies", "fail": 3},
+             {"id": "scp_guardrails", "title": "Missing guardrails", "fail": 3}]  # fmt: skip
+    accounts = [{"findings": [{"id": "admin_policy", "status": "fail", "ev": ["role base-adm-role (inline)"]},
+                              {"id": "scp_guardrails", "status": "fail", "ev": ["no new IAM users"]}]}
+                for _ in range(3)]  # fmt: skip
+    causes = insights._common_causes({"rules": rules, "accounts": accounts})
+    assert causes["Admin policies"]["accounts_with_the_most_common_finding"] == 3
+    assert "shared cause" in causes["Admin policies"]["note"] and "base-adm-role" not in json.dumps(causes)
+    assert causes["Missing guardrails"]["findings"] == {"no new IAM users": 3}

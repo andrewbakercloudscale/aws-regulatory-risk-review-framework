@@ -49,6 +49,10 @@ RULES = """Rules:
 authoritative; do not recompute them, but you may judge them and say where they look optimistic or thin.
 - Where evidence is missing, say so; never invent accounts, services or numbers.
 - Refer to accounts only by the id given.
+- A rule counts an account as failing when any one item fails. Where common_causes shows one finding explains \
+a rule in most accounts (the same role in every account, or one guardrail missing from otherwise present \
+SCPs), say it is one shared cause with one fix, not a fleet-wide collapse, and do not describe a partly met \
+control as absent.
 - Write for executives: short, specific, plain English. No em dashes or en dashes.
 - Reply with one JSON object only, exactly in the requested shape, with no text before or after it."""
 
@@ -129,6 +133,38 @@ def _multiregion_facts(rep: dict) -> tuple[dict, list[dict]]:
     return facts, accounts
 
 
+# Rules whose evidence is the tool's own wording (which guardrail is missing), not resource names, so it
+# can be sent as it is.
+OWN_WORDING_RULES = ("scp_guardrails",)
+
+
+def _common_causes(rep: dict) -> dict[str, dict]:
+    """Per failing rule, how far one finding explains it: a rule failing in every account because of one
+    role every account has, or one guardrail missing from the SCPs, is one fix, not hundreds. Resource
+    names stay out: only counts, and the missing items for rules in OWN_WORDING_RULES."""
+    items: dict[str, dict[str, int]] = {}
+    for a in rep["accounts"]:
+        for f in a["findings"]:
+            if f["status"] == "fail":
+                per = items.setdefault(f["id"], {})
+                for ev in set(f.get("ev") or []):
+                    per[ev] = per.get(ev, 0) + 1
+    out = {}
+    for r in rep["rules"]:
+        per = items.get(r["id"])
+        if not r["fail"] or not per:
+            continue
+        top_item, top = max(per.items(), key=lambda kv: kv[1])
+        cause = {"accounts_failing": r["fail"], "distinct_findings": len(per),
+                 "accounts_with_the_most_common_finding": top}  # fmt: skip
+        if r["id"] in OWN_WORDING_RULES:
+            cause["findings"] = dict(sorted(per.items(), key=lambda kv: -kv[1]))
+        elif top >= max(3, 0.8 * r["fail"]):
+            cause["note"] = "one finding with the same name in most failing accounts: likely one shared cause"
+        out[r["title"]] = cause
+    return out
+
+
 def _assurance_facts(rep: dict) -> tuple[dict, list[dict]]:
     titles = {r["id"]: r["title"] for r in rep["rules"]}
     ranked = sorted(rep["accounts"], key=lambda a: (-a["score"], -a["monthly_spend"]))
@@ -167,6 +203,9 @@ def _assurance_facts(rep: dict) -> tuple[dict, list[dict]]:
             {k: r[k] for k in ("title", "area", "severity", "fail", "unknown")} | {"refs": r.get("refs", [])[:3]}
             for r in failing[:25]
         ],
+        "common_causes": {
+            t: c for t, c in _common_causes(rep).items() if t in {r["title"] for r in failing[:25]} or "findings" in c
+        },
         "accounts_not_listed": max(len(ranked) - MAX_ACCOUNTS, 0),
         "accounts_not_checked": len(rep.get("not_checked") or []),
         "ownership": {
