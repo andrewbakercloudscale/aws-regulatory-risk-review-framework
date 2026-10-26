@@ -451,3 +451,12 @@ def test_pmap_starts_no_more_items_after_a_failure():
     with pytest.raises(ValueError):
         pmap(fn, range(40), workers=2)
     assert len(started) < 40
+
+
+def test_eta_waits_for_a_full_round_of_parallel_accounts():
+    from exitrisk.scanner import eta_seconds
+
+    assert eta_seconds(60, 3, 339, parallel=8) is None  # the first round is not a pace yet
+    assert eta_seconds(120, 8, 168, parallel=8) == 2400  # 15 s an account, 160 left
+    assert eta_seconds(30, 2, 2, parallel=8) == 0
+    assert eta_seconds(0, 0, 10) is None

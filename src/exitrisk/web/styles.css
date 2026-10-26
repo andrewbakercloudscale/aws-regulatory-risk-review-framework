@@ -820,6 +820,13 @@ table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 
 .as-rule-table select { min-width: 96px; }
 @media print { .as-hide-print { display: none; } .as-bar { width: 60px; } #as-rules .as-ruleset-bar .btn { display: none; } }
 .scan-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+/* The scan ETA: its own boxed row under the progress message. */
+.scan-eta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 14px; margin: 8px 0 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.scan-eta[hidden] { display: none; }
+.scan-eta dt { white-space: nowrap; font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--ink-2); }
+.scan-eta dd { white-space: nowrap; margin: 2px 0 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.scan-eta dd small { display: block; white-space: normal; font-weight: 400; color: var(--ink-2); }
+
 .scan-running .spin { border-color: var(--accent); border-top-color: transparent; }
 .mr-form fieldset.teams legend .muted { font-weight: 400; }
 #mrAi, #asAi { margin-top: 16px; }

@@ -159,6 +159,11 @@ class ScanJob:
     _sign_in_gave_up: bool = False
     finished_at: float | None = field(default=None, repr=False)  # time.monotonic() once finished
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
+    started_at: float = field(default_factory=time.monotonic, repr=False)
+    # The time left in the per-account step running now, for the console's ETA: {"step", "done", "total",
+    # "seconds_left" (None until a few accounts are done), "then" (a step still to come, or None),
+    # "parallel" (accounts read at once)}.
+    eta: dict | None = None
 
     def cancel(self) -> None:
         """Ask the scan to stop: it does at its next progress step, without saving anything."""
@@ -181,10 +186,10 @@ class ScanJob:
         with self._lock:
             self.needs_sign_in = session_name
 
-    def update(self, phase: str, pct: int, message: str) -> None:
+    def update(self, phase: str, pct: int, message: str, eta: dict | None = None) -> None:
         self.check_cancelled()
         with self._lock:
-            self.phase, self.pct, self.message = phase, pct, message
+            self.phase, self.pct, self.message, self.eta = phase, pct, message, eta
         log.info("[%s %d%%] %s", phase, pct, message, extra={"phase": phase})
 
     def add_issue(self, issue: Issue) -> None:
@@ -214,6 +219,8 @@ class ScanJob:
                 "status": self.status,
                 "issues": len(self.issues),
                 "needs_sign_in": self.needs_sign_in,
+                "elapsed_seconds": round((self.finished_at or time.monotonic()) - self.started_at),
+                "eta": self.eta,
             }
 
     def wait_for_sign_in(self, session_name: str) -> bool:
@@ -592,7 +599,8 @@ def run_scan(job: ScanJob) -> dict:
     regions_for = _region_picker(job) if p.inventory or p.assurance else None
     if p.inventory:
         span = (60, 80) if p.assurance else (60, 98)
-        data["inventory"] = _run_inventory(job, session, accounts, caller, regions_for, span)
+        data["inventory"] = _run_inventory(job, session, accounts, caller, regions_for, span,
+                                           then="Assurance checks" if p.assurance else None)  # fmt: skip
 
     # 5. Optional Cloud Assurance Framework checks: the organisation's controls, then each account.
     if p.assurance:
@@ -657,7 +665,9 @@ def _busiest_regions(job: ScanJob) -> dict[str, str]:
     return {a: max(v, key=v.get) for a, v in spend.items() if v}
 
 
-def _run_inventory(job: ScanJob, session, accounts, caller: str, regions_for=None, span=(60, 98)) -> dict:
+def _run_inventory(
+    job: ScanJob, session, accounts, caller: str, regions_for=None, span=(60, 98), then: str | None = None
+) -> dict:
     """Inventory each active account through the scan role; the caller's own account uses the session as is."""
     p = job.params
     regions_for = regions_for or _region_picker(job)
@@ -673,7 +683,7 @@ def _run_inventory(job: ScanJob, session, accounts, caller: str, regions_for=Non
         fn = workers.inventory_account if workers else inventory.inventory_account
         return fn(sess, account.id, regions_for(account.id), dependencies=p.dependencies)
 
-    return _each_account(job, session, active, caller, read, "inventory", "scanned", span)
+    return _each_account(job, session, active, caller, read, "inventory", "scanned", span, then)
 
 
 def _run_assurance(job: ScanJob, session, accounts, caller: str, regions_for, tree, known: dict, span) -> dict:
@@ -731,7 +741,17 @@ def _run_assurance(job: ScanJob, session, accounts, caller: str, regions_for, tr
     }
 
 
-def _each_account(job: ScanJob, session, active, caller: str, read, what: str, verb: str, span) -> dict:
+def eta_seconds(elapsed: float, done: int, total: int, parallel: int = 1) -> int | None:
+    """Seconds left at the pace so far. Accounts run ``parallel`` at a time, so the first ones all
+    finish after a full account's time: the pace means something once that many are done."""
+    if done <= 0 or done < min(max(parallel, 3), total):
+        return None
+    return round(elapsed / done * (total - done))
+
+
+def _each_account(
+    job: ScanJob, session, active, caller: str, read, what: str, verb: str, span, then: str | None = None
+) -> dict:
     """``read(workers, session, account) -> (result, issues)`` for each account through the scan role,
     accounts on threads (sign-in and AWS waits) and parsing in worker processes (CPU)."""
     p = job.params
@@ -811,6 +831,8 @@ def _each_account(job: ScanJob, session, active, caller: str, read, what: str, v
     )
     pool = ThreadPoolExecutor(max_workers=settings.max_workers)
     label = "Assurance checks" if what == "assurance" else None
+    step = label or "Deep scan"
+    t0 = time.monotonic()
     with workers or nullcontext():
         try:
             # Each account's thread runs in a copy of this context, so its log lines keep the scan's run id.
@@ -822,8 +844,11 @@ def _each_account(job: ScanJob, session, active, caller: str, read, what: str, v
                     results[account.id] = out
                 done += 1
                 text = f"{done} of {len(active)} accounts {verb}: {account.name}"
+                left = eta_seconds(time.monotonic() - t0, done, len(active), settings.max_workers)
+                eta = {"step": step, "done": done, "total": len(active), "then": then, "seconds_left": left,
+                       "parallel": settings.max_workers}  # fmt: skip
                 job.update(what, span[0] + int((span[1] - span[0]) * done / max(len(active), 1)),
-                           f"{label}: {text}" if label else text)  # fmt: skip
+                           f"{label}: {text}" if label else text, eta)  # fmt: skip
         except BaseException:
             # Ctrl+C or a failure: drop the accounts not yet started and stop the workers now, rather
             # than reading every remaining account first.

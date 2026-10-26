@@ -2838,6 +2838,30 @@
     catch (e) { $("#scanError").textContent = e.message; $("#btnStopScan").disabled = false; }
   }
 
+  // "6 min", "1 h 05 min": the scan ETA's units.
+  function spanText(sec) {
+    if (sec < 60) return "under 1 min";
+    const m = Math.round(sec / 60);
+    return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+  }
+
+  // Elapsed, time left and finish time, beside the progress message. The time left is for the
+  // per-account step running now (from its pace so far); a step still to come is named, not guessed.
+  function showEta(s) {
+    const box = $("#scanEta");
+    box.hidden = s.status !== "running" || s.elapsed_seconds == null;
+    if (box.hidden) return;
+    const e = s.eta;
+    const left = e?.seconds_left;
+    $("#etaElapsed").textContent = spanText(s.elapsed_seconds);
+    $("#etaLeft").innerHTML = !e ? "not yet" : left == null ? "estimating…"
+      : `${spanText(left)}${e.then ? `<small>then ${esc(e.then.toLowerCase())}</small>` : ""}`;
+    $("#etaAt").textContent = left == null ? (e ? `after ${Math.min(e.total, Math.max(e.parallel || 1, 3))} accounts` : "not known yet")
+      : new Date(Date.now() + left * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    box.title = e ? `${e.step}: ${e.done} of ${e.total} accounts. The time left is from the pace so far.` : "";
+    $("#btnScanRunning").title = left == null ? "Show the running scan" : `About ${spanText(left)} left in ${e.step.toLowerCase()}`;
+  }
+
   function pollScan(id) {
     clearTimeout(state.pollTimer);
     let misses = 0;
@@ -2866,6 +2890,7 @@
         $("#scanBar").style.width = `${s.pct}%`;
         $("#scanMsg").textContent = `${s.message || s.phase}${s.issues ? ` · ${plural(s.issues, "issue")} so far (listed under Issues when the scan finishes)` : ""}`;
         $("#scanRunPct").textContent = `${s.pct}%`;
+        showEta(s);
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         state.runningScan = null;
         showScanRunning();

@@ -943,6 +943,11 @@
         <div id="scanProgress" class="progress" hidden>
           <div class="bar"><div id="scanBar"></div></div>
           <div id="scanMsg" class="small"></div>
+          <dl id="scanEta" class="scan-eta" aria-live="polite" hidden>
+            <div><dt>Elapsed</dt><dd id="etaElapsed"></dd></div>
+            <div><dt>Time left</dt><dd id="etaLeft"></dd></div>
+            <div><dt>Ends around</dt><dd id="etaAt"></dd></div>
+          </dl>
         </div>
         <p id="scanError" class="error-text" role="alert"></p>
       </div>
