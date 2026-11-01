@@ -119,6 +119,7 @@
       <button type="button" class="vtab" data-view="exit" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></svg><span><b>Exit Risk Report</b><small>How hard it is to leave AWS</small></span></button>
       <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-Region Report</b><small>A second AWS region: cost, people, RTO</small></span></button>
       <button type="button" class="vtab" data-view="assurance" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span><b>Cloud Assurance Report</b><small>Controls and governance by account</small></span></button>
+      <button type="button" class="vtab" data-view="outage" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19z"/><path d="M12 10v5"/><path d="M12 17.5v.5"/></svg><span><b>Outage Risk Report</b><small>What fails at peak, and where to start</small></span></button>
     </nav>
     <button type="button" id="btnJumpAi" class="btn ai-jump" title="Go to the AI review (section 2)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>AI review<span id="aiDot" class="dot" hidden></span></button>
     <div class="menu">
@@ -649,6 +650,118 @@
     <footer class="report-footer" id="mrFooter"></footer>
   </div>
 
+  <!-- ================================================================ Outage risk view -->
+  <div id="orError" class="card mr-error no-print" role="alert" hidden>
+    <h2>The Outage Risk Report could not be built</h2>
+    <p id="orErrorText" class="error-text"></p>
+    <p id="orErrorHint" class="muted"></p>
+    <p><button type="button" class="btn primary" id="btnOrRetry">Try again</button> <button type="button" class="btn" id="btnOrLog">Open the log</button></p>
+  </div>
+  <div id="orEmpty" class="card as-empty no-print" hidden>
+    <h2>No outage risk checks in this scan</h2>
+    <p id="orEmptyText" class="muted"></p>
+    <p class="muted small">The checks read each account's quotas, CloudWatch utilisation, storage, MSK, Amazon Connect, subnets and EKS workloads with read-only calls. They need the extra read permissions in docs/IAM_PERMISSIONS.md: Check access tests them.</p>
+    <p><button type="button" class="btn primary" id="btnOrOpen" hidden></button> <button type="button" class="btn primary" id="btnOrScan">New scan with the outage risk checks</button> <button type="button" class="btn" id="btnOrDemo">Load the demo organisation</button></p>
+  </div>
+  <div id="orContent" hidden>
+    <section class="cover">
+      <div class="eyebrow">Outage risk</div>
+      <h1 id="orTitle">Outage Risk Report</h1>
+      <p class="muted">What is close to a limit, what runs hot and cannot grow, what fills up before the peak, and which EKS workloads are sized or scaled to fail, in every account.</p>
+      <div id="orCoverage" class="coverage" role="alert" hidden></div>
+      <dl id="orMeta" class="meta"></dl>
+    </section>
+
+    <section class="section" id="or-summary">
+      <h2><span class="num">1</span>Where to focus</h2>
+      <div class="card brief">
+        <p class="brief-eyebrow">Bottom line</p>
+        <p class="brief-headline" id="orHeadline"></p>
+        <div class="brief-cols">
+          <div><h3>What we found</h3><ul class="leads" id="orFindings"></ul></div>
+          <div><h3>What to do first</h3><ol class="leads" id="orActions"></ol></div>
+        </div>
+      </div>
+      <div class="tiles" id="orTiles"></div>
+      <div class="card ai-panel" id="orAi"></div>
+      <div class="card">
+        <h3>Areas, worst first</h3>
+        <p class="muted small">Production findings in each area. Start by is the change freeze less the time the work usually takes; those lead times are our judgement, as AWS publishes none for quota increases. Select an area to see its findings.</p>
+        <div class="table-wrap"><table class="data compact" id="orFocus"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="or-questions">
+      <h2><span class="num">2</span>The peak</h2>
+      <div class="card">
+        <p class="muted small">Changing these needs no new scan. The expected load is an assumption until replaced by last year's measured ratio of peak to normal.</p>
+        <form id="orForm" class="as-form" autocomplete="off">
+          <div class="mr-grid">
+          <label>Peak date<input type="date" name="peak_date"><span class="muted small">Empty: the next Black Friday</span></label>
+          <label>Expected load<input type="number" name="peak_multiplier" min="1" max="3" step="0.1"><span class="muted small">Times the highest hour of the last 35 days, which holds a month-end</span></label>
+          <label>Change freeze, days before the peak<input type="number" name="freeze_days" min="0" max="90"></label>
+          <label>Warning at, percent<input type="number" name="warn_pct" min="40" max="95"></label>
+          <label>Critical at, percent<input type="number" name="critical_pct" min="60" max="100"></label>
+          <label>Production accounts<input name="production_patterns" maxlength="200"><span class="muted small">Environment tag first, then these parts of the account name or OU</span></label>
+          <label>Low CPU request under, millicores<input type="number" name="cpu_request_floor_m" min="1" max="4000"><span class="muted small">Added across the pod's containers</span></label>
+          <label>Low memory limit under, MiB<input type="number" name="memory_limit_floor_mi" min="1" max="65536"><span class="muted small">Added across the pod's containers</span></label>
+          <label>Namespaces left out of the EKS checks<input name="ignore_namespaces" maxlength="400"></label>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section class="section" id="or-findings">
+      <h2><span class="num">3</span>Findings</h2>
+      <div class="card">
+        <div class="row no-print or-filters">
+          <label class="inline">Area<select id="orArea"></select></label>
+          <label class="inline">Severity<select id="orSev"><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+          <label class="inline">Finding<select id="orRule"></select></label>
+          <label class="inline">Search<input id="orSearch" type="search" placeholder="Account, resource or region"></label>
+          <label class="check"><input type="checkbox" id="orProd" checked> Production only</label>
+          <button type="button" class="btn" id="btnOrCsv">Export CSV</button>
+        </div>
+        <p id="orFindCount" class="small muted"></p>
+        <div class="table-wrap"><table class="data compact" id="orTable"></table></div>
+        <p class="table-more"><span id="orMoreNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnOrMore" hidden></button></p>
+      </div>
+      <div id="orRules"></div>
+    </section>
+
+    <section class="section" id="or-accounts">
+      <h2><span class="num">4</span>Accounts</h2>
+      <div class="card">
+        <p class="muted small">Every account read, highest outage risk first. Score 0 to 100, higher is worse: each finding type adds its severity's points once. Select an account to see its findings.</p>
+        <div class="table-wrap"><table class="data compact" id="orAccounts"></table></div>
+        <p class="table-more"><span id="orAcctNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnOrAcctMore" hidden></button></p>
+      </div>
+    </section>
+
+    <section class="section" id="or-eks">
+      <h2><span class="num">5</span>EKS clusters</h2>
+      <div class="card">
+        <p class="muted small">Replica counts, requests and limits come from each cluster's Kubernetes API, which needs a read-only access entry for the scan's identity and a network path to the endpoint. The scan never adds an entry. A cluster not read is not a pass; Container Insights, where on, still gives memory and CPU against limits.</p>
+        <p id="orEksHelp" class="small" hidden></p>
+        <div class="table-wrap"><table class="data compact" id="orClusters"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="or-causes">
+      <h2><span class="num">6</span>What causes outages</h2>
+      <div class="card">
+        <p class="muted small">Published evidence, beside what this scan found for the same cause. The order is our judgement for a bank's peak event, not a published ranking, and no source here measures AWS customers or banks directly. A scan measures capacity far better than it measures change, yet change has the strongest evidence: hold the freeze as well as fixing the findings.</p>
+        <div class="table-wrap"><table class="data compact" id="orCauses"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="or-method">
+      <h2><span class="num">7</span>Method and limits</h2>
+      <div class="card small" id="orMethod"></div>
+    </section>
+    <p id="orFooter" class="muted small"></p>
+  </div>
+
   <!-- ================================================================ Cloud Assurance Framework view -->
   <div id="asError" class="card mr-error no-print" role="alert" hidden>
     <h2>The Cloud Assurance Framework Report could not be built</h2>
@@ -937,11 +1050,16 @@
         <label class="check fd-check"><input type="checkbox" name="assurance" id="sAssurance" checked><span><strong>Run the Cloud Assurance Framework checks</strong><br><span class="fd-hint">Reads each account's controls (access, internet exposure, audit trail, threat detection, data protection, change management, resilience and DR, lifecycle, ownership) and the organisation's guardrails, for the Cloud assurance report. Read-only; needs the assurance read permissions (Check access tests them). Adds about a minute per 8 accounts.</span></span></label>
       </section>
       <section class="fd-sec">
-        <h3><span class="step">5</span>AI insights <span class="opt">optional</span></h3>
+        <h3><span class="step">5</span>Outage risk <span class="opt">optional</span></h3>
+        <label class="check fd-check"><input type="checkbox" name="outage" id="sOutage" checked><span><strong>Run the outage risk checks</strong><br><span class="fd-hint">Reads each account's quotas and usage, CloudWatch utilisation over 35 days, storage, MSK, Amazon Connect, subnets and EKS workloads, for the Outage Risk Report. Read-only; needs the outage read permissions (Check access tests them). EKS workloads also need a read-only access entry on each cluster. CloudWatch bills about US$0.01 per 1,000 metrics.</span></span></label>
+      </section>
+      <section class="fd-sec">
+        <h3><span class="step">6</span>AI insights <span class="opt">optional</span></h3>
         <p class="fd-hint" id="sAiInfo"></p>
         <label class="check fd-check"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Exit Risk Report: AI review</strong><br><span class="fd-hint">For the executive committee: what matters most in an exit, the accounts to focus on and how to tackle them, in three passes. Needs a deep scan: ticking it switches Scan depth to a dependency scan. 5 to 40 minutes.</span></span></label>
         <label class="check fd-check"><input type="checkbox" name="ai_mr" id="sAiMr"><span><strong>Multi-Region Report: AI insights</strong><br><span class="fd-hint">For the CIO, risk and infrastructure leads: where a second region is worth it, what it does to the teams, the recovery gaps and the region to use. Works on any scan. About a minute.</span></span></label>
         <label class="check fd-check"><input type="checkbox" name="ai_as" id="sAiAs"><span><strong>Cloud Assurance Report: AI insights</strong><br><span class="fd-hint">For the CISO, risk and audit: the control gaps that matter, the accounts to fix first and what the regulator will ask. Needs the Cloud Assurance checks (step 4). About a minute.</span></span></label>
+        <label class="check fd-check"><input type="checkbox" name="ai_or" id="sAiOr"><span><strong>Outage Risk Report: AI insights</strong><br><span class="fd-hint">For the CIO and infrastructure leads: what is most likely to fail at peak, what to start this week and what the change freeze should cover. Needs the outage risk checks (step 5). About a minute.</span></span></label>
         <p class="fd-hint">Each starts when the scan finishes and appears in its own report; the reports are ready to read meanwhile. Each can also be run later from its report. <button type="button" class="link-btn" id="lnkAiConfig">AI configuration</button></p>
       </section>
     </div>

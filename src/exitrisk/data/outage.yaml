@@ -1,0 +1,197 @@
+# The Outage Risk Report: every measure the scan compares against a limit (report/outage.py,
+# collectors/outage.py), and the published evidence on what causes outages.
+#
+# Each rule is judged when the report is built, so changing an answer (peak date, expected load,
+# thresholds) needs no new scan.
+#
+#   area      where it sits in the report (areas below)
+#   kind      capacity: a measure against a limit. Severity comes from how close it is now, how close
+#             it would be at the expected peak load, and how soon it runs out.
+#             event: it already happened in the lookback window (throttling, dropped connections).
+#             config: a setting that fails at load or on a single failure.
+#   severity  for event and config rules. Lowered one level outside production.
+#   prod_only reported only in production accounts
+#   fix       what to do about it
+version: "2026.11.1"
+points: {critical: 40, high: 15, medium: 5, low: 1}
+
+areas:
+  change:
+    label: Change and certificates
+    action: Set the change freeze date, require automatic rollback on the services flagged, and renew what expires before the peak.
+    lead_days: 0
+  limits:
+    label: Account and product limits
+    action: Raise the quotas that would be passed at peak; redesign around the hard limits. Do not assume an increase is quick.
+    lead_days: 14
+  fixed:
+    label: Busy fixed capacity
+    action: Resize or add autoscaling on what runs hot and cannot grow, then prove it under a load test.
+    lead_days: 10
+  storage:
+    label: Storage
+    action: Grow what fills before the peak, turn on storage autoscaling and fix the mismatches.
+    lead_days: 7
+  msk:
+    label: MSK (Kafka)
+    action: Add broker storage before it fills and turn on storage autoscaling. Broker storage can only grow, so plan the size once.
+    lead_days: 7
+  eks:
+    label: EKS workloads
+    action: Add autoscaling to fixed replica counts, raise low requests and memory limits, and run more than one replica of anything customers depend on.
+    lead_days: 10
+  network:
+    label: Network capacity
+    action: Add subnets or CIDR ranges before pods and nodes run out of addresses; split NAT traffic that exhausts ports.
+    lead_days: 14
+
+rules:
+  # ---- limits
+  - {id: limit_account, area: limits, kind: capacity, title: Account limit, why: "An account-wide limit (vCPUs, VPCs, addresses, IAM roles and so on). Reaching it stops new capacity, usually at the moment it is needed.", fix: "Request an increase in Service Quotas, or move workloads to another account where the limit is hard."}
+  - {id: limit_product, area: limits, kind: capacity, title: Product limit, why: "A limit of one AWS service. Reaching it means errors or throttling from that service.", fix: "Request an increase in Service Quotas. A hard limit needs a design change."}
+  - {id: limit_s3, area: limits, kind: capacity, title: S3 limit, why: "The bucket quota, or a bucket's request rate against the rate S3 supports per prefix. Requests past the prefix rate are answered with 503 Slow Down until S3 has scaled.", fix: "Raise the bucket quota. Spread keys over more prefixes and pre-warm with AWS Support ahead of a known surge."}
+  - {id: limit_connect, area: limits, kind: capacity, title: Amazon Connect limit, why: "Concurrent calls or instance objects against the Connect quotas. Calls over the concurrency quota are rejected: customers cannot reach the contact centre when they most need it.", fix: "Request the increase well ahead of the peak; Connect capacity is reviewed by AWS."}
+  - {id: limit_region_mismatch, area: limits, kind: config, severity: medium, title: Failover region has a lower limit, why: "One region's usage is above the quota in another region of the account, so that region could not take the load in a failover.", fix: "Raise the quota in the failover region to match."}
+  - {id: connect_throttled, area: limits, kind: event, severity: critical, title: Amazon Connect calls rejected or throttled, why: "Calls were throttled or broke the concurrency quota in the lookback window: this has already reached customers.", fix: "Raise the concurrent calls quota now and review the flows that drove it."}
+  - {id: s3_5xx, area: limits, kind: event, severity: high, title: S3 answered with server errors, why: "S3 returned 5xx errors, usually 503 Slow Down from a request rate above what the prefix supports.", fix: "Check the callers retry with backoff; spread keys across prefixes."}
+  - {id: lambda_throttles, area: limits, kind: event, severity: high, title: Lambda functions throttled, why: "Invocations were refused because concurrency ran out. At peak this grows, and retries add to it.", fix: "Raise account concurrency; put reserved concurrency on what must not be starved."}
+  - {id: kinesis_throttles, area: limits, kind: event, severity: high, title: Kinesis throughput exceeded, why: "Producers or consumers exceeded the stream's capacity.", fix: "Add shards or use on-demand mode ahead of the peak."}
+  - {id: ddb_throttles, area: limits, kind: event, severity: high, title: DynamoDB requests throttled, why: "Reads or writes were throttled on the table.", fix: "Raise capacity or autoscaling maximums, or use on-demand; check for hot partition keys."}
+
+  # ---- fixed capacity
+  - {id: ec2_cpu, area: fixed, kind: capacity, title: Standalone EC2 instance running hot, why: "Not in an Auto Scaling group, so it cannot grow when load does.", fix: "Move behind an Auto Scaling group, or resize before the peak."}
+  - {id: ec2_credits, area: fixed, kind: event, severity: high, title: Burstable instance out of CPU credits, why: "A T-family instance reached a very low credit balance: with no credits, it is held to its baseline CPU.", fix: "Move to a fixed-performance type or unlimited credits."}
+  - {id: rds_cpu, area: fixed, kind: capacity, title: Database running hot, why: "A provisioned database cannot add capacity by itself, and a resize means a failover.", fix: "Resize before the change freeze, or move reads to replicas. Load test the result."}
+  - {id: aurora_acu, area: fixed, kind: capacity, title: Aurora Serverless near its maximum, why: "Peak capacity used is close to the configured maximum ACUs, so it stops scaling there.", fix: "Raise the maximum ACUs."}
+  - {id: cache_cpu, area: fixed, kind: capacity, title: ElastiCache engine running hot, why: "The engine is single threaded for most work: once saturated, every caller slows and the database behind it takes the load.", fix: "Add shards or move up a node size."}
+  - {id: cache_memory, area: fixed, kind: capacity, title: ElastiCache memory near full, why: "Past full it evicts keys or refuses writes, and the database takes the misses.", fix: "Add shards or move up a node size."}
+  - {id: cache_evictions, area: fixed, kind: event, severity: medium, title: ElastiCache evicting keys, why: "Keys are being pushed out for lack of memory, so the hit rate falls when load rises.", fix: "Add memory, or review time to live on keys."}
+  - {id: search_cpu, area: fixed, kind: capacity, title: OpenSearch running hot, why: "A domain's data nodes are close to saturated.", fix: "Add or resize data nodes."}
+  - {id: search_jvm, area: fixed, kind: capacity, title: OpenSearch memory pressure, why: "Above about 92% JVM memory pressure, OpenSearch blocks writes to protect itself.", fix: "Add or resize data nodes; reduce shard count."}
+  - {id: search_red, area: fixed, kind: event, severity: critical, title: OpenSearch cluster went red, why: "At least one primary shard was unavailable in the lookback window.", fix: "Find the cause before the peak: usually storage or a lost node."}
+  - {id: redshift_cpu, area: fixed, kind: capacity, title: Redshift running hot, why: "A provisioned cluster has fixed capacity.", fix: "Enable concurrency scaling, or resize."}
+  - {id: ddb_provisioned, area: fixed, kind: capacity, title: DynamoDB provisioned capacity near its ceiling, why: "Consumed capacity against provisioned capacity, or against the autoscaling maximum where there is one. Hourly averages hide spikes, so real headroom is lower.", fix: "Raise the provisioned capacity or autoscaling maximum, or use on-demand."}
+  - {id: asg_near_max, area: fixed, kind: capacity, title: Auto Scaling group near its maximum, why: "It can only grow up to its maximum, and it is already close.", fix: "Raise the maximum, and check the instance quota and subnets allow it."}
+  - {id: asg_fixed, area: fixed, kind: config, severity: medium, prod_only: true, title: Auto Scaling group cannot scale, why: "Minimum equals maximum, so the group replaces instances but cannot grow.", fix: "Set a maximum above the expected peak, with a scaling policy."}
+  - {id: ecs_util, area: fixed, kind: capacity, title: ECS service running hot with no autoscaling, why: "A fixed task count at this utilisation has little headroom.", fix: "Add Application Auto Scaling to the service."}
+  - {id: ecs_near_max, area: fixed, kind: capacity, title: ECS service near its scaling maximum, why: "Autoscaling stops at the maximum, and the service is close to it.", fix: "Raise the maximum."}
+  - {id: ecs_single_task, area: fixed, kind: config, severity: high, prod_only: true, title: ECS service runs one task with no autoscaling, why: "One failure or deployment problem takes the service down.", fix: "Run at least two tasks across zones, with autoscaling."}
+
+  # ---- storage
+  - {id: rds_storage, area: storage, kind: capacity, title: Database storage filling, why: "A database with no free storage stops accepting writes. Where storage autoscaling is on, it is measured against the autoscaling maximum.", fix: "Grow the storage, and turn on storage autoscaling with a maximum well above the forecast."}
+  - {id: rds_burst, area: storage, kind: capacity, title: Database storage or EBS burst running out, why: "gp2 burst, or the instance's own EBS burst balance, fell low. At zero, I/O drops to the baseline and every query slows.", fix: "Move to gp3 or a larger instance class that sustains the throughput."}
+  - {id: rds_replica_mismatch, area: storage, kind: config, severity: medium, title: Read replica smaller than its source, why: "A replica with a smaller class or less storage than its source lags under load, and cannot take over at the same capacity.", fix: "Match the replica's class and storage to the source."}
+  - {id: rds_single_az, area: storage, kind: config, severity: high, prod_only: true, title: Production database in one availability zone, why: "The loss of one zone takes it down, with recovery from backup.", fix: "Turn on Multi-AZ."}
+  - {id: ebs_instance_mismatch, area: storage, kind: config, severity: medium, title: Volumes provisioned beyond what the instance can deliver, why: "An instance has a ceiling on EBS IOPS and throughput. Volumes above it pay for performance the instance cannot use, and the server hits its limit before the disks do.", fix: "Move to an instance type with a higher EBS limit, or reduce the provisioned figures."}
+  - {id: ebs_burst, area: storage, kind: capacity, title: gp2 volume running out of burst credits, why: "At zero burst balance a gp2 volume falls to its baseline IOPS.", fix: "Move to gp3 and set the IOPS needed."}
+  - {id: ebs_exceeded, area: storage, kind: event, severity: high, title: Volume asked for more than it was provisioned, why: "The application asked for more IOPS or throughput than the volume supplies, so I/O queued.", fix: "Raise the IOPS and throughput on the volume."}
+  - {id: disk_full, area: storage, kind: capacity, title: Server disk filling, why: "From the CloudWatch agent where it is installed. A full disk stops most software.", fix: "Grow the volume, and clean up logs."}
+  - {id: search_storage, area: storage, kind: capacity, title: OpenSearch storage filling, why: "At very low free space, OpenSearch blocks writes.", fix: "Grow the volumes or add data nodes."}
+  - {id: redshift_disk, area: storage, kind: capacity, title: Redshift disk filling, why: "Queries fail once the disk is full, and big queries use it as they run.", fix: "Resize or move to managed storage."}
+  - {id: efs_burst, area: storage, kind: capacity, title: EFS running out of burst credits, why: "In bursting mode, throughput falls to its baseline at zero credits.", fix: "Use elastic throughput."}
+  - {id: efs_io, area: storage, kind: capacity, title: EFS near its I/O limit, why: "General Purpose mode has an I/O limit, reported as a percentage.", fix: "Review the workload, or move to elastic throughput."}
+  - {id: fsx_storage, area: storage, kind: capacity, title: FSx storage filling, why: "A full file system refuses writes.", fix: "Grow the storage capacity."}
+
+  # ---- MSK
+  - {id: msk_disk, area: msk, kind: capacity, title: MSK broker storage filling, why: "A broker with a full disk goes offline and pushes its partitions to the others, which can fill them in turn. Measured on the fullest broker.", fix: "Add broker storage, and shorten retention on the largest topics. Storage cannot be reduced later."}
+  - {id: msk_no_autoscale, area: msk, kind: config, severity: medium, prod_only: true, title: MSK with no storage autoscaling, why: "Nothing grows the disks if the data rate rises at peak.", fix: "Add an Application Auto Scaling target for broker storage."}
+  - {id: msk_cpu, area: msk, kind: capacity, title: MSK brokers running hot, why: "CPU user plus system on the busiest broker. A cluster has to absorb the loss of a broker, so AWS advises staying under 60%.", fix: "Add brokers or move to a larger broker size, then rebalance."}
+  - {id: msk_partitions, area: msk, kind: capacity, title: MSK partitions above the broker's guidance, why: "Partitions per broker against AWS's recommended figure for the broker size. Above it, restarts and failovers take longer. It is guidance, not a hard limit.", fix: "Add brokers or reduce partitions."}
+  - {id: msk_imbalance, area: msk, kind: config, severity: medium, title: MSK brokers unevenly full, why: "One broker's disk is far fuller than another's, so the cluster runs out on the fullest long before its total.", fix: "Rebalance partitions across brokers."}
+
+  # ---- EKS
+  - {id: eks_single_replica, area: eks, kind: config, severity: high, prod_only: true, title: Workload runs one replica, why: "One pod, node or deployment problem takes it down.", fix: "Run at least two replicas spread over zones, with a disruption budget."}
+  - {id: eks_fixed_replicas, area: eks, kind: config, severity: medium, prod_only: true, title: Fixed replica count, why: "No autoscaler targets this Deployment, so its capacity is what it is on the day.", fix: "Add a HorizontalPodAutoscaler or KEDA, or size it for the peak by hand."}
+  - {id: eks_hpa_max, area: eks, kind: capacity, title: Autoscaler near its maximum, why: "Replicas against the HorizontalPodAutoscaler's maximum.", fix: "Raise the maximum, and check the nodes and addresses can follow."}
+  - {id: eks_low_cpu, area: eks, kind: config, severity: medium, title: Very low CPU request, why: "The scheduler places pods by their requests. A pod that asks for very little gets very little under contention, and autoscalers based on CPU react to the wrong figure.", fix: "Set the request from measured use at load."}
+  - {id: eks_low_memory, area: eks, kind: config, severity: medium, title: Low memory limit, why: "A pod above its memory limit is killed. A low limit leaves little room for a rise in traffic.", fix: "Set the limit from measured use at load, plus headroom."}
+  - {id: eks_no_memory_limit, area: eks, kind: config, severity: low, prod_only: true, title: No memory limit or request, why: "With no figure set the scheduler cannot place it sensibly, and one leak can starve a node's other pods.", fix: "Set a memory request and limit."}
+  - {id: eks_oom, area: eks, kind: event, severity: high, title: Containers killed for running out of memory, why: "A container has been OOMKilled: at peak this repeats, and each restart shifts load onto the pods left.", fix: "Raise the memory limit; look for leaks."}
+  - {id: eks_memory_pressure, area: eks, kind: capacity, title: Pod near its memory limit, why: "From Container Insights: measured memory against the limit. Past the limit the container is killed.", fix: "Raise the memory limit."}
+  - {id: eks_cpu_pressure, area: eks, kind: capacity, title: Pod near its CPU limit, why: "From Container Insights: measured CPU against the limit. At the limit the container is throttled, and timeouts follow.", fix: "Raise or remove the CPU limit; add replicas."}
+  - {id: eks_pending, area: eks, kind: event, severity: high, title: Pods waiting to be scheduled, why: "Pods were pending when read: there may be too few nodes, addresses or resources. At peak, new pods wait too.", fix: "Check the scheduling events and node capacity."}
+  - {id: eks_coredns, area: eks, kind: config, severity: high, prod_only: true, title: CoreDNS cannot scale, why: "Every name lookup in the cluster goes through it. A fixed count falls behind as pods and traffic rise.", fix: "Add the cluster proportional autoscaler, or the managed add-on's autoscaling."}
+  - {id: eks_nodegroup_max, area: eks, kind: capacity, title: Node group near its maximum, why: "Pods cannot be scheduled once the node group stops growing.", fix: "Raise the maximum."}
+  - {id: eks_not_read, area: eks, kind: config, severity: medium, title: Cluster workloads not read, why: "The scan could not read this cluster's Kubernetes API, so replica counts and requests are not measured: this is not a pass.", fix: "Give the scan role a read-only access entry (AmazonEKSViewPolicy), and scan from a network that reaches the endpoint."}
+
+  # ---- network
+  - {id: subnet_ips, area: network, kind: capacity, title: Subnet running out of addresses, why: "With no free addresses, nothing new starts in that subnet: scaling and failover both fail.", fix: "Add a subnet or a secondary CIDR."}
+  - {id: eks_subnet_ips, area: network, kind: capacity, title: EKS subnet running out of addresses, why: "By default each pod takes an address from the subnet, so scaling out uses them quickly. Exhaustion stops pods starting.", fix: "Add subnets or a secondary CIDR; consider prefix delegation."}
+  - {id: nat_port_errors, area: network, kind: event, severity: high, title: NAT gateway ran out of ports, why: "Connections were dropped because the gateway had no free source ports.", fix: "Add addresses to the gateway, split traffic over more gateways, or use VPC endpoints."}
+  - {id: lb_rejected, area: network, kind: event, severity: high, title: Load balancer rejected connections, why: "An Application Load Balancer refused connections because it reached its connection limit.", fix: "Check the targets are healthy and ask AWS to pre-warm ahead of a surge."}
+  - {id: nlb_port_errors, area: network, kind: event, severity: high, title: Network Load Balancer ran out of ports, why: "Connections through client address preservation or to targets ran out of ports.", fix: "Add targets, or more addresses to the balancer."}
+  - {id: dx_bandwidth, area: network, kind: capacity, title: Direct Connect near its bandwidth, why: "The connection's speed is fixed: past it, packets drop. If one of a pair fails, the other carries both, so more than half full is already a risk.", fix: "Add a connection, or a larger one. New ports take weeks, so this one is late if not started."}
+
+  # ---- change and expiry
+  - {id: ecs_no_circuit_breaker, area: change, kind: config, severity: medium, prod_only: true, title: ECS deployments with no automatic rollback, why: "A bad deployment keeps replacing tasks until someone notices. Change is the largest measured trigger of outages.", fix: "Turn on the deployment circuit breaker with rollback."}
+  - {id: cert_expiry, area: change, kind: config, severity: high, title: Certificate in use expires by the peak, why: "An expired certificate takes the service down at once, and fixing it during a freeze is itself a risky change.", fix: "Renew it before the change freeze."}
+
+# Published evidence behind the ranking. Figures are quoted from the source named, with its limits.
+# The order is a judgement for a bank's peak event, not a published ranking. Keep figures to what the
+# source says: nothing here is an estimate of this organisation's risk.
+causes:
+  - id: change
+    cause: Changes to live systems
+    evidence: '"Roughly 70% of outages are due to changes in a live system." Among the top triggers in thousands of Google postmortems, binary pushes were 37% and configuration pushes 31%.'
+    source: Google SRE Book (2016); SRE Workbook, Appendix C (2010 to 2017)
+    url: https://sre.google/workbook/postmortem-analysis/
+    limits: Google's own systems, not AWS customers or banks.
+    area: change
+    scan_note: Only rollback settings and certificates. A scan cannot see your rate of change.
+  - id: limits
+    cause: Limits and quotas, including no room for failover
+    evidence: AWS advises keeping a gap between quota and maximum use to cover failover, with 15% as an example buffer, and warns to anticipate a wait for increases.
+    source: AWS Well-Architected, REL01-BP06
+    url: https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/rel_manage_service_limits_suff_buffer_limits.html
+    limits: Guidance. No published figure for how many outages this causes.
+    area: limits
+  - id: overload
+    cause: Overload and retry storms
+    evidence: Retries at each of five layers can multiply load 243 times. Retries also prolonged AWS's own December 2021 event.
+    source: Amazon Builders' Library; AWS post-event summary, December 2021
+    url: https://aws.amazon.com/message/12721/
+    limits: An illustration of the mechanism, not a measure of how often it happens.
+    area: ""
+  - id: capacity
+    cause: Capacity that cannot reach the peak
+    evidence: In the same Google data, a change in user behaviour triggered 9% of outages and capacity management 5%.
+    source: SRE Workbook, Appendix C (2010 to 2017)
+    url: https://sre.google/workbook/postmortem-analysis/
+    limits: Across all days, not peak events, where this share is likely to be higher.
+    area: fixed
+  - id: dependency
+    cause: Depending on an AWS control plane during a regional event
+    evidence: In October 2025 a DNS fault in DynamoDB in us-east-1 lasted hours, and launching new EC2 instances kept failing for most of the event. Plans that scale or fail over by launching capacity were exposed.
+    source: AWS post-event summary, October 2025
+    url: https://aws.amazon.com/message/101925/
+    limits: One event. See the Multi-Region Report for the exposure.
+    area: ""
+  - id: zone
+    cause: One availability zone or region
+    evidence: Power was the leading cause of impactful data centre outages in the latest annual survey.
+    source: Uptime Institute, Annual Outage Analysis 2025
+    url: https://uptimeinstitute.com/about-ui/press-releases/uptime-announces-annual-outage-analysis-report-2025
+    limits: Data centres in general, not AWS.
+    area: ""
+    rules: [rds_single_az, ecs_single_task, eks_single_replica]
+  - id: addresses
+    cause: Running out of IP addresses
+    evidence: AWS documents this as a way for EKS pods to fail to start.
+    source: AWS re:Post knowledge centre
+    url: https://repost.aws/knowledge-center/eks-resolve-cluster-ip-address-issues
+    limits: The mechanism only. No published prevalence figure.
+    area: network
+  - id: kubernetes
+    cause: Kubernetes resources set wrongly
+    evidence: Over 65% of Kubernetes workloads use under half their requested CPU and memory, so requests are often set with no measurement behind them.
+    source: Datadog, Container Report 2023
+    url: https://www.datadoghq.com/container-report/
+    limits: Measures over-requesting, not outages. No published prevalence for OOMKills or throttling.
+    area: eks
+  - id: process
+    cause: Procedures not followed
+    evidence: Of data centre outages from human error, 85% stem from staff failing to follow procedures or from flawed procedures. IT and networking issues were 23% of impactful outages in 2024.
+    source: Uptime Institute, Annual Outage Analysis 2025
+    url: https://uptimeinstitute.com/about-ui/press-releases/uptime-announces-annual-outage-analysis-report-2025
+    limits: Data centres in general. A scan cannot see this; test the runbooks.
+    area: ""

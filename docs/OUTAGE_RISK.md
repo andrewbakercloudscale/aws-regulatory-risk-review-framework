@@ -1,0 +1,61 @@
+# Outage Risk Report
+
+What could fail at a peak such as Black Friday, in every account, and where to start. It compares what is running against the limits it will hit, and sets that beside the published evidence on what causes outages.
+
+## Running it
+
+- Console: **New scan**, tick **Run the outage risk checks**, then open the **Outage Risk Report** tab.
+- CLI: `exitrisk scan --profile mgmt --outage --spend-regions`, then `exitrisk pdf <scan-id> --view outage --outage answers.json`.
+- Permissions: section 4 of [IAM_PERMISSIONS.md](IAM_PERMISSIONS.md). **Check access** tests them. EKS workloads need a read-only access entry on each cluster.
+
+## What is checked
+
+| Area | Checks |
+|---|---|
+| Account and product limits | Service Quotas with a usage metric, in each region. IAM roles and policies, Route 53 zones, RDS instances and storage, load balancers, target groups, Lambda concurrency and code storage, S3 buckets, S3 request rate against the per-prefix limit, Amazon Connect concurrent calls and instance limits |
+| Busy fixed capacity | EC2 outside an Auto Scaling group, RDS, ElastiCache, OpenSearch, Redshift, ECS without scaling, provisioned DynamoDB, burstable instances out of credits, autoscalers near their maximum |
+| Storage | EBS provisioned beyond what the instance can deliver, RDS replica smaller than its source, burst credits, volumes asking for more than provisioned, time to full on RDS, OpenSearch, EFS, FSx and instance disks (with the CloudWatch agent) |
+| MSK | Broker disk and time to full, brokers out of balance, no storage autoscaling, CPU against AWS's advice of 60%, partitions per broker |
+| EKS | CPU request or memory limit under a floor, no limit, fixed replica counts, one replica, autoscaler at maximum, recent OOM kills, Pending pods, CoreDNS that cannot scale, node groups at maximum, subnet addresses |
+| Network | Subnets running out of addresses, NAT and load balancer port errors, rejected connections, Direct Connect bandwidth |
+| Change and certificates | ECS deployments with no circuit breaker, certificates expiring before the peak that will not renew by themselves |
+
+Every rule is in [`data/outage.yaml`](../src/exitrisk/data/outage.yaml).
+
+## How severity is set
+
+Measures are collected at scan time and judged when the report is built, so changing an answer needs no new scan.
+
+- **Now** is the highest hourly average of the last 35 days, which holds a month-end. API rate quotas use five-minute figures over 14 days.
+- **At peak** multiplies usage that rises with traffic by the expected load, default 2x. **This is an assumption**: replace it with last year's measured ratio of peak to normal. Counts of things someone creates, and storage, are not multiplied.
+- **Critical**: at or past the critical threshold (90%) now, or full before the peak. **High**: past 100% at peak, or full within 30 days after it. **Medium**: past the warning threshold (70%) at peak. Events and settings carry the severity set in the rule.
+- Outside production everything is one level lower, and some rules do not apply.
+- **Score**: 0 to 100, higher is worse, same diminishing formula as the Cloud Assurance Report. The overall score is weighted by spend.
+- **Start by** is the change freeze less a lead time per area. Those lead times are our judgement: AWS publishes none for quota increases. Ask your Technical Account Manager.
+
+## The evidence
+
+The report's section 6 shows each cause with its source and limits. In short:
+
+- **Change is the largest measured trigger.** Google: "roughly 70% of outages are due to changes in a live system". Across thousands of postmortems from 2010 to 2017: binary push 37%, configuration push 31%, user behaviour change 9%, processing pipeline 6%, service provider change 5%, performance decay 5%, capacity management 5%, hardware 2%.
+- **Limits and capacity are smaller on an average day**, and matter more at a peak. Nobody publishes how much more. AWS's Well-Architected guidance suggests a buffer such as 15% and warns to expect a wait for a quota increase.
+- **What this evidence is not.** Google's figures are one company's own systems, not AWS customers or banks. We found no published prevalence figure for OOM kills, API throttling, IP exhaustion or quota-related incidents, and no bank-specific data. The order of the report's areas is our judgement.
+
+So: hold the freeze and rollback first, then fix what the scan finds. A scan measures capacity far better than it measures change, so a report full of capacity findings does not mean capacity is the bigger risk.
+
+## What is not measured
+
+- **Short spikes.** Hourly averages hide them, so real headroom is lower than shown.
+- **Database connections** against `max_connections`, which depends on each parameter group.
+- **S3 request rates** need request metrics on the bucket, and compare the whole bucket against a per-prefix limit: well spread keys have far more room than shown.
+- **Quotas with no usage metric**, and Trusted Advisor's own limit checks.
+- **Whether the system survives the load**: a load test does that. So do DNS and connection-tracking limits on instances, runbooks and rollback rehearsals.
+- **Clusters that could not be read.** Shown as not read, never as a pass. Container Insights, where on, still gives memory and CPU against limits.
+- **Pod disruption budgets and the rate of change**; regional dependence is in the Multi-Region Report, change controls in the Cloud Assurance Report.
+
+## Answers file
+
+```json
+{"peak_date": "2026-11-27", "peak_multiplier": 2.0, "freeze_days": 14, "warn_pct": 70, "critical_pct": 90,
+ "production_patterns": "prod,prd", "cpu_request_floor_m": 100, "memory_limit_floor_mi": 256}
+```

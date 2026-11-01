@@ -27,8 +27,8 @@ from .review import Masker, _ids_to_names, add_cost, parse_json
 
 log = get_logger("ai")
 
-KINDS = ("multiregion", "assurance")
-LABELS = {"multiregion": "Multi-Region Report", "assurance": "Cloud Assurance Report"}
+KINDS = ("multiregion", "assurance", "outage")
+LABELS = {"multiregion": "Multi-Region Report", "assurance": "Cloud Assurance Report", "outage": "Outage Risk Report"}
 MAX_ACCOUNTS = 40  # the accounts that matter most; the rest are in the totals
 MAX_TOKENS = 12000
 
@@ -42,6 +42,13 @@ leaving AWS.""",
 audit and the team that answers the regulator. They want to know how well AWS accounts are controlled: \
 internet exposure, access, audit trail, threat detection, data protection, change management, resilience and \
 ownership, which accounts carry the most risk, and what to fix first.""",
+    "outage": """You are a principal AWS reliability engineer advising a bank's CIO, head of infrastructure and \
+the teams getting ready for a peak event such as Black Friday. They want to know what is most likely to fail \
+at peak: limits, capacity that cannot grow, storage filling up, Kafka, Amazon Connect, and EKS workloads. Be \
+concrete about what must start now, given the days left to the change freeze in the summary. Treat the expected \
+load multiplier as an assumption. A cluster that could not be read is unknown, not healthy. Published evidence \
+says changes cause more outages than capacity does: say what the freeze should cover. For an action's "when", \
+use "this week", "before the change freeze" or "before the peak".""",
 }
 
 RULES = """Rules:
@@ -263,7 +270,41 @@ def _assurance_facts(rep: dict) -> tuple[dict, list[dict]]:
     return facts, accounts
 
 
-FACTS = {"multiregion": _multiregion_facts, "assurance": _assurance_facts}
+def _outage_facts(rep: dict) -> tuple[dict, list[dict]]:
+    ranked = rep["accounts"]
+    accounts = [
+        {
+            k: a[k]
+            for k in ("id", "name", "ou_path", "rating", "score", "production", "critical", "high", "medium", "top")
+        }
+        | {"monthly_spend": _r(a["monthly_spend"])}
+        for a in ranked[:MAX_ACCOUNTS]
+    ]
+    worst = [
+        {k: f[k] for k in ("severity", "title", "account_id", "region", "res", "why", "hard")}
+        for f in rep["findings"] if f["production"] and f["severity"] in ("critical", "high")
+    ][:60]  # fmt: skip
+    facts = {
+        "summary": rep["summary"],
+        "focus": [
+            {k: x[k] for k in ("label", "critical", "high", "medium", "accounts", "top", "start_by", "late")}
+            for x in rep["focus"]
+        ],
+        "rules": [
+            {k: r[k] for k in ("title", "area", "findings", "accounts", "critical", "high")} for r in rep["rules"][:30]
+        ],
+        "worst_production_findings": worst,
+        "clusters_not_read": [
+            {k: c[k] for k in ("account", "name", "access")} for c in rep["clusters"] if c["access"] != "read"
+        ][:20],
+        "published_evidence": [{k: c[k] for k in ("cause", "evidence", "limits")} for c in rep["causes"]],
+        "accounts_not_listed": max(len(ranked) - MAX_ACCOUNTS, 0),
+        "accounts_not_checked": len(rep.get("not_checked") or []),
+    }
+    return facts, accounts
+
+
+FACTS = {"multiregion": _multiregion_facts, "assurance": _assurance_facts, "outage": _outage_facts}
 
 
 def _prompt(kind: str, facts: dict, accounts: list[dict]) -> str:

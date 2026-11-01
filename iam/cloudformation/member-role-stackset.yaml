@@ -65,6 +65,46 @@ Resources:
                   - sns:ListSubscriptions
                   - states:DescribeStateMachine
                 Resource: "*"
+              # Outage risk checks: quotas, CloudWatch figures, storage and capacity settings, read-only.
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - servicequotas:ListServiceQuotas
+                  - servicequotas:ListAWSDefaultServiceQuotas
+                  - application-autoscaling:DescribeScalableTargets
+                  - kafka:ListClustersV2
+                  - connect:ListInstances
+                  - connect:ListUsers
+                  - connect:ListQueues
+                  - connect:ListPhoneNumbers
+                  - connect:ListRoutingProfiles
+                  - connect:ListContactFlows
+                  - eks:ListClusters
+                  - eks:DescribeCluster
+                  - eks:ListNodegroups
+                  - eks:DescribeNodegroup
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeSubnets
+                  - route53:GetAccountLimit
+                  - rds:DescribeDBInstances
+                  - rds:DescribeAccountAttributes
+                  - elasticloadbalancing:DescribeAccountLimits
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeTargetGroups
+                  - autoscaling:DescribeAutoScalingGroups
+                  - ecs:ListClusters
+                  - ecs:ListServices
+                  - ecs:DescribeServices
+                  - es:ListDomainNames
+                  - es:DescribeDomains
+                  - lambda:GetAccountSettings
+                  - directconnect:DescribeConnections
+                  - acm:ListCertificates
+                  - iam:GetAccountSummary
+                  - s3:ListAllMyBuckets
+                Resource: "*"
               # Cloud Assurance Framework checks: security and control settings, read-only. The AWS managed
               # policy SecurityAudit grants all of these (and more) if you prefer to attach that instead.
               - Effect: Allow

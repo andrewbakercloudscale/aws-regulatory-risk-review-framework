@@ -7,6 +7,7 @@ The console is **AWS Cloud Risk Review**: three separate reports for three audie
 | **Exit Risk Report** | Executive committee, board | How hard, costly and slow it would be to leave AWS |
 | **Multi-Region Report** | CIO, risk, infrastructure | What a second AWS region costs to run, adds to each team, and how fast each service recovers |
 | **Cloud Assurance Report** | CISO, risk, audit | How well each account is controlled, scored against the rules you choose |
+| **Outage Risk Report** | CIO, infrastructure, SRE | What could fail at a peak such as Black Friday: limits, capacity that cannot grow, storage, MSK, Connect and EKS workloads, in every account |
 
 Each can have its own optional AI read, ticked in New scan or run later from the report.
 
@@ -180,6 +181,8 @@ exitrisk scan --profile mgmt --dependencies --inventory-scope material --role Ex
 exitrisk scan --profile mgmt --dependencies --spend-regions --role ExitRiskReadOnly       # only regions with spend: about twice as fast
 exitrisk scan --profile mgmt --assurance --spend-regions              # plus the Cloud Assurance Framework checks
 exitrisk pdf <scan-id> --view assurance --include prod                # Cloud Assurance Framework Report as PDF
+exitrisk scan --profile mgmt --outage --spend-regions                 # plus the outage risk checks
+exitrisk pdf <scan-id> --view outage                                  # Outage Risk Report as PDF
 exitrisk scan --profile mgmt --target gcp                               # exit target: azure (default), gcp, oci, sovereign, onprem, datacenter
 exitrisk pdf <scan-id> --include prod --questionnaire answers.json --out board-pack.pdf  # PDF without a browser
 exitrisk pdf <scan-id> --include prod --onepage                      # one-page ExCo summary
@@ -323,6 +326,7 @@ Full detail, including the estimate model and its limitations: [docs/METHODOLOGY
 | [METHODOLOGY.md](docs/METHODOLOGY.md) | Scoring, weighting and estimate formulas; assumptions; limitations |
 | [AI_REVIEW.md](docs/AI_REVIEW.md) | The optional AI review: providers, passes, what is sent, keys |
 | [CLOUD_ASSURANCE.md](docs/CLOUD_ASSURANCE.md) | The Cloud Assurance Framework Report: every rule, rulesets, scoring, permissions |
+| [OUTAGE_RISK.md](docs/OUTAGE_RISK.md) | The Outage Risk Report: what is checked, how severity is set, the evidence on outage causes, what is not measured |
 | [MULTI_REGION.md](docs/MULTI_REGION.md) | The Multi-Region Report: run and build cost, team growth, recovery time per service, region choice |
 | [SERVICE_CATALOG.md](docs/SERVICE_CATALOG.md) | Every service's tier, rationale, migration path, equivalents, duration |
 | [IAM_PERMISSIONS.md](docs/IAM_PERMISSIONS.md) | Exact permissions; StackSet / Terraform for the member role |

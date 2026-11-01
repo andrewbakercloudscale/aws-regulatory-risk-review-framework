@@ -27,7 +27,7 @@ def _assurance_probes_allowed(monkeypatch):
     real = preflight.probe_actions
 
     def probe(session, account_id, probes):
-        if probes in (preflight.ASSURANCE_PROBES, preflight.ASSURANCE_ORG_PROBES):
+        if probes in (preflight.ASSURANCE_PROBES, preflight.ASSURANCE_ORG_PROBES, preflight.OUTAGE_PROBES):
             return [], []
         return real(session, account_id, probes)
 
@@ -128,7 +128,7 @@ def test_management_account_with_full_access_is_ready(monkeypatch):
     assert [c["id"] for c in r["checks"]] == [cid for cid, _ in preflight.STEPS]
     # The organisation-level assurance reads are tested in the management account; the deep scan
     # (and the member assurance reads) and the AI review are not set up.
-    assert [c["status"] for c in r["checks"]] == ["ok"] * 8 + ["skip"] * 6
+    assert [c["status"] for c in r["checks"]] == ["ok"] * 8 + ["skip"] * 7
     assert probed == [preflight.ASSURANCE_ORG_PROBES]
     cost = next(c for c in r["checks"] if c["id"] == "cost")
     assert "40 accounts in 1 region " in cost["detail"]  # one call proves the multi-region data too
@@ -148,7 +148,8 @@ def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):
     assert status == {
         "identity": "ok", "organization": "warn", "ou_tree": "fail", "accounts": "skip", "account_tags": "skip",
         "cost": "warn", "commitments": "ok", "assurance_org": "skip", "deep_scan": "skip", "inventory_reads": "skip",
-        "dependency_reads": "skip", "assurance_reads": "skip", "assignments": "skip", "ai": "skip",
+        "dependency_reads": "skip", "assurance_reads": "skip", "outage_reads": "skip", "assignments": "skip",
+        "ai": "skip",
     }  # fmt: skip
     org = next(c for c in r["checks"] if c["id"] == "organization")
     assert "111111111111" in org["fix"]

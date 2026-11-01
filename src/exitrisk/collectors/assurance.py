@@ -176,6 +176,8 @@ class Results:
 class Ctx:
     """What every task of one account shares."""
 
+    what = "assurance"  # names the scan step in log lines and issues
+
     def __init__(self, session, account_id: str, regions: list[str], info: dict):
         self.session = session
         self.account_id = account_id
@@ -1687,12 +1689,12 @@ def _run(ctx: Ctx, task: tuple, region: str | None) -> None:
         code_, msg, hint = describe_exception(exc)
         for cid in checks:
             ctx.r.unknown(cid, f"{code or 'error'} in {where}")
-        log.warning("assurance %s %s %s failed: %s", ctx.account_id, where, name, code,
+        log.warning("%s %s %s %s failed: %s", ctx.what, ctx.account_id, where, name, code,
                     extra={"account_id": ctx.account_id, "region": region, "error_code": code})  # fmt: skip
-        ctx.issue(Issue("warning", "assurance", f"{name} in {where}: {msg}", hint, account_id=ctx.account_id,
+        ctx.issue(Issue("warning", ctx.what, f"{name} in {where}: {msg}", hint, account_id=ctx.account_id,
                         region=region, error_code=code_))  # fmt: skip
     except Exception as exc:  # a bug or an odd answer: the other checks still run
-        log.exception("assurance %s %s %s failed with an unexpected error", ctx.account_id, region, name)
+        log.exception("%s %s %s %s failed with an unexpected error", ctx.what, ctx.account_id, region, name)
         for cid in checks:
             ctx.r.unknown(cid, f"{type(exc).__name__} in {region or 'global'}")
 

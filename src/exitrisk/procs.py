@@ -27,6 +27,7 @@ from concurrent.futures.process import BrokenProcessPool
 import boto3
 
 from .collectors import assurance, inventory
+from .collectors import outage as outage_checks
 from .config import settings
 from .logging_config import get_logger, run_id_var
 
@@ -102,6 +103,18 @@ def _assurance(creds: tuple[str, str, str | None], region: str | None, account_i
         run_id_var.reset(token)
 
 
+def _outage(creds: tuple[str, str, str | None], region: str | None, account_id: str, regions, info, run_id):
+    """In a worker: one account's outage risk checks."""
+    token = run_id_var.set(run_id)
+    try:
+        session = boto3.Session(
+            aws_access_key_id=creds[0], aws_secret_access_key=creds[1], aws_session_token=creds[2], region_name=region
+        )
+        return outage_checks.account_checks(session, account_id, regions, info)
+    finally:
+        run_id_var.reset(token)
+
+
 class InventoryPool:
     """Worker processes for one deep scan. Safe to call from the scan's many threads at once."""
 
@@ -140,6 +153,13 @@ class InventoryPool:
         """As assurance.account_checks, in a worker, with the same fallback."""
         return self._account(
             _assurance, lambda: assurance.account_checks(session, account_id, regions, info), session, account_id,
+            regions, info,
+        )  # fmt: skip
+
+    def outage_account(self, session, account_id: str, regions, info: dict):
+        """As outage.account_checks, in a worker, with the same fallback."""
+        return self._account(
+            _outage, lambda: outage_checks.account_checks(session, account_id, regions, info), session, account_id,
             regions, info,
         )  # fmt: skip
 

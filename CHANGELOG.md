@@ -6,6 +6,16 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **Outage Risk Report**, a fourth report. A new optional scan step reads every account's Service
+  Quotas and usage, account and product limits (IAM, Route 53, RDS, load balancers, Lambda, S3,
+  Amazon Connect, Direct Connect), CloudWatch utilisation over 35 days on capacity that cannot grow
+  by itself, storage mismatches and time to full, MSK disk and CPU, subnet addresses, and EKS
+  workloads with a low CPU request, low memory limit, fixed replica count or an autoscaler at its
+  maximum. The report ranks where to focus before a peak date (Black Friday by default) beside the
+  published evidence on what causes outages. Needs new read permissions in the member role;
+  EKS workloads also need a read-only access entry on each cluster.
+
 ### Changed
 - The console is now **AWS Cloud Risk Review**, with three separate reports: Exit Risk Report,
   Multi-Region Report and Cloud Assurance Report.

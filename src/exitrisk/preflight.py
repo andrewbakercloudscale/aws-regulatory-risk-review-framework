@@ -202,6 +202,26 @@ ASSURANCE_PROBES = [
     ("fis:ListExperiments", "fis", "list_experiments", {"maxResults": 1}),
     ("dynamodb:DescribeContinuousBackups", "dynamodb", "describe_continuous_backups", {"TableName": _NO_SUCH}),
 ]  # fmt: skip
+# Outage risk checks in a member account: the reads SecurityAudit does not cover are named first.
+OUTAGE_PROBES = [
+    ("cloudwatch:GetMetricData", "cloudwatch", "get_metric_data",
+     {"MetricDataQueries": [{"Id": "q", "Expression": "1"}], "StartTime": 0, "EndTime": 3600}),
+    ("servicequotas:ListServiceQuotas", "service-quotas", "list_service_quotas",
+     {"ServiceCode": "ec2", "MaxResults": 1}),
+    ("servicequotas:ListAWSDefaultServiceQuotas", "service-quotas", "list_aws_default_service_quotas",
+     {"ServiceCode": "ec2", "MaxResults": 1}),
+    ("application-autoscaling:DescribeScalableTargets", "application-autoscaling", "describe_scalable_targets",
+     {"ServiceNamespace": "ecs", "MaxResults": 1}),
+    ("kafka:ListClustersV2", "kafka", "list_clusters_v2", {"MaxResults": 1}),
+    ("connect:ListInstances", "connect", "list_instances", {"MaxResults": 1}),
+    ("eks:ListNodegroups", "eks", "list_nodegroups", {"clusterName": _NO_SUCH}),
+    ("ec2:DescribeInstanceTypes", "ec2", "describe_instance_types", {"MaxResults": 5}),
+    ("ec2:DescribeSubnets", "ec2", "describe_subnets", {"MaxResults": 5}),
+    ("route53:GetAccountLimit", "route53", "get_account_limit", {"Type": "MAX_HOSTED_ZONES_BY_OWNER"}),
+    ("rds:DescribeAccountAttributes", "rds", "describe_account_attributes", {}),
+    ("elasticloadbalancing:DescribeAccountLimits", "elbv2", "describe_account_limits", {"PageSize": 1}),
+    ("lambda:GetAccountSettings", "lambda", "get_account_settings", {}),
+]  # fmt: skip
 # The organisation-level assurance reads, in the management account.
 ASSURANCE_ORG_PROBES = [
     ("organizations:ListPolicies", "organizations", "list_policies",
@@ -480,6 +500,7 @@ INV_LABEL = "Count resources in a member account"
 DEP_LABEL = "Read integrations in a member account"
 ASSURANCE_LABEL = "Cloud assurance reads in a member account"
 ASSURANCE_ORG_LABEL = "Cloud assurance reads in the management account"
+OUTAGE_LABEL = "Outage risk reads in a member account"
 
 
 ASSIGN_LABEL = "Permission set in every account"
@@ -493,7 +514,7 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
 
     def skip_rest(why: str, assignments: str | None = None) -> None:
         for cid, label in (("inventory_reads", INV_LABEL), ("dependency_reads", DEP_LABEL),
-                           ("assurance_reads", ASSURANCE_LABEL)):  # fmt: skip
+                           ("assurance_reads", ASSURANCE_LABEL), ("outage_reads", OUTAGE_LABEL)):  # fmt: skip
             checks.append(Check(cid, label, "skip", why))
         if assignments is not None:
             checks.append(Check("assignments", ASSIGN_LABEL, "skip", assignments))
@@ -550,13 +571,14 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
         ("inventory_reads", INV_LABEL, INVENTORY_PROBES, "Inventory scans will miss these"),
         ("dependency_reads", DEP_LABEL, DEPENDENCY_PROBES, "Dependency scans will miss these"),
         ("assurance_reads", ASSURANCE_LABEL, ASSURANCE_PROBES, "The assurance checks will show these as not measured"),
+        ("outage_reads", OUTAGE_LABEL, OUTAGE_PROBES, "The outage risk checks will show these as not measured"),
     )
     # The sets at once: every call goes to a different service.
     results = pmap(lambda st: probe_actions(member, member_id, st[2]), sets, workers=len(sets))
     for (cid, label, probes, what), (denied, other) in zip(sets, results, strict=True):
         policy = "iam/member-account-role-policy.json"
         check = _probe_check(cid, label, probes, denied, other, member_id, what, policy)
-        if cid != "assurance_reads" and denied:
+        if cid not in ("assurance_reads", "outage_reads") and denied:
             check.fix = f"{what}. Grant them ({policy})."
         checks.append(check)
     if role_name:
@@ -623,12 +645,13 @@ _LATER = [
     ("inventory_reads", INV_LABEL),
     ("dependency_reads", DEP_LABEL),
     ("assurance_reads", ASSURANCE_LABEL),
+    ("outage_reads", OUTAGE_LABEL),
     ("assignments", ASSIGN_LABEL),
     ("ai", AI_LABEL),
 ]
 # Checks a quick scan can do without: a failure there is a warning, not "Not ready".
 OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads", "assurance_org",
-            "assurance_reads", "assignments", "ai"}  # fmt: skip
+            "assurance_reads", "outage_reads", "assignments", "ai"}  # fmt: skip
 # Every run reports exactly these checks, in this order (skipped ones included).
 STEPS = [("identity", "Sign in to AWS"), *_LATER]
 
@@ -674,7 +697,9 @@ def _result(checks: list[Check], ctx: dict) -> dict:
 def admin_request(result: dict) -> str:
     """Plain-text message for the AWS administrator, specific to what failed."""
     missing = [c for c in result["checks"] if c["status"] in ("fail", "warn") and c["needs"]]
-    member_gaps = [c for c in missing if c["id"] in ("inventory_reads", "dependency_reads", "assurance_reads")]
+    member_gaps = [
+        c for c in missing if c["id"] in ("inventory_reads", "dependency_reads", "assurance_reads", "outage_reads")
+    ]
     missing = [c for c in missing if c not in member_gaps]
     wrong_account = any(c["id"] == "organization" and c["status"] == "warn" for c in result["checks"])
     mgmt = result.get("management_account_id") or "<management account id>"

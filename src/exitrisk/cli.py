@@ -198,6 +198,7 @@ def _scan(args) -> int:
         inventory=args.inventory or args.dependencies,
         dependencies=args.dependencies,
         assurance=args.assurance,
+        outage=args.outage,
         inventory_scope=args.inventory_scope,
         regions=args.regions.split(",") if args.regions else None,
         region_scope="spend" if args.spend_regions else "all",
@@ -299,6 +300,10 @@ def _report(args) -> int:
         from .assurance import AssuranceAnswers, build_assurance
 
         report = build_assurance(scan, flt, AssuranceAnswers(**(_answers(args.assurance, "assurance answers") or {})))
+    elif args.view == "outage":
+        from .outage import OutageAnswers, build_outage
+
+        report = build_outage(scan, flt, OutageAnswers(**(_answers(args.outage, "outage answers") or {})))
     else:
         report = build_report(scan, flt, q, weighting=args.weighting)
     text = json.dumps(report, indent=2, default=str)
@@ -329,6 +334,8 @@ def _pdf(args) -> int:
         raise UsageError(f"--onepage summarises the exit-risk report; drop --view {args.view}")
     if args.view == "assurance" and args.out == "exit-risk-report.pdf":
         args.out = "cloud-assurance-report.pdf"
+    if args.view == "outage" and args.out == "exit-risk-report.pdf":
+        args.out = "outage-risk-report.pdf"
     if args.onepage and args.out == "exit-risk-report.pdf":
         args.out = "exit-risk-summary.pdf"
 
@@ -363,6 +370,7 @@ def _pdf(args) -> int:
                 "view": args.view if args.view != "exit" else None,
                 "mr": json.dumps(_answers(args.multiregion, "multi-region answers")) if args.multiregion else None,
                 "as": json.dumps(_answers(args.assurance, "assurance answers")) if args.assurance else None,
+                "or": json.dumps(_answers(args.outage, "outage answers")) if args.outage else None,
                 "onepage": "1" if args.onepage else None,
                 "print": "1",
             }.items()
@@ -469,6 +477,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also run the Cloud Assurance Framework checks in every account (needs --role or a permission set)",
     )
+    p.add_argument(
+        "--outage",
+        action="store_true",
+        help="also run the outage risk checks in every account: limits, utilisation, storage, MSK, Connect, EKS",
+    )
     p.add_argument("--label")
     p.add_argument(
         "--target",
@@ -508,9 +521,14 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument(
             "--view",
             default="exit",
-            choices=["exit", "multiregion", "assurance"],
+            choices=["exit", "multiregion", "assurance", "outage"],
             help="exit = the exit-risk report (default); multiregion = the cost of running a second region; "
-            "assurance = the Cloud Assurance Framework Report (needs a scan with --assurance)",
+            "assurance = the Cloud Assurance Framework Report (needs a scan with --assurance); "
+            "outage = the Outage Risk Report (needs a scan with --outage)",
+        )
+        p.add_argument(
+            "--outage",
+            help="JSON file with the outage answers (peak_date, peak_multiplier, ...); see docs/OUTAGE_RISK.md",
         )
         p.add_argument(
             "--assurance",

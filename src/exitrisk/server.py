@@ -24,7 +24,7 @@ from typing import Annotated
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,8 @@ from .filtering import AccountFilter, FilterError
 from .issues import describe_exception
 from .logging_config import configure_logging, get_logger, tail_log
 from .multiregion import MultiRegionAnswers, build_multiregion
+from .outage import OutageAnswers, build_outage, findings_csv
+from .outage import catalog as outage_catalog
 from .scanner import ScanParams, get_job, running_scans, start_scan
 from .scoring import build_report
 
@@ -92,6 +94,7 @@ class ScanRequest(BaseModel):
     regions: list[REGION] | None = Field(None, max_length=40)
     region_scope: str = Field("all", pattern="^(all|spend)$")
     assurance: bool = False
+    outage: bool = False
     label: str = Field("", max_length=120)
     target: str = Field("azure", pattern=TARGET_PATTERN)
     # Set to run the AI review on the finished scan, with the report as the console will show it.
@@ -153,19 +156,21 @@ class AIAfterScanRequest(BaseModel):
     questionnaire: Questionnaire = Questionnaire()
     weighting: str = Field("spend", pattern=r"^(balanced|spend|equal)$")
     # Which reports get an AI read when the scan finishes: each has its own audience and its own section.
-    reports: list[Annotated[str, Field(pattern="^(exit|multiregion|assurance)$")]] = Field(
-        default_factory=lambda: ["exit"], min_length=1, max_length=3
+    reports: list[Annotated[str, Field(pattern="^(exit|multiregion|assurance|outage)$")]] = Field(
+        default_factory=lambda: ["exit"], min_length=1, max_length=4
     )
     multiregion: MultiRegionAnswers = MultiRegionAnswers()
     assurance: AssuranceAnswers = AssuranceAnswers()
+    outage: OutageAnswers = OutageAnswers()
 
 
 class AIInsightsRequest(BaseModel):
     scan_id: str
-    kind: str = Field(pattern="^(multiregion|assurance)$")
+    kind: str = Field(pattern="^(multiregion|assurance|outage)$")
     filter: FilterModel = FilterModel()
     multiregion: MultiRegionAnswers = MultiRegionAnswers()
     assurance: AssuranceAnswers = AssuranceAnswers()
+    outage: OutageAnswers = OutageAnswers()
 
 
 ScanRequest.model_rebuild()
@@ -189,6 +194,12 @@ class AssuranceRequest(BaseModel):
     scan_id: str
     filter: FilterModel = FilterModel()
     answers: AssuranceAnswers = AssuranceAnswers()
+
+
+class OutageRequest(BaseModel):
+    scan_id: str
+    filter: FilterModel = FilterModel()
+    answers: OutageAnswers = OutageAnswers()
 
 
 class OwnershipExportRequest(AssuranceRequest):
@@ -393,6 +404,8 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
                 raise HTTPException(400, "the AI review needs a deep scan: choose a dependency (or inventory) scan")
             if "assurance" in req.ai_review.reports and not req.assurance:
                 raise HTTPException(400, "AI insights on the Cloud Assurance Report need the Cloud Assurance checks")
+            if "outage" in req.ai_review.reports and not req.outage:
+                raise HTTPException(400, "AI insights on the Outage Risk Report need the outage risk checks")
             # Fail before the scan, not half an hour later, if the AI review is not set up.
             if not ai_providers.settings_saved():
                 raise HTTPException(400, "the AI review is not set up yet: open Settings, AI configuration")
@@ -446,7 +459,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
                         AIInsightsRequest(
                             scan_id=scan_id,
                             kind=kind,
-                            **want.model_dump(include={"filter", "multiregion", "assurance"}),
+                            **want.model_dump(include={"filter", "multiregion", "assurance", "outage"}),
                         )
                     )
             except HTTPException as exc:
@@ -594,6 +607,36 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
     @app.post("/api/assurance/ownership-export")
     def assurance_ownership(req: OwnershipExportRequest):
         return ownership_export(_assurance(req), req.approved, req.tag)
+
+    # ------------------------------------------------------------------ Outage risk
+    def _outage(req: OutageRequest) -> dict:
+        try:
+            scan = store.load_scan(req.scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        try:
+            flt = AccountFilter(**req.filter.model_dump())
+        except FilterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return build_outage(scan, flt, req.answers)
+
+    @app.post("/api/outage")
+    def outage(req: OutageRequest):
+        return _outage(req)
+
+    @app.post("/api/outage/csv")
+    def outage_csv(req: OutageRequest):
+        name = f"outage-risk-{req.scan_id}.csv"
+        return Response(
+            findings_csv(_outage(req)),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    @app.get("/api/outage/catalog")
+    def outage_rules():
+        cat = outage_catalog()
+        return {k: cat[k] for k in ("version", "areas", "rules")}
 
     @app.get("/api/assurance/catalog")
     def assurance_catalog():
@@ -749,6 +792,11 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             if not rep["summary"]["accounts_selected"]:
                 raise HTTPException(409, "no accounts are chosen for a second region")
             basis = {"filter": flt.to_dict()["description"], "accounts": rep["summary"]["accounts_selected"]}
+        elif req.kind == "outage":
+            rep = build_outage(scan, flt, req.outage)
+            if not rep.get("available"):
+                raise HTTPException(409, "this scan has no outage risk checks: start a scan with them ticked")
+            basis = {"filter": flt.to_dict()["description"], "accounts": rep["summary"]["accounts"]}
         else:
             rep = build_assurance(scan, flt, req.assurance)
             if not rep.get("available"):

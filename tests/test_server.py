@@ -149,3 +149,15 @@ def test_ai_insights_endpoints_check_their_input():
     assert c.get("/api/ai/insights/abc/exit").status_code == 400
     r = c.post("/api/ai/insights", json={"scan_id": "nope", "kind": "multiregion"}, headers={"X-ExitRisk": "1"})
     assert r.status_code == 404
+
+
+def test_outage_report_and_csv():
+    c = client()
+    scan_id = c.post("/api/scans/demo", headers=H).json()["id"]
+    r = c.post("/api/outage", headers=H, json={"scan_id": scan_id})
+    assert r.status_code == 200 and r.json()["available"] is True
+    out = c.post("/api/outage/csv", headers=H, json={"scan_id": scan_id, "answers": {"peak_multiplier": 1.5}})
+    assert out.status_code == 200 and out.headers["content-type"].startswith("text/csv")
+    bad = c.post("/api/outage", headers=H, json={"scan_id": scan_id, "answers": {"peak_multiplier": 9}})
+    assert bad.status_code == 422
+    assert c.post("/api/outage", headers=H, json={"scan_id": "nope"}).status_code in (400, 404)

@@ -97,6 +97,14 @@ def _tag_env(account: dict) -> str:
     return tags.get("environment") or tags.get("env") or tags.get("stage") or ""
 
 
+def is_production(acct: dict, prod_p: list[str]) -> bool:
+    """An environment tag decides; with none, the account name or OU path matching the patterns."""
+    env = _tag_env(acct)
+    if env:
+        return env in ("prod", "production", "prd")
+    return _matches(acct.get("name", ""), prod_p) or _matches(acct.get("ou_path", ""), prod_p)
+
+
 def _sensitive_bucket(b: dict, patterns: list[str]) -> str:
     """Why the bucket counts as sensitive ("" if it does not)."""
     for k, v in (b.get("tags") or {}).items():
@@ -194,11 +202,8 @@ def build_assurance(scan: dict, account_filter: AccountFilter | None = None, a: 
         if raw is None:
             continue
         ax = _Account(raw)
-        name, path = acct.get("name", ""), acct.get("ou_path", "")
-        env = _tag_env(acct)
-        production = env in ("prod", "production", "prd") or _matches(name, prod_p) or _matches(path, prod_p)
-        if env and env not in ("prod", "production", "prd"):
-            production = False
+        name = acct.get("name", "")
+        production = is_production(acct, prod_p)
         edge = _matches(name, edge_p)
         critical = classify(acct, crit_p)[0]
         buckets = ax.facts.get("buckets") or []

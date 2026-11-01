@@ -24,6 +24,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from . import procs, sso, store
 from .aws_session import ClientCache, caller_identity, make_session, member_session
 from .collectors import assurance, assurance_org, cost, inventory, organizations
+from .collectors import outage as outage_checks
 from .config import settings
 from .issues import Issue, describe_exception, is_fatal_auth_error
 from .logging_config import get_logger, run_id_var
@@ -106,6 +107,8 @@ class ScanParams:
     # Cloud Assurance Framework checks: governance and control settings in every account, plus the
     # organisation-level controls read in the management account. Independent of the inventory.
     assurance: bool = False
+    # Outage risk checks: limits, utilisation, storage and EKS workloads in every account.
+    outage: bool = False
     label: str = ""
     target: str = "azure"  # exit target asked at scan time; seeds the estimate questionnaire
 
@@ -122,9 +125,13 @@ class ScanParams:
             raise ValueError(f"region_scope must be one of {', '.join(REGION_SCOPES)}")
         if not 1 <= self.months <= 12:
             raise ValueError("months must be between 1 and 12")
-        if (self.inventory or self.assurance) and not self.role_name and not sso.profile_permission_set(self.profile):
+        if (
+            (self.inventory or self.assurance or self.outage)
+            and not self.role_name
+            and not sso.profile_permission_set(self.profile)
+        ):
             raise ValueError(
-                "a member-account role name is required for the resource inventory and the assurance checks "
+                "a member-account role name is required for the resource inventory, assurance and outage risk checks "
                 "(or use an IAM Identity Center profile, whose permission set is then used in each account)"
             )
 
@@ -336,6 +343,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None
         "period": data.get("period"),
         "inventory": data.get("inventory", {}),
         "assurance": data.get("assurance"),
+        "outage": data.get("outage"),
         "unavailable": data.get("unavailable", {}),
         "issues": [i.to_dict() for i in job.issues],
     }
@@ -596,16 +604,26 @@ def run_scan(job: ScanJob) -> dict:
 
     # 4. Optional deep inventory through a role in each member account.
     caller = data["identity"]["account_id"]
-    regions_for = _region_picker(job) if p.inventory or p.assurance else None
+    regions_for = _region_picker(job) if p.inventory or p.assurance or p.outage else None
+    steps = [s for s, on in (("inventory", p.inventory), ("assurance", p.assurance), ("outage", p.outage)) if on]
+
+    def span_of(step: str) -> tuple[int, int]:
+        at, width = steps.index(step), 38 // len(steps)
+        return 60 + at * width, 98 if step == steps[-1] else 60 + (at + 1) * width
+
     if p.inventory:
-        span = (60, 80) if p.assurance else (60, 98)
-        data["inventory"] = _run_inventory(job, session, accounts, caller, regions_for, span,
-                                           then="Assurance checks" if p.assurance else None)  # fmt: skip
+        then = STEP_LABELS[steps[1]] if len(steps) > 1 else None
+        data["inventory"] = _run_inventory(job, session, accounts, caller, regions_for, span_of("inventory"), then=then)
 
     # 5. Optional Cloud Assurance Framework checks: the organisation's controls, then each account.
     if p.assurance:
-        span = (80, 98) if p.inventory else (60, 98)
-        data["assurance"] = _run_assurance(job, session, accounts, caller, regions_for, tree, known, span)
+        data["assurance"] = _run_assurance(
+            job, session, accounts, caller, regions_for, tree, known, span_of("assurance")
+        )
+
+    # 6. Optional outage risk checks in each account.
+    if p.outage:
+        data["outage"] = _run_outage(job, session, accounts, caller, regions_for, span_of("outage"))
 
     status = "complete" if not any(i.severity in ("error", "critical") for i in job.issues) else "partial"
     job.update("saving", 99, "Saving the scan")
@@ -614,6 +632,9 @@ def run_scan(job: ScanJob) -> dict:
     store.save_scan(doc)
     job.finish(status, f"Scan {status}: {len(accounts)} account(s), {len(job.issues)} issue(s)")
     return doc
+
+
+STEP_LABELS = {"assurance": "Assurance checks", "outage": "Outage risk checks"}
 
 
 def _region_picker(job: ScanJob):
@@ -741,6 +762,26 @@ def _run_assurance(job: ScanJob, session, accounts, caller: str, regions_for, tr
     }
 
 
+def _run_outage(job: ScanJob, session, accounts, caller: str, regions_for, span) -> dict:
+    """Each active account's limits, utilisation, storage and EKS workloads."""
+    active = [a for a in accounts if a.status in ("ACTIVE", "UNKNOWN")]
+    busiest = _busiest_regions(job)
+    services: dict[str, set[str]] = {}
+    for r in job.data.get("costs") or []:
+        if float(r.get("amount") or 0) > 0:
+            services.setdefault(r["account_id"], set()).add(r["service"])
+
+    def read(workers, sess, account):
+        info = {
+            "services": sorted(services[account.id]) if account.id in services else None,
+            "home": busiest.get(account.id),
+        }
+        fn = workers.outage_account if workers else outage_checks.account_checks
+        return fn(sess, account.id, regions_for(account.id), info)
+
+    return {"accounts": _each_account(job, session, active, caller, read, "outage", "read", span)}
+
+
 def eta_seconds(elapsed: float, done: int, total: int, parallel: int = 1) -> int | None:
     """Seconds left at the pace so far. Accounts run ``parallel`` at a time, so the first ones all
     finish after a full account's time: the pace means something once that many are done."""
@@ -830,7 +871,7 @@ def _each_account(
         InventoryPool(min(settings.processes, len(active))) if settings.processes > 1 and len(active) > 1 else None
     )
     pool = ThreadPoolExecutor(max_workers=settings.max_workers)
-    label = "Assurance checks" if what == "assurance" else None
+    label = STEP_LABELS.get(what)
     step = label or "Deep scan"
     t0 = time.monotonic()
     with workers or nullcontext():

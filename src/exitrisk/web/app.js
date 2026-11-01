@@ -393,6 +393,9 @@
     state.as = null;
     state.asApproved = {};
     if (state.view === "assurance") loadAssurance();
+    state.or = null;
+    state.orAccount = "";
+    if (state.view === "outage") loadOutage();
     return true;
   }
 
@@ -1630,7 +1633,7 @@
   }
 
   // The new-scan dialog's AI review option follows the saved configuration.
-  const SCAN_AI = [["#sAi", ""], ["#sAiMr", ".mr"], ["#sAiAs", ".as"]];
+  const SCAN_AI = [["#sAi", ""], ["#sAiMr", ".mr"], ["#sAiAs", ".as"], ["#sAiOr", ".or"]];
   function syncScanAi() {
     const ready = aiReady();
     for (const [id, suffix] of SCAN_AI) {
@@ -1641,12 +1644,14 @@
     // The report on screen is the one the analyst is working on: its AI insights are ticked for them
     // (and the assurance checks the Cloud Assurance Report needs). Not the exit AI review: it forces a
     // dependency scan of 5 to 40 minutes, so that stays the analyst's choice.
-    const own = { multiregion: "#sAiMr", assurance: "#sAiAs" }[document.body.dataset.view];
+    const own = { multiregion: "#sAiMr", assurance: "#sAiAs", outage: "#sAiOr" }[document.body.dataset.view];
     if (ready && own) $(own).checked = true;
     if (document.body.dataset.view === "assurance") $("#sAssurance").checked = true;
     // A review of billing alone sees spend, not resources or integrations: it comes with a dependency scan.
     if ($("#sAi").checked) needDeepScan();
     if ($("#sAiAs").checked) $("#sAssurance").checked = true;
+    if (document.body.dataset.view === "outage") $("#sOutage").checked = true;
+    if ($("#sAiOr").checked) $("#sOutage").checked = true;
     $("#sAiInfo").textContent = ready ? `With ${ready}. Tick the reports that should get an AI read; each is written for that report's readers.`
       : "Not set up yet: choose the AI model under AI configuration first.";
   }
@@ -2298,7 +2303,286 @@
   const AVAIL_TIER = { available: 1, missing: 5, unverified: 3, global: 2 };
   const MR_ROWS = 25;
 
-  const VIEWS = ["exit", "multiregion", "assurance"];
+  // ------------------------------------------------------------------ Outage risk view
+  const LS_OR = "exitrisk.outage.v1";
+  const OR_NUMS = new Set(["peak_multiplier", "freeze_days", "warn_pct", "critical_pct", "cpu_request_floor_m", "memory_limit_floor_mi"]);
+  const OR_PAGE = 50;
+
+  function loadOrAnswers() {
+    const a = {};
+    try { Object.assign(a, JSON.parse(localStorage.getItem(LS_OR) || "{}")); } catch { /* ignore */ }
+    if (params.get("or")) {
+      try { Object.assign(a, JSON.parse(params.get("or"))); state.orFromLink = true; } catch { console.warn("bad or param"); }
+    }
+    return a;
+  }
+
+  function saveOrAnswers(a) {
+    state.orAnswers = a;
+    if (!state.orFromLink) { try { localStorage.setItem(LS_OR, JSON.stringify(a)); } catch { /* ignore */ } }
+  }
+
+  function readOrForm() {
+    const f = $("#orForm"), a = { ...(state.orAnswers || {}) };
+    for (const el of f.elements) {
+      if (!el.name) continue;
+      if (OR_NUMS.has(el.name)) { if (el.value !== "" && !isNaN(el.value)) a[el.name] = Number(el.value); else delete a[el.name]; }
+      else a[el.name] = el.value.trim();
+    }
+    return a;
+  }
+
+  const orBody = (extra = {}) => ({ scan_id: state.scanId, filter: currentFilter(), answers: state.orAnswers || {}, ...extra });
+
+  async function loadOutage() {
+    if (!state.scanId) return;
+    if (!state.orAnswers) state.orAnswers = loadOrAnswers();
+    const seq = (state.orSeq = (state.orSeq || 0) + 1);
+    loading("outage", true);
+    try {
+      await (state.ins.outage ? null : fetchInsights("outage"));
+      const r = await api("/api/outage", { method: "POST", body: orBody() });
+      if (seq !== state.orSeq) return;
+      state.or = r;
+    } catch (e) {
+      if (seq !== state.orSeq) return;
+      showOrError(e);
+      return;
+    } finally {
+      if (seq === state.orSeq) loading("outage", false);
+    }
+    $("#orError").hidden = true;
+    renderOr();
+  }
+
+  function showOrError(e) {
+    console.error("outage risk failed", e);
+    const ref = e.requestId ? ` (request ${e.requestId})` : "";
+    $("#orErrorText").textContent = `${e.message}${ref}`;
+    $("#orErrorHint").textContent = e.hint || (e.status >= 500
+      ? "This is a bug in the console. Open the Log for the details, and report it with the log lines."
+      : "Check the answers in section 2 and try again.");
+    $("#orError").hidden = state.view !== "outage";
+    if (state.or) toast(`Outage risk not updated: ${e.message}`);
+    if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
+  }
+
+  function renderOr() {
+    renderInsights("outage");
+    const r = state.or;
+    $("#reportBar").hidden = false;
+    $("#empty").hidden = true;
+    const show = state.view === "outage";
+    $("#orEmpty").hidden = !show || r.available;
+    $("#orContent").hidden = !show || !r.available;
+    if (!r.available) {
+      const withChecks = (state.scans || []).find((s) => s.outage && s.id !== state.scanId);
+      const running = state.runningScan ? " A scan is running now; it opens here when it finishes." : "";
+      $("#orEmptyText").textContent = r.reason + running;
+      $("#btnOrOpen").hidden = !withChecks;
+      if (withChecks) {
+        $("#btnOrOpen").textContent = `Open the scan of ${fmtDate(withChecks.created_at)} with the checks`;
+        $("#btnOrOpen").dataset.scan = withChecks.id;
+      }
+      $("#btnOrScan").classList.toggle("primary", !withChecks);
+      if (show && PRINT) document.body.dataset.ready = "1";
+      return;
+    }
+    try {
+      renderOrCover(r);
+      renderOrSummary(r);
+      renderOrForm(r);
+      fillOrFilters(r);
+      renderOrFindings();
+      renderOrRules(r);
+      renderOrAccounts();
+      renderOrClusters(r);
+      renderOrCauses(r);
+      renderOrMethod(r);
+    } catch (e) {
+      console.error("outage risk render failed", e);
+      showOrError(new Error(`The report could not be drawn (${e.message}). Reload the page; if it persists, open the log and report it.`));
+      return;
+    }
+    if (PRINT) document.querySelectorAll("#orContent details").forEach((d) => { d.open = true; });
+    if (show) document.body.dataset.ready = "1";
+  }
+
+  const orDate = (iso) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+  function renderOrCover(r) {
+    const s = r.summary;
+    $("#orMeta").innerHTML = [
+      ["Scope", r.filter || (r.ou?.path ?? "All accounts")],
+      ["Accounts read", `${num(s.accounts)}${s.not_checked ? ` (${num(s.not_checked)} could not be read)` : ""}`],
+      ["Measures compared", num(s.measures)],
+      ["Peak", `${orDate(s.peak_date)}, in ${plural(s.days_to_peak, "day")}`],
+      ["Scanned", r.scan_at ? new Date(r.scan_at).toLocaleString() : EMPTY],
+    ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+    const gaps = [];
+    if (s.not_checked) gaps.push(`${plural(s.not_checked, "account")} could not be read`);
+    if (s.accounts_full < s.accounts) gaps.push(`${plural(s.accounts - s.accounts_full, "account")} had a check refused or failing, shown in section 4`);
+    if (s.clusters_read < s.clusters) gaps.push(`${num(s.clusters - s.clusters_read)} of ${plural(s.clusters, "EKS cluster")} could not be read, shown in section 5`);
+    $("#orCoverage").hidden = !gaps.length;
+    $("#orCoverage").textContent = gaps.length ? `Not everything was measured: ${gaps.join("; ")}. What was not measured is not a pass.` : "";
+  }
+
+  function renderOrSummary(r) {
+    const s = r.summary;
+    const when = s.days_to_freeze >= 0 ? `The change freeze is in ${plural(s.days_to_freeze, "day")} (${orDate(s.freeze_date)})` : `The change freeze date (${orDate(s.freeze_date)}) has passed`;
+    const top = r.focus.find((x) => x.critical || x.high);
+    $("#orHeadline").textContent = `${plural(s.critical, "critical finding")} and ${num(s.high)} high in production, ${plural(s.days_to_peak, "day")} before the peak of ${orDate(s.peak_date)}. ${when}.${top ? ` Hold the change freeze, then start here: ${top.label}.` : ""}`;
+    const found = [];
+    if (s.limits_at_risk) found.push(`${plural(s.limits_at_risk, "limit")} would be reached at ${s.multiplier}x load${s.hard_limits ? `, ${num(s.hard_limits)} of them hard limits AWS will not raise` : ""}.`);
+    if (s.full_before_peak) found.push(`${plural(s.full_before_peak, "store")} ${s.full_before_peak === 1 ? "fills" : "fill"} before the peak at the current rate.`);
+    if (s.hot_fixed) found.push(`${plural(s.hot_fixed, "resource")} on capacity that cannot grow by itself would be overloaded.`);
+    if (s.msk_at_risk) found.push(`${plural(s.msk_at_risk, "MSK finding")} at critical or high.`);
+    if (s.eks_fixed || s.eks_single) found.push(`${plural(s.eks_fixed, "EKS workload")} on a fixed replica count, ${num(s.eks_single)} on one replica.`);
+    if (s.clusters_read < s.clusters) found.push(`${num(s.clusters - s.clusters_read)} of ${plural(s.clusters, "EKS cluster")} could not be read: those workloads are unknown.`);
+    if (!found.length) found.push("No production finding at critical or high.");
+    $("#orFindings").innerHTML = found.map((x) => `<li>${esc(x)}</li>`).join("");
+    const acts = [`<li><strong>Hold the change freeze from ${esc(orDate(s.freeze_date))}.</strong> In Google's published postmortems, code and configuration pushes triggered about two in three outages: more than any capacity cause. Require a tested rollback for anything that must change after it, and load test what you fix before it.</li>`];
+    acts.push(...r.focus.filter((x) => x.critical || x.high).slice(0, 4).map((x) => `<li><strong>${esc(x.label)}, by ${esc(orDate(x.start_by))}${x.late ? " (already late)" : ""}.</strong> ${esc(x.action)}</li>`));
+    $("#orActions").innerHTML = acts.join("");
+    $("#orTiles").innerHTML = [
+      tile("Outage risk score", `${num(s.score)}/100`, `${s.rating} · higher is worse · weighted by spend`).replace(/<\/div>$/, `${riskBar(s.score)}</div>`),
+      tile("Days to the peak", num(s.days_to_peak), `${orDate(s.peak_date)}; freeze ${orDate(s.freeze_date)}`),
+      tile("Critical findings", num(s.critical), `${num(s.high)} high, ${num(s.medium)} medium, production only`),
+      tile("Past a limit at peak", num(s.breach_at_peak), `Measures above 100% at ${s.multiplier}x load`),
+      tile("Limits at risk", num(s.limits_at_risk), `${num(s.hard_limits)} hard limits`),
+      tile("Full before the peak", num(s.full_before_peak), "At the rate of the last 35 days"),
+      tile("Hot on fixed capacity", num(s.hot_fixed), "Critical or high, cannot grow by itself"),
+      tile("EKS fixed replicas", num(s.eks_fixed), `${num(s.eks_single)} on one replica; ${num(s.clusters_read)} of ${num(s.clusters)} clusters read`),
+      tile("Accounts high or critical", num(s.high_accounts + s.critical_accounts), `of ${num(s.accounts)} read, ${num(s.production_accounts)} production`),
+    ].join("");
+    $("#orFocus").innerHTML = `<thead><tr><th>Area</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th class="num-cell">Accounts</th><th>Most common</th><th>Start by</th></tr></thead><tbody>${r.focus.map((x) => `<tr><td><button type="button" class="link-btn" data-or-area="${esc(x.area)}"><strong>${esc(x.label)}</strong></button></td><td class="num-cell">${num(x.critical)}</td><td class="num-cell">${num(x.high)}</td><td class="num-cell">${num(x.medium)}</td><td class="num-cell">${num(x.accounts)}</td><td class="small">${esc(x.top.map((t) => `${t.title} (${num(t.count)})`).join(", ") || EMPTY)}</td><td class="nowrap${x.late && (x.critical || x.high) ? " warn-text" : ""}">${esc(orDate(x.start_by))}</td></tr>`).join("")}</tbody>`;
+  }
+
+  function renderOrForm(r) {
+    const f = $("#orForm");
+    for (const el of f.elements) {
+      if (!el.name || document.activeElement === el) continue;
+      el.value = r.answers[el.name] ?? "";
+    }
+  }
+
+  function fillOrFilters(r) {
+    const keep = (id, html) => { const el = $(id), v = el.value; el.innerHTML = html; if ([...el.options].some((o) => o.value === v)) el.value = v; };
+    keep("#orArea", `<option value="">All</option>${Object.entries(r.areas).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("")}`);
+    keep("#orRule", `<option value="">All</option>${r.rules.map((x) => `<option value="${esc(x.id)}">${esc(x.title)} (${num(x.findings)})</option>`).join("")}`);
+    const acct = $("#orSearch");
+    if (state.orAccount) acct.value = state.orAccount;
+  }
+
+  function orShown() {
+    const area = $("#orArea").value, sev = $("#orSev").value, rule = $("#orRule").value, prod = $("#orProd").checked;
+    const q = $("#orSearch").value.trim().toLowerCase();
+    return state.or.findings.filter((f) => (!area || f.area === area) && (!sev || f.severity === sev) && (!rule || f.rule === rule) && (!prod || f.production)
+      && (!q || `${f.account} ${f.res} ${f.region} ${f.title}`.toLowerCase().includes(q)));
+  }
+
+  function renderOrFindings(more) {
+    state.orRows = more ? (state.orRows || OR_PAGE) + OR_PAGE : OR_PAGE;
+    const rows = orShown();
+    const n = PRINT ? Math.min(rows.length, 200) : Math.min(rows.length, state.orRows);
+    const value = (f) => {
+      if (f.pct == null) return EMPTY;
+      return `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}`;
+    };
+    const usage = (f) => (f.used != null && f.limit != null ? `${num(f.used, f.used % 1 ? 1 : 0)} of ${num(f.limit, f.limit % 1 ? 1 : 0)}${f.unit ? ` ${esc(f.unit)}` : ""}${f.hard ? " · hard limit" : ""}` : "");
+    $("#orTable").innerHTML = `<thead><tr><th>Severity</th><th>Finding</th><th>Account</th><th>Resource</th><th class="num-cell">Now → peak</th><th>Detail</th></tr></thead><tbody>${rows.slice(0, n).map((f) => `<tr><td>${sevPill(f.severity)}</td><td>${esc(f.title)}</td><td class="small">${esc(f.account)}${f.production ? "" : ' <span class="muted">non-prod</span>'}</td><td class="small mono or-res">${esc(f.res)}<div class="muted">${esc(f.region)}</div></td><td class="num-cell nowrap">${value(f)}</td><td class="small">${esc(f.why)}${usage(f) ? `<div class="muted">${usage(f)}</div>` : ""}${f.note && f.note !== f.why ? `<div class="muted">${esc(f.note)}</div>` : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">Nothing matches.</td></tr>`}</tbody>`;
+    const cut = state.or.findings_total > state.or.findings.length;
+    $("#orFindCount").textContent = `${num(rows.length)} shown of ${num(state.or.findings_total)} findings${cut ? `; the worst ${num(state.or.findings.length)} are listed here and in the CSV` : ""}.`;
+    $("#orMoreNote").textContent = n < rows.length ? `Showing ${num(n)} of ${num(rows.length)}` : "";
+    $("#btnOrMore").hidden = n >= rows.length || PRINT;
+    $("#btnOrMore").textContent = `Show ${num(Math.min(OR_PAGE, rows.length - n))} more`;
+  }
+
+  function renderOrRules(r) {
+    const top = r.rules.filter((x) => x.critical || x.high).slice(0, PRINT ? 40 : 15);
+    $("#orRules").innerHTML = top.map((x) => `<details class="card or-rule"><summary>${sevPill(x.critical ? "critical" : "high")} <strong>${esc(x.title)}</strong> <span class="muted small">${plural(x.findings, "finding")} in ${plural(x.accounts, "account")}</span></summary><p class="small"><strong>Why it matters.</strong> ${esc(x.why)}</p><p class="small"><strong>What to do.</strong> ${esc(x.fix)}</p></details>`).join("");
+  }
+
+  function renderOrAccounts(more) {
+    const all = state.or.accounts;
+    state.orAcctRows = more ? (state.orAcctRows || OR_PAGE) + OR_PAGE : OR_PAGE;
+    const n = PRINT ? all.length : Math.min(all.length, state.orAcctRows);
+    $("#orAccounts").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Score</th><th>Rating</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th>Worst finding</th></tr></thead><tbody>${all.slice(0, n).map((a) => `<tr><td><button type="button" class="link-btn" data-or-acct="${esc(a.name)}"><strong>${esc(a.name)}</strong></button>${a.production ? "" : ' <span class="muted small">non-prod</span>'}<div class="muted small">${esc(a.ou_path)}${a.owner ? ` · ${esc(a.owner)}` : ""}</div></td><td class="num-cell">${num(a.score)}</td><td>${pill(AS_RATING_TIER[a.rating], a.rating)}</td><td class="num-cell">${num(a.critical)}</td><td class="num-cell">${num(a.high)}</td><td class="num-cell">${num(a.medium)}</td><td class="small">${esc(a.top || EMPTY)}${a.not_measured.length ? `<div class="warn-text">Not measured: ${esc(a.not_measured.join(", "))}</div>` : ""}</td></tr>`).join("")}</tbody>`;
+    const cutoff = state.or.not_checked.length ? ` Could not be read: ${state.or.not_checked.slice(0, 8).map((x) => x.name).join(", ")}${state.or.not_checked.length > 8 ? ", and more" : ""}.` : "";
+    $("#orAcctNote").textContent = `Showing ${num(n)} of ${num(all.length)}.${cutoff}`;
+    $("#btnOrAcctMore").hidden = n >= all.length || PRINT;
+    $("#btnOrAcctMore").textContent = "Show more";
+  }
+
+  function renderOrClusters(r) {
+    const c = r.clusters;
+    const label = { read: "Read", refused: "No access entry", unreachable: "Could not reach" };
+    $("#orClusters").innerHTML = `<thead><tr><th>Cluster</th><th>Account</th><th>Kubernetes API</th><th class="num-cell">Workloads</th><th class="num-cell">Autoscaled</th><th class="num-cell">One replica</th><th>Container Insights</th></tr></thead><tbody>${c.map((x) => `<tr><td><strong>${esc(x.name)}</strong><div class="muted small">${esc(x.region)} · ${esc(x.version)}</div></td><td class="small">${esc(x.account)}</td><td class="small">${x.access === "read" ? "Read" : `<span class="warn-text">${esc(label[x.access] || x.access)}</span>`}${x.detail ? `<div class="muted">${esc(x.detail)}</div>` : ""}${x.pods_cut ? '<div class="muted">Pods read up to the limit</div>' : ""}</td><td class="num-cell">${x.access === "read" ? num(x.workloads) : EMPTY}</td><td class="num-cell">${x.access === "read" ? num(x.autoscaled) : EMPTY}</td><td class="num-cell">${x.access === "read" ? num(x.single) : EMPTY}</td><td class="small">${x.insights ? "Yes" : "No data"}</td></tr>`).join("") || '<tr><td colspan="7" class="muted">No EKS clusters in the accounts read.</td></tr>'}</tbody>`;
+    const refused = c.some((x) => x.access === "refused");
+    $("#orEksHelp").hidden = !refused;
+    $("#orEksHelp").innerHTML = refused ? 'To read a cluster, its owner grants the scan\'s role read-only access, for example: <code class="mono">aws eks create-access-entry --cluster-name NAME --principal-arn ROLE_ARN</code> then <code class="mono">aws eks associate-access-policy --cluster-name NAME --principal-arn ROLE_ARN --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy --access-scope type=cluster</code>. That policy does not read secrets.' : "";
+  }
+
+  function renderOrCauses(r) {
+    $("#orCauses").innerHTML = `<thead><tr><th>Cause</th><th>Evidence</th><th>Limits of the evidence</th><th>This scan</th></tr></thead><tbody>${r.causes.map((c) => `<tr><td><strong>${esc(c.cause)}</strong></td><td class="small">${esc(c.evidence)}<div class="muted"><a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${esc(c.source)}</a></div></td><td class="small muted">${esc(c.limits)}</td><td class="small nowrap">${c.scan ? `${num(c.scan.critical)} critical, ${num(c.scan.high)} high, ${num(c.scan.medium)} medium` : "Not measured"}${c.scan_note ? `<div class="muted or-note">${esc(c.scan_note)}</div>` : ""}</td></tr>`).join("")}</tbody>`;
+  }
+
+  function renderOrMethod(r) {
+    const a = r.answers;
+    $("#orMethod").innerHTML = `<ul>
+      <li><strong>Now</strong> is the highest hourly average of the last 35 days, which holds a month-end; quota usage on API rates uses five-minute figures over 14 days. Hourly averages hide short spikes, so real headroom is lower.</li>
+      <li><strong>At peak</strong> multiplies usage that rises with traffic by ${esc(a.peak_multiplier)}, an assumption you set in section 2. Counts of things someone creates, and storage, are not multiplied.</li>
+      <li><strong>Critical</strong>: at ${esc(a.critical_pct)}% now, or full before the peak. <strong>High</strong>: past 100% at peak, or full within 30 days after it. <strong>Medium</strong>: past ${esc(a.warn_pct)}% at peak. Everything is one level lower outside production.</li>
+      <li><strong>Days to full</strong> is a straight line through the last 35 days, so a sudden rise in data at peak fills sooner.</li>
+      <li><strong>Limits</strong> come from Service Quotas where AWS publishes a usage metric, plus the limits IAM, Route 53, RDS, load balancers, Lambda, S3 and Connect report themselves. Quotas with no usage metric are not compared.</li>
+      <li><strong>S3 request rates</strong> need request metrics on the bucket, and compare the whole bucket against the rate per prefix: well spread keys have more room than shown.</li>
+      <li><strong>Not measured:</strong> database connections against their maximum, load test results, runbooks, DNS and conntrack limits on instances, and anything inside a cluster that could not be read. Regional dependence is in the Multi-Region Report; controls are in the Cloud Assurance Report.</li>
+      <li>Measures under 30% are counted, not kept. A scan is a point in time: scan again after changes, and before the freeze.</li></ul>`;
+    $("#orFooter").textContent = `Generated ${new Date().toLocaleString()} by aws-regulatory-risk-review-framework · outage rules v${r.catalog_version} · scan ${r.scan_id}`;
+  }
+
+  function bindOutage() {
+    $("#btnOrRetry").addEventListener("click", () => loadOutage());
+    $("#btnOrLog").addEventListener("click", () => $("#btnLogs").click());
+    $("#btnOrOpen").addEventListener("click", (e) => { $("#scanSelect").value = e.currentTarget.dataset.scan; $("#scanSelect").dispatchEvent(new Event("change")); });
+    $("#btnOrScan").addEventListener("click", () => { openScanDialog().then(() => { $("#sOutage").checked = true; $("#sOutage").dispatchEvent(new Event("change")); }); });
+    $("#btnOrDemo").addEventListener("click", () => $("#btnDemo").click());
+    $("#orForm").addEventListener("change", () => { saveOrAnswers(readOrForm()); loadOutage(); });
+    $("#orForm").addEventListener("submit", (e) => e.preventDefault());
+    for (const id of ["#orArea", "#orSev", "#orRule", "#orProd"]) $(id).addEventListener("change", () => renderOrFindings());
+    $("#orSearch").addEventListener("input", () => { state.orAccount = ""; renderOrFindings(); });
+    $("#btnOrMore").addEventListener("click", () => renderOrFindings(true));
+    $("#btnOrAcctMore").addEventListener("click", () => renderOrAccounts(true));
+    $("#orFocus").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-or-area]");
+      if (!b) return;
+      $("#orArea").value = b.dataset.orArea;
+      $("#orRule").value = "";
+      renderOrFindings();
+      $("#or-findings").scrollIntoView({ behavior: "smooth" });
+    });
+    $("#orAccounts").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-or-acct]");
+      if (!b) return;
+      state.orAccount = b.dataset.orAcct;
+      $("#orSearch").value = state.orAccount;
+      $("#orProd").checked = false;
+      $("#orArea").value = "";
+      $("#orRule").value = "";
+      renderOrFindings();
+      $("#or-findings").scrollIntoView({ behavior: "smooth" });
+    });
+    $("#btnOrCsv").addEventListener("click", async () => {
+      try {
+        const res = await fetch("/api/outage/csv", { method: "POST", headers: { "Content-Type": "application/json", "X-ExitRisk": "1" }, body: JSON.stringify(orBody()) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        downloadText(await res.text(), `outage-risk-${state.scanId}.csv`, "text/csv");
+      } catch (e) { toast(`Could not export: ${e.message}`, 6000); }
+    });
+    window.addEventListener("beforeprint", () => { if (state.view === "outage") document.querySelectorAll("#orContent details").forEach((d) => { d.open = true; }); });
+  }
+
+  const VIEWS = ["exit", "multiregion", "assurance", "outage"];
   function setView(v) {
     state.view = VIEWS.includes(v) ? v : "exit";
     document.body.dataset.view = state.view;
@@ -2310,12 +2594,15 @@
     $("#asEmpty").hidden = state.view !== "assurance" || !state.as || state.as.available;
     if (state.view !== "multiregion") $("#mrError").hidden = true;
     if (state.view !== "assurance") $("#asError").hidden = true;
+    $("#orContent").hidden = state.view !== "outage" || !state.or?.available;
+    $("#orEmpty").hidden = state.view !== "outage" || !state.or || state.or.available;
+    if (state.view !== "outage") $("#orError").hidden = true;
     // Export follows the report on screen; the one-page summary exists only for exit risk.
-    const mr = state.view === "multiregion", as = state.view === "assurance";
-    $("#btnPdf b").textContent = mr ? "Multi-Region Report" : as ? "Cloud Assurance Report" : "Exit Risk Report";
-    $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : as ? "Every assurance section, as on screen" : "Every section and the appendix";
-    $("#btnOnePage").hidden = mr || as;
-    $("#btnJumpAi").hidden = mr || as; // the AI review belongs to the exit risk report
+    const mr = state.view === "multiregion", as = state.view === "assurance", or = state.view === "outage";
+    $("#btnPdf b").textContent = mr ? "Multi-Region Report" : as ? "Cloud Assurance Report" : or ? "Outage Risk Report" : "Exit Risk Report";
+    $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : as ? "Every assurance section, as on screen" : or ? "Every outage risk section, as on screen" : "Every section and the appendix";
+    $("#btnOnePage").hidden = mr || as || or;
+    $("#btnJumpAi").hidden = mr || as || or; // the AI review belongs to the exit risk report
     if (!PRINT) {
       const url = new URL(location.href);
       if (state.view !== "exit") url.searchParams.set("view", state.view); else url.searchParams.delete("view");
@@ -2323,6 +2610,7 @@
     }
     if (state.view === "multiregion" && !state.mr) loadMultiRegion();
     if (state.view === "assurance" && !state.as) loadAssurance();
+    if (state.view === "outage" && !state.or) loadOutage();
     Object.values(state.charts).forEach((c) => c.resize());
   }
 
@@ -2585,6 +2873,7 @@
   const INSIGHT = {
     multiregion: { el: "#mrAi", label: "Multi-Region Report", body: () => ({ filter: currentFilter(), multiregion: { ...readMr(), accounts: mrAccounts() } }) },
     assurance: { el: "#asAi", label: "Cloud Assurance Report", body: () => ({ filter: currentFilter(), assurance: asBody().answers }) },
+    outage: { el: "#orAi", label: "Outage Risk Report", body: () => ({ filter: currentFilter(), outage: state.orAnswers || {} }) },
   };
 
   async function fetchInsights(kind) {
@@ -2745,7 +3034,7 @@
     } catch (e) { $("#scanError").textContent = e.message; }
     await loadAiCfg();
     syncScanAi();
-    $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked;
+    $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked && !$("#sOutage").checked;
     showScanRunning();
     dlg.showModal();
   }
@@ -2823,14 +3112,14 @@
       inventory_scope: f.material_only.checked ? "material" : "all", role_name: f.role_name.value || null,
       region_scope: f.spend_regions.checked ? "spend" : "all",
       regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: f.label.value,
-      target: f.target.value || "azure", assurance: f.assurance.checked,
+      target: f.target.value || "azure", assurance: f.assurance.checked, outage: f.outage.checked,
     };
     $("#qForm").target.value = body.target;
     syncDatacenter();
     readQuestionnaire();
     // The review runs on the report as this console will show it: today's filter and Exit model answers.
-    const reports = [["#sAi", "exit"], ["#sAiMr", "multiregion"], ["#sAiAs", "assurance"]].filter(([id]) => $(id).checked).map(([, k]) => k);
-    if (reports.length) body.ai_review = { ...aiAsk(), reports, multiregion: { ...readMr(), accounts: null }, assurance: asBody().answers };
+    const reports = [["#sAi", "exit"], ["#sAiMr", "multiregion"], ["#sAiAs", "assurance"], ["#sAiOr", "outage"]].filter(([id]) => $(id).checked).map(([, k]) => k);
+    if (reports.length) body.ai_review = { ...aiAsk(), reports, multiregion: { ...readMr(), accounts: null }, assurance: asBody().answers, outage: state.orAnswers || loadOrAnswers() };
     $("#scanError").textContent = "";
     $("#btnStartScan").disabled = true;
     // Show the bar at once: the first AWS calls can take a few seconds before any progress comes back.
@@ -3005,14 +3294,14 @@
 
   // While a report is being built and nothing of it is on screen yet (a refresh, a new scan, a filter
   // change on a view not shown before), say so instead of leaving the page blank.
-  const VIEW_NAMES = { exit: "Exit Risk Report", multiregion: "Multi-Region Report", assurance: "Cloud Assurance Report" };
+  const VIEW_NAMES = { exit: "Exit Risk Report", multiregion: "Multi-Region Report", assurance: "Cloud Assurance Report", outage: "Outage Risk Report" };
   function loading(view, on) {
     state.loading = { ...(state.loading || {}), [view]: on };
     syncLoading();
   }
   function syncLoading() {
     const v = state.view || "exit";
-    const shown = v === "exit" ? state.report : v === "multiregion" ? state.mr : state.as;
+    const shown = v === "exit" ? state.report : v === "multiregion" ? state.mr : v === "outage" ? state.or : state.as;
     const el = $("#viewLoading");
     // Every view waits for the scan's report first.
     const on = !!(state.loading?.[v] || state.loading?.exit) && !shown;
@@ -3529,13 +3818,17 @@
     enterDoes("#scanForm", () => { if (!$("#btnStartScan").disabled) startScan(); });
     enterDoes("#ssoForm", (el) => { if (el.closest("#ssoAdd")) ssoAddPortal(); });
     enterDoes("#accessForm", () => runAccessCheck());
+    $("#sOutage").addEventListener("change", () => {
+      $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked && !$("#sOutage").checked;
+      if (!$("#sOutage").checked && $("#sAiOr").checked) { $("#sAiOr").checked = false; toast("Outage risk AI insights unticked: they need the outage risk checks", 5000); }
+    });
     // The member role, regions and region scope apply to the assurance checks too.
     $("#sAssurance").addEventListener("change", () => {
-      $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked;
+      $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked && !$("#sOutage").checked;
       if (!$("#sAssurance").checked && $("#sAiAs").checked) { $("#sAiAs").checked = false; toast("Cloud Assurance AI insights unticked: they need the assurance checks", 5000); }
     });
     $("#sDepth").addEventListener("change", (e) => {
-      $("#invOpts").hidden = e.target.value === "quick" && !$("#sAssurance").checked;
+      $("#invOpts").hidden = e.target.value === "quick" && !$("#sAssurance").checked && !$("#sOutage").checked;
       $("#sDepthHint").textContent = DEPTH_HINT[e.target.value];
       if (e.target.value === "quick" && $("#sAi").checked) {
         $("#sAi").checked = false;
@@ -3559,6 +3852,10 @@
     $("#sAiAs").addEventListener("change", () => {
       if ($("#sAiAs").checked && !$("#sAssurance").checked) { $("#sAssurance").checked = true; $("#sAssurance").dispatchEvent(new Event("change")); }
       try { localStorage.setItem(`${LS_AI_SCAN}.as`, $("#sAiAs").checked ? "1" : "0"); } catch { /* ignore */ }
+    });
+    $("#sAiOr").addEventListener("change", () => {
+      if ($("#sAiOr").checked && !$("#sOutage").checked) { $("#sOutage").checked = true; $("#sOutage").dispatchEvent(new Event("change")); }
+      try { localStorage.setItem(`${LS_AI_SCAN}.or`, $("#sAiOr").checked ? "1" : "0"); } catch { /* ignore */ }
     });
     $("#aiProvider").addEventListener("change", () => aiProviderChanged(""));
     $("#aiModel").addEventListener("change", () => { $("#aiCustomWrap").hidden = $("#aiModel").value !== AI_CUSTOM; if (!$("#aiCustomWrap").hidden) $("#aiCustom").focus(); });
@@ -3610,6 +3907,7 @@
     for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
     bindMultiRegion();
     bindAssurance();
+    bindOutage();
     if (["balanced", "spend", "equal"].includes(params.get("weighting"))) $("#fWeighting").value = params.get("weighting");
     if (["Moderate", "High"].includes(params.get("min_rating"))) $("#fMinRating").value = params.get("min_rating");
     for (const k of ["include", "exclude", "mode"]) if (params.get(k)) $(`#f${k[0].toUpperCase()}${k.slice(1)}`).value = params.get(k);

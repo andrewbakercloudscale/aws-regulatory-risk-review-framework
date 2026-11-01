@@ -848,3 +848,13 @@ table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 
 #mrAi, #asAi { margin-top: 16px; }
 .view-loading { max-width: 720px; margin: 32px auto; }
 .view-loading .busy { padding: 18px 20px; }
+
+/* Outage risk */
+body[data-view="outage"] #btnJumpAi { display: none; }
+.or-filters { flex-wrap: wrap; gap: 10px 14px; align-items: end; margin-bottom: 10px; }
+.or-res { overflow-wrap: anywhere; max-width: 280px; }
+.or-rule { padding: 12px 16px; margin-top: 10px; }
+.or-rule summary { cursor: pointer; }
+@media print { .or-filters { display: none; } }
+#orForm .mr-grid label { justify-content: flex-start; }
+.or-note { white-space: normal; min-width: 160px; }

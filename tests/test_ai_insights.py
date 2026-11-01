@@ -10,6 +10,7 @@ from exitrisk.ai.providers import AISettings, Reply
 from exitrisk.assurance import build_assurance
 from exitrisk.demo import build_demo_scan
 from exitrisk.multiregion import build_multiregion
+from exitrisk.outage import build_outage
 
 
 @pytest.fixture(scope="module")
@@ -18,7 +19,12 @@ def scan():
 
 
 def test_facts_are_compact_and_name_no_resources(scan):
-    for kind, rep in (("multiregion", build_multiregion(scan)), ("assurance", build_assurance(scan))):
+    reports = (
+        ("multiregion", build_multiregion(scan)),
+        ("assurance", build_assurance(scan)),
+        ("outage", build_outage(scan)),
+    )
+    for kind, rep in reports:
         facts, accounts = insights.FACTS[kind](rep)
         assert 0 < len(accounts) <= insights.MAX_ACCOUNTS
         text = json.dumps([facts, accounts])

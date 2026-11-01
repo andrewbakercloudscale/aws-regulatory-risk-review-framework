@@ -132,6 +132,31 @@ Optional, for the [Cloud Assurance Framework Report](CLOUD_ASSURANCE.md). All re
 passwords, keys and MFA) before it is read; it changes nothing else. Event history is read with
 `cloudtrail:LookupEvents` to find changes made by hand; only the event name, time and who made it are kept.
 
+## 4. Outage risk checks
+
+Only for **Run the outage risk checks** (`--outage`). All reads.
+
+- **Member accounts**: the `ExitRiskOutageRisk` statement of
+  [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json) (Service Quotas,
+  CloudWatch `GetMetricData`, account limits, MSK, Amazon Connect, capacity and autoscaling settings;
+  the StackSet and Terraform include it). On IAM Identity Center, add it to the permission set used
+  in the member accounts. AWS's ReadOnlyAccess covers most of it; Check access names what is missing.
+- **EKS workloads are a separate grant.** Replica counts, requests and limits come from each cluster's
+  Kubernetes API, which IAM alone does not open. The scan never changes a cluster. To let it read one,
+  the cluster's owner adds an access entry for the scan's role with the view policy, which cannot
+  read secrets:
+
+  ```
+  aws eks create-access-entry --cluster-name NAME --principal-arn ROLE_ARN
+  aws eks associate-access-policy --cluster-name NAME --principal-arn ROLE_ARN \
+    --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy --access-scope type=cluster
+  ```
+
+  A cluster with a private endpoint also needs a network path from where the scan runs. A cluster not
+  read is shown as not read, never as a pass.
+- **Cost**: CloudWatch bills `GetMetricData` at about US$0.01 per 1,000 metrics requested, in each
+  account. Other reads are free.
+
 ## What the tool does not need
 
 No write permissions anywhere, no access to data plane APIs (S3 objects, DynamoDB items, secrets),

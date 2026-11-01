@@ -10,7 +10,7 @@ from __future__ import annotations
 import random
 from datetime import datetime, timezone
 
-from . import demo_assurance, store
+from . import demo_assurance, demo_outage, store
 from .collectors.cost import month_window
 from .collectors.dependencies import EDGE_SOURCES as DEPENDENCY_KINDS
 from .issues import Issue
@@ -639,6 +639,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
             "inventory": True,
             "dependencies": True,
             "assurance": True,
+            "outage": True,
             "inventory_scope": "all",
             "regions": None,
             "label": "Demo",
@@ -655,6 +656,7 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
         "period": {"start": start, "end": end, "months": months},
         "inventory": inventory,
         "assurance": demo_assurance.build(accounts, seed + 4),
+        "outage": demo_outage.build(accounts, seed + 5),
         "issues": issues,
     }
 
