@@ -264,3 +264,26 @@ def test_fetch_commitments_fills_term_and_end_from_other_attributes(monkeypatch)
         ("sp-b", "", "", "All Upfront"),
         ("ri-a", "3yr", "2028-06-01", "Partial Upfront"),
     ]
+
+
+def test_cost_query_retries_an_answer_with_no_results(monkeypatch):
+    monkeypatch.setattr(cost.time, "sleep", lambda _: None)
+
+    class Client:
+        answers = [{}, {"ResultsByTime": []}]
+
+        def get_cost_and_usage(self, **_):
+            return self.answers.pop(0)
+
+    assert cost._query(Client(), "2026-01-01", "2026-02-01", ["1"], "AWS") == []
+
+
+def test_cost_query_says_so_when_results_never_come(monkeypatch):
+    monkeypatch.setattr(cost.time, "sleep", lambda _: None)
+
+    class Client:
+        def get_cost_and_usage(self, **_):
+            return {"ResponseMetadata": {"HTTPStatusCode": 200}}
+
+    with pytest.raises(RuntimeError, match="no cost results"):
+        cost._query(Client(), "2026-01-01", "2026-02-01", ["1"], "AWS")

@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from collections.abc import Callable
 from datetime import date
 
 import boto3
 from botocore.exceptions import ClientError
 
-from ..aws_session import BOTO_CONFIG
+from ..aws_session import BOTO_CONFIG, with_backoff
 from ..logging_config import get_logger
 from ..parallel import background, pmap
 
@@ -29,6 +30,7 @@ BEDROCK_SERVICE = "Amazon Bedrock"
 _BEDROCK_SUFFIX = "(Amazon Bedrock Edition)"
 _EXCLUDED_RECORD_TYPES = ["Credit", "Refund", "Tax", "Support"]
 _MAX_ACCOUNTS_PER_FILTER = 100
+_EMPTY_ATTEMPTS, _EMPTY_WAIT = 4, 2  # an answer with no results: asked again after 2, 4, 6 seconds
 # Region lines under this (USD/month) are baseline noise (Config, GuardDuty in idle regions) and are dropped.
 _MIN_REGION_MONTHLY = 0.1
 
@@ -42,6 +44,23 @@ def month_window(months: int, today: date | None = None) -> tuple[str, str]:
         m += 12
         y -= 1
     return date(y, m, 1).isoformat(), end.isoformat()
+
+
+def _cost_and_usage(client, **kwargs) -> dict:
+    """get_cost_and_usage, retried. Cost Explorer has answered with no ResultsByTime at all (seen on the
+    last chunk of a 342-account scan): asked again, and an error that says so if it keeps doing it,
+    because treating it as "no spend" would quietly leave accounts out of every report."""
+    for attempt in range(_EMPTY_ATTEMPTS):
+        resp = with_backoff(client.get_cost_and_usage, transient=True, **kwargs)
+        if "ResultsByTime" in resp:
+            return resp
+        meta = resp.get("ResponseMetadata") or {}
+        log.warning(
+            "cost explorer answered without ResultsByTime (attempt %d): keys %s, HTTP %s, request %s",
+            attempt + 1, sorted(resp), meta.get("HTTPStatusCode"), meta.get("RequestId"),
+        )  # fmt: skip
+        time.sleep(_EMPTY_WAIT * (attempt + 1))
+    raise RuntimeError(f"Cost Explorer answered {_EMPTY_ATTEMPTS} times with no cost results; try the scan again")
 
 
 def _query(client, start: str, end: str, account_ids: list[str], billing_entity: str) -> list[dict]:
@@ -65,7 +84,7 @@ def _query(client, start: str, end: str, account_ids: list[str], billing_entity:
         }
         if token:
             kwargs["NextPageToken"] = token
-        resp = client.get_cost_and_usage(**kwargs)
+        resp = _cost_and_usage(client, **kwargs)
         pages += 1
         for period in resp["ResultsByTime"]:
             month = period["TimePeriod"]["Start"][:7]
@@ -105,7 +124,7 @@ def _grouped(client, start: str, end: str, filt: dict, group_by: list[str]) -> d
         }
         if token:
             kwargs["NextPageToken"] = token
-        resp = client.get_cost_and_usage(**kwargs)
+        resp = _cost_and_usage(client, **kwargs)
         for period in resp["ResultsByTime"]:
             for g in period.get("Groups", []):
                 key = tuple(g["Keys"])
@@ -234,7 +253,7 @@ def fetch_storage(session: boto3.Session, account_ids: list[str], services: set[
             }
             if token:
                 kwargs["NextPageToken"] = token
-            resp = client.get_cost_and_usage(**kwargs)
+            resp = _cost_and_usage(client, **kwargs)
             for period in resp["ResultsByTime"]:
                 for g in period.get("Groups", []):
                     usage = g["Metrics"]["UsageQuantity"]
@@ -320,7 +339,7 @@ def fetch_direct_connect(session: boto3.Session, account_ids: list[str] | None =
             }
             if token:
                 kwargs["NextPageToken"] = token
-            resp = client.get_cost_and_usage(**kwargs)
+            resp = _cost_and_usage(client, **kwargs)
             for period in resp["ResultsByTime"]:
                 for g in period.get("Groups", []):
                     account_id, usage_type = g["Keys"]
