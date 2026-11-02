@@ -860,3 +860,47 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 .or-note { white-space: normal; min-width: 160px; }
 .sign-in-state { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between; margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; font-size: 13.5px; border-left: 4px solid var(--good); background: color-mix(in srgb, var(--good) 8%, var(--surface)); }
 .sign-in-state.out { border-left-color: var(--sev-critical); background: color-mix(in srgb, var(--sev-critical) 9%, var(--surface)); font-weight: 600; }
+
+/* Outage risk: spend against risk */
+#orTop .link-btn, #orAccounts .link-btn { text-align: left; }
+.or-map-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 900px) { #orTop .link-btn, #orAccounts .link-btn { text-align: left; }
+.or-map-grid { grid-template-columns: 1fr; } }
+.or-matrix { width: 100%; border-collapse: separate; border-spacing: 3px; }
+.or-matrix th { font-size: 12.5px; font-weight: 600; text-align: left; padding: 4px 6px; color: var(--ink-2); }
+.or-cell { min-width: 96px; height: 62px; border-radius: 6px; text-align: center; vertical-align: middle; }
+.or-cell.is-empty { background: var(--surface-2); }
+.or-cell .link-btn { display: flex; flex-direction: column; align-items: center; width: 100%; color: var(--ink); text-decoration: none; }
+.or-cell strong { font-size: 18px; line-height: 1.2; }
+.or-treemap svg { display: block; width: 100%; height: auto; border-radius: 6px; }
+.or-tile { cursor: pointer; }
+.or-tile:hover rect { opacity: .82; }
+.or-bars, .or-runway { display: grid; gap: 5px; }
+.or-bar { display: grid; grid-template-columns: minmax(110px, 30%) 1fr minmax(84px, auto); align-items: center; gap: 8px; }
+.or-bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.or-bar-track { position: relative; display: flex; height: 13px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.or-bar-track i { display: block; height: 100%; }
+.or-bar-track b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+.or-bar-note { color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.or-heat { border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+.or-heat thead th { font-weight: 600; vertical-align: bottom; text-align: left; padding: 2px; }
+.or-heat tbody th { font-weight: 500; text-align: left; white-space: nowrap; padding-right: 8px; }
+.or-heat-col { height: 158px; min-width: 28px; }
+.or-heat-col .link-btn { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; max-height: 154px; overflow: hidden; font-size: 11.5px; }
+.or-heat-cell { min-width: 28px; height: 22px; text-align: center; background: var(--surface-2); border-radius: 3px; font-variant-numeric: tabular-nums; }
+.or-covbar { display: flex; height: 22px; border-radius: 5px; overflow: hidden; background: var(--surface-2); margin: 10px 0; }
+.or-covbar i { display: block; }
+.or-covlevels { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.or-cov-n { font-size: 17px; font-weight: 600; margin-top: 4px; }
+.or-review summary { cursor: pointer; }
+.or-verdict { margin: 4px 0 0 2px; }
+.or-review-body h4 { margin: 14px 0 4px; font-size: 13.5px; }
+.or-facts { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 12.5px; color: var(--ink-2); margin-top: 10px; }
+.or-facts b { color: var(--ink); }
+.or-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 700px) { .or-two { grid-template-columns: 1fr; } }
+@media print {
+  .or-treemap svg { max-height: 620px; }
+  .or-review, .or-matrix, .or-heat { break-inside: auto; }
+  .or-cell, .or-heat-cell, .or-bar-track i, .or-covbar i { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

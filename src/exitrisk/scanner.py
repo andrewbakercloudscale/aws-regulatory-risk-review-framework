@@ -14,7 +14,8 @@ import re
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -159,6 +160,8 @@ class ScanJob:
     status: str = "running"
     issues: list[Issue] = field(default_factory=list)
     data: dict = field(default_factory=dict, repr=False)
+    # The per-account step running now and what it has read: (its key in data, accounts read so far).
+    step: tuple[str, dict] | None = field(default=None, repr=False)
     # The IAM Identity Center session to sign in to again while a deep scan waits for it, else None.
     needs_sign_in: str | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -173,7 +176,7 @@ class ScanJob:
     eta: dict | None = None
 
     def cancel(self) -> None:
-        """Ask the scan to stop: it does at its next progress step, without saving anything."""
+        """Ask the scan to stop: it does within seconds, and keeps what it has read."""
         self._cancel.set()
         log.info("scan %s: stop asked from the console", self.id)
 
@@ -230,12 +233,14 @@ class ScanJob:
                 "eta": self.eta,
             }
 
-    def wait_for_sign_in(self, session_name: str) -> bool:
+    def wait_for_sign_in(self, session_name: str, rejected=None) -> bool:
         """The sign-in ended mid-scan and could not be renewed: wait for the user to sign in again,
         up to SIGN_IN_WAIT_SECONDS, instead of skipping every account left. True once signed in.
-        Threads that hit it together wait in turn; once one gives up, the rest skip at once."""
+        Threads that hit it together wait in turn; once one gives up, the rest skip at once. ``rejected``:
+        a token AWS refused though it looks valid here, as when a sign-in is revoked: a new one must replace it."""
         with self._sign_in_lock:
-            if sso.load_token(session_name):
+            token = sso.load_token(session_name)
+            if token and token != rejected:
                 return True  # another thread waited and the user signed in
             if self._sign_in_gave_up:
                 return False
@@ -252,7 +257,8 @@ class ScanJob:
                         f"Your AWS sign-in has ended. Sign in again to carry on: the scan waits {left} more min",
                     )
                     time.sleep(SIGN_IN_POLL_SECONDS)
-                    if sso.load_token(session_name):
+                    token = sso.load_token(session_name)
+                    if token and token != rejected:
                         self.update(phase, pct, message)
                         log.info("signed in again; the deep scan carries on")
                         return True
@@ -297,7 +303,8 @@ def _run_safely(job: ScanJob) -> None:
     try:
         run_scan(job)
     except ScanCancelled:
-        job.finish("cancelled", "Stopped. Nothing was saved.")
+        kept = _save_progress(job)
+        job.finish("cancelled", f"Stopped. Saved what was read: {plural(kept, 'account')}." if kept else "Stopped.")
     except Exception as exc:  # last line of defence: record it, never lose it
         record_failure(job, exc)
     finally:
@@ -313,12 +320,40 @@ def record_failure(job: ScanJob, exc: Exception) -> str:
         log.error("scan failed: %s", msg)
     else:
         log.error("scan failed\n%s", traceback.format_exc())  # a bug: keep the traceback
-    job.finish("failed", msg)
     try:
-        store.save_scan(_document(job, job.data, failed=True))
+        store.save_scan(_document(job, _with_step(job), failed=True))
     except Exception:
         log.exception("could not save the failed scan %s", job.id)
+        msg = f"{msg}. The results could not be saved either: check the disk has room, and the log"
+    # After the save: the console opens the scan the moment it sees this.
+    job.finish("failed", msg)
     return msg
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def _with_step(job: ScanJob) -> dict:
+    """The scan's data with what the running per-account step has read so far."""
+    if not job.step:
+        return job.data
+    key, results = job.step
+    read = dict(results) if key == "inventory" else {**(job.data.get(key) or {}), "accounts": dict(results)}
+    return {**job.data, key: read}
+
+
+def _save_progress(job: ScanJob) -> int:
+    """Save what has been read as an interrupted scan; the accounts in it, 0 if none. Never raises: a full disk
+    must not end a scan that could still finish and report it."""
+    if not job.data.get("accounts"):
+        return 0
+    try:
+        store.save_scan(_document(job, _with_step(job), status="interrupted"))
+    except Exception:
+        log.exception("could not save the progress of scan %s", job.id)
+        return 0
+    return len(job.step[1]) if job.step else len(job.data["accounts"])
 
 
 def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None = None) -> dict:
@@ -614,26 +649,44 @@ def run_scan(job: ScanJob) -> dict:
     if p.inventory:
         then = STEP_LABELS[steps[1]] if len(steps) > 1 else None
         data["inventory"] = _run_inventory(job, session, accounts, caller, regions_for, span_of("inventory"), then=then)
+        job.step = None
 
     # 5. Optional Cloud Assurance Framework checks: the organisation's controls, then each account.
     if p.assurance:
         data["assurance"] = _run_assurance(
             job, session, accounts, caller, regions_for, tree, known, span_of("assurance")
         )
+        job.step = None
 
     # 6. Optional outage risk checks in each account.
     if p.outage:
         data["outage"] = _run_outage(job, session, accounts, caller, regions_for, span_of("outage"))
+        job.step = None
 
     status = "complete" if not any(i.severity in ("error", "critical") for i in job.issues) else "partial"
     job.update("saving", 99, "Saving the scan")
     doc = _document(job, data, status=status)
     # Saved before the status says complete: the console loads the report the moment it sees that.
     store.save_scan(doc)
+    by_level = Counter(i.severity for i in job.issues)
+    log.info(
+        "scan %s: %d accounts, issues %s; outage read %s, assurance read %s, inventory read %s",
+        status,
+        len(accounts),
+        dict(by_level),
+        len((data.get("outage") or {}).get("accounts") or {}),
+        len((data.get("assurance") or {}).get("accounts") or {}),
+        len(data.get("inventory") or {}),
+    )
     job.finish(status, f"Scan {status}: {len(accounts)} account(s), {len(job.issues)} issue(s)")
     return doc
 
 
+# A kill or a reboot at account 300 of 340 must not lose the first 299.
+SAVE_EVERY_ACCOUNTS = 25
+SAVE_EVERY_SECONDS = 300
+WAIT_POLL_SECONDS = 2
+STALL_WARN_SECONDS = 600
 STEP_LABELS = {"assurance": "Assurance checks", "outage": "Outage risk checks"}
 
 
@@ -797,7 +850,9 @@ def _each_account(
     accounts on threads (sign-in and AWS waits) and parsing in worker processes (CPU)."""
     p = job.params
     results: dict = {}
+    job.step = (what, results)
     done = 0
+    saved_at = time.monotonic()
 
     pair = None if p.role_name else sso.profile_permission_set(p.profile)
     access = p.role_name or (f"permission set {pair[1]}" if pair else "your sign-in")
@@ -824,6 +879,13 @@ def _each_account(
                 )
             except sso.SSOFailure:
                 if not (pair and job.wait_for_sign_in(pair[0])):
+                    raise
+                sess = member_session(session, p.profile, account.id, p.role_name, job.id)
+            except ClientError as exc:  # looks valid on this machine, but AWS revoked it
+                if exc.response.get("Error", {}).get("Code") != "UnauthorizedException" or not pair:
+                    raise
+                log.warning("AWS refused the sign-in for %s; waiting for a new one", account.id)
+                if not job.wait_for_sign_in(pair[0], rejected=sso.load_token(pair[0])):
                     raise
                 sess = member_session(session, p.profile, account.id, p.role_name, job.id)
         except Exception as exc:  # AWS refusal, or an expired IAM Identity Center sign-in
@@ -877,19 +939,35 @@ def _each_account(
     with workers or nullcontext():
         try:
             # Each account's thread runs in a copy of this context, so its log lines keep the scan's run id.
-            for fut in as_completed([pool.submit(contextvars.copy_context().run, one, a) for a in active]):
-                account, out, issues = fut.result()
-                for i in issues:
-                    job.add_issue(i)
-                if out:
-                    results[account.id] = out
-                done += 1
-                text = f"{done} of {len(active)} accounts {verb}: {account.name}"
-                left = eta_seconds(time.monotonic() - t0, done, len(active), settings.max_workers)
-                eta = {"step": step, "done": done, "total": len(active), "then": then, "seconds_left": left,
-                       "parallel": settings.max_workers}  # fmt: skip
-                job.update(what, span[0] + int((span[1] - span[0]) * done / max(len(active), 1)),
-                           f"{label}: {text}" if label else text, eta)  # fmt: skip
+            waiting = {pool.submit(contextvars.copy_context().run, one, a): a for a in active}
+            last_done = warned_at = time.monotonic()
+            while waiting:
+                finished, _ = wait(waiting, timeout=WAIT_POLL_SECONDS, return_when=FIRST_COMPLETED)
+                job.check_cancelled()  # Stop works even while every account in hand is slow
+                now = time.monotonic()
+                if not finished and now - max(last_done, warned_at) > STALL_WARN_SECONDS:
+                    warned_at = now
+                    slow = [a.name for f, a in waiting.items() if f.running()]
+                    minutes = (now - last_done) / 60
+                    log.warning("%s: no account finished for %.0f min; still reading %s", what, minutes, slow)
+                for fut in finished:
+                    del waiting[fut]
+                    account, out, issues = fut.result()
+                    last_done = time.monotonic()
+                    for i in issues:
+                        job.add_issue(i)
+                    if out:
+                        results[account.id] = out
+                    done += 1
+                    text = f"{done} of {len(active)} accounts {verb}: {account.name}"
+                    left = eta_seconds(time.monotonic() - t0, done, len(active), settings.max_workers)
+                    eta = {"step": step, "done": done, "total": len(active), "then": then, "seconds_left": left,
+                           "parallel": settings.max_workers}  # fmt: skip
+                    job.update(what, span[0] + int((span[1] - span[0]) * done / max(len(active), 1)),
+                               f"{label}: {text}" if label else text, eta)  # fmt: skip
+                    if done % SAVE_EVERY_ACCOUNTS == 0 or time.monotonic() - saved_at > SAVE_EVERY_SECONDS:
+                        _save_progress(job)
+                        saved_at = time.monotonic()
         except BaseException:
             # Ctrl+C or a failure: drop the accounts not yet started and stop the workers now, rather
             # than reading every remaining account first.

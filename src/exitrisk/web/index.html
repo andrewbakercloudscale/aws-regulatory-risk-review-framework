@@ -691,8 +691,81 @@
       </div>
     </section>
 
+    <section class="section" id="or-map">
+      <h2><span class="num">2</span>Risk map: spend against risk</h2>
+      <p class="muted small">Exposure is the risk score as a share, times monthly spend. Spend stands in for importance, so read it with judgement: a cheap account that takes payments can matter more than a large data platform. Select an account to see its findings.</p>
+      <div class="card">
+        <h3>Accounts by spend and risk</h3>
+        <p class="muted small">Number of accounts and their monthly spend. Start at the top left. Select a cell to list its accounts.</p>
+        <div class="table-wrap"><table class="or-matrix" id="orMatrix"></table></div>
+        <p id="orMatrixList" class="small" hidden></p>
+      </div>
+      <div class="card">
+        <h3>Every account, sized by spend and coloured by risk</h3>
+        <div id="orTreemap" class="or-treemap"></div>
+        <p id="orTreemapNote" class="muted small"></p>
+      </div>
+      <div class="grid-2 or-map-grid">
+        <div class="card">
+          <h3>Most exposure</h3>
+          <p class="muted small">The 20 accounts with the most spend at risk.</p>
+          <div id="orExposure" class="or-bars"></div>
+        </div>
+        <div class="card">
+          <h3>Production findings by service</h3>
+          <p class="muted small">Critical, high and medium.</p>
+          <div id="orServiceBars" class="or-bars"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Risk score against spend</h3>
+        <div class="chart-box tall"><canvas id="chOrBubble" role="img" aria-label="Bubble chart of each account's outage risk score against its monthly spend"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Account by service</h3>
+        <p id="orHeatNote" class="muted small"></p>
+        <div class="table-wrap"><table class="or-heat" id="orHeat"></table></div>
+      </div>
+      <div class="card">
+        <h3>What reaches its limit first</h3>
+        <p id="orRunwayNote" class="muted small"></p>
+        <div id="orRunway" class="or-runway"></div>
+      </div>
+    </section>
+
+    <section class="section" id="or-top">
+      <h2><span class="num">3</span>Top 50 risks</h2>
+      <div class="card">
+        <p class="muted small">One line per finding per account, with its other copies counted. Production first, then severity, then the account's spend, then how far past its limit. Lead times are our judgement.</p>
+        <div class="table-wrap"><table class="data compact" id="orTop"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="or-coverage">
+      <h2><span class="num">4</span>What is covered, and what is not</h2>
+      <div class="card">
+        <p id="orCovHead" class="brief-headline"></p>
+        <div id="orCovBar" class="or-covbar" role="img" aria-label="Share of monthly spend by how far it is checked"></div>
+        <div id="orCovLevels" class="or-covlevels"></div>
+        <p id="orCovGap" class="warn-text small" hidden></p>
+      </div>
+      <div class="card">
+        <h3>Every billed service in this scan</h3>
+        <p class="muted small">Security, audit and billing lines that take no customer traffic are left out.</p>
+        <div class="table-wrap"><table class="data compact" id="orCovTable"></table></div>
+      </div>
+      <details class="card or-rule"><summary><strong>What each service's checks read, and what they cannot see</strong></summary><div class="table-wrap"><table class="data compact" id="orCovCatalog"></table></div></details>
+    </section>
+
+    <section class="section" id="or-services">
+      <h2><span class="num">5</span>Service reviews</h2>
+      <p class="muted small">Worst first. Each opens with its verdict, then what to do, its limits, its resources with peak against average, what was read, and what could not be seen.</p>
+      <p id="orReviewsNote" class="warn-text small" hidden></p>
+      <div id="orReviews"></div>
+    </section>
+
     <section class="section" id="or-questions">
-      <h2><span class="num">2</span>The peak</h2>
+      <h2><span class="num">6</span>The peak</h2>
       <div class="card">
         <p class="muted small">Changing these needs no new scan. The expected load is an assumption until replaced by last year's measured ratio of peak to normal.</p>
         <form id="orForm" class="as-form" autocomplete="off">
@@ -712,11 +785,12 @@
     </section>
 
     <section class="section" id="or-findings">
-      <h2><span class="num">3</span>Findings</h2>
+      <h2><span class="num">7</span>Findings</h2>
       <div class="card">
         <div class="row no-print or-filters">
           <label class="inline">Area<select id="orArea"></select></label>
           <label class="inline">Severity<select id="orSev"><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+          <label class="inline">Service<select id="orService"></select></label>
           <label class="inline">Finding<select id="orRule"></select></label>
           <label class="inline">Search<input id="orSearch" type="search" placeholder="Account, resource or region"></label>
           <label class="check"><input type="checkbox" id="orProd" checked> Production only</label>
@@ -730,7 +804,7 @@
     </section>
 
     <section class="section" id="or-accounts">
-      <h2><span class="num">4</span>Accounts</h2>
+      <h2><span class="num">8</span>Accounts</h2>
       <div class="card">
         <p class="muted small">Every account read, highest outage risk first. Score 0 to 100, higher is worse: each finding type adds its severity's points once. Select an account to see its findings.</p>
         <div class="table-wrap"><table class="data compact" id="orAccounts"></table></div>
@@ -739,7 +813,7 @@
     </section>
 
     <section class="section" id="or-eks">
-      <h2><span class="num">5</span>EKS clusters</h2>
+      <h2><span class="num">9</span>EKS clusters</h2>
       <div class="card">
         <p class="muted small">Replica counts, requests and limits come from each cluster's Kubernetes API, which needs a read-only access entry for the scan's identity and a network path to the endpoint. The scan never adds an entry. A cluster not read is not a pass; Container Insights, where on, still gives memory and CPU against limits.</p>
         <p id="orEksHelp" class="small" hidden></p>
@@ -748,7 +822,7 @@
     </section>
 
     <section class="section" id="or-causes">
-      <h2><span class="num">6</span>What causes outages</h2>
+      <h2><span class="num">10</span>What causes outages</h2>
       <div class="card">
         <p class="muted small">Published evidence, beside what this scan found for the same cause. The order is our judgement for a bank's peak event, not a published ranking, and no source here measures AWS customers or banks directly. A scan measures capacity far better than it measures change, yet change has the strongest evidence: hold the freeze as well as fixing the findings.</p>
         <div class="table-wrap"><table class="data compact" id="orCauses"></table></div>
@@ -756,7 +830,7 @@
     </section>
 
     <section class="section" id="or-method">
-      <h2><span class="num">7</span>Method and limits</h2>
+      <h2><span class="num">11</span>Method and limits</h2>
       <div class="card small" id="orMethod"></div>
     </section>
     <p id="orFooter" class="muted small"></p>

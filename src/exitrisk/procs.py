@@ -25,6 +25,8 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
 import boto3
+import botocore.loaders
+import botocore.session
 
 from .collectors import assurance, inventory
 from .collectors import outage as outage_checks
@@ -79,13 +81,28 @@ def _init_worker(queue, level: str) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
+# Parsing a service's model takes most of the time to make a client (0.21 s against 0.08 s for 16 clients,
+# measured). A session per account would parse them all again; sharing the loader parses each once a process.
+_models = botocore.loaders.Loader()
+
+
+def _session(creds: tuple[str, str, str | None], region: str | None) -> boto3.Session:
+    core = botocore.session.get_session()
+    core.register_component("data_loader", _models)
+    return boto3.Session(
+        aws_access_key_id=creds[0],
+        aws_secret_access_key=creds[1],
+        aws_session_token=creds[2],
+        region_name=region,
+        botocore_session=core,
+    )
+
+
 def _inventory(creds: tuple[str, str, str | None], region: str | None, account_id: str, regions, dependencies, run_id):
     """In a worker: one account's inventory, with a session made here from the credentials."""
     token = run_id_var.set(run_id)
     try:
-        session = boto3.Session(
-            aws_access_key_id=creds[0], aws_secret_access_key=creds[1], aws_session_token=creds[2], region_name=region
-        )
+        session = _session(creds, region)
         return inventory.inventory_account(session, account_id, regions, dependencies=dependencies)
     finally:
         run_id_var.reset(token)
@@ -95,9 +112,7 @@ def _assurance(creds: tuple[str, str, str | None], region: str | None, account_i
     """In a worker: one account's Cloud Assurance Framework checks."""
     token = run_id_var.set(run_id)
     try:
-        session = boto3.Session(
-            aws_access_key_id=creds[0], aws_secret_access_key=creds[1], aws_session_token=creds[2], region_name=region
-        )
+        session = _session(creds, region)
         return assurance.account_checks(session, account_id, regions, info)
     finally:
         run_id_var.reset(token)
@@ -107,9 +122,7 @@ def _outage(creds: tuple[str, str, str | None], region: str | None, account_id: 
     """In a worker: one account's outage risk checks."""
     token = run_id_var.set(run_id)
     try:
-        session = boto3.Session(
-            aws_access_key_id=creds[0], aws_secret_access_key=creds[1], aws_session_token=creds[2], region_name=region
-        )
+        session = _session(creds, region)
         return outage_checks.account_checks(session, account_id, regions, info)
     finally:
         run_id_var.reset(token)

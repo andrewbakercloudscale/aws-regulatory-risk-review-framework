@@ -1856,7 +1856,7 @@
   };
   const AS_FIELDS = ["production_patterns", "edge_patterns", "sensitive_patterns", "critical_patterns", "admin_limit", "allowed_locations", "required_tags", "ai_approved"];
   const AS_SEV_TIER = { critical: 5, high: 4, medium: 3, low: 2 };
-  const AS_RATING_TIER = { Low: 1, Medium: 3, High: 4, Critical: 5 };
+  const AS_RATING_TIER = { Low: 1, Medium: 3, High: 4, Critical: 5, "Not measured": 3 };
   const AS_STATE = { fail: "Fail", unknown: "Not measured", pass: "Pass", na: "Not applicable" };
   const AS_SCOPE = { all: "All accounts", production: "Production only", non_edge: "Not internet edge", sensitive: "Holding sensitive data" };
   const AS_ROWS = 25;
@@ -2361,7 +2361,7 @@
     $("#orErrorText").textContent = `${e.message}${ref}`;
     $("#orErrorHint").textContent = e.hint || (e.status >= 500
       ? "This is a bug in the console. Open the Log for the details, and report it with the log lines."
-      : "Check the answers in section 2 and try again.");
+      : "Check the answers in section 6 and try again.");
     $("#orError").hidden = state.view !== "outage";
     if (state.or) toast(`Outage risk not updated: ${e.message}`);
     if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
@@ -2391,6 +2391,10 @@
     try {
       renderOrCover(r);
       renderOrSummary(r);
+      renderOrMap(r);
+      renderOrTop(r);
+      renderOrCoverageView(r);
+      renderOrReviews(r);
       renderOrForm(r);
       fillOrFilters(r);
       renderOrFindings();
@@ -2404,7 +2408,7 @@
       showOrError(new Error(`The report could not be drawn (${e.message}). Reload the page; if it persists, open the log and report it.`));
       return;
     }
-    if (PRINT) document.querySelectorAll("#orContent details").forEach((d) => { d.open = true; });
+    if (PRINT) document.querySelectorAll("#orContent details").forEach((d) => { fillOrReview(d); d.open = true; });
     if (show) document.body.dataset.ready = "1";
   }
 
@@ -2421,8 +2425,10 @@
     ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
     const gaps = [];
     if (s.not_checked) gaps.push(`${plural(s.not_checked, "account")} could not be read`);
-    if (s.accounts_full < s.accounts) gaps.push(`${plural(s.accounts - s.accounts_full, "account")} had a check refused or failing, shown in section 4`);
-    if (s.clusters_read < s.clusters) gaps.push(`${num(s.clusters - s.clusters_read)} of ${plural(s.clusters, "EKS cluster")} could not be read, shown in section 5`);
+    if (s.accounts_full < s.accounts) gaps.push(`${plural(s.accounts - s.accounts_full, "account")} had a check refused or failing, shown in section 8`);
+    if (s.accounts_blind) gaps.unshift(`${plural(s.accounts_blind, "account")} could not be measured at all: first in section 8, and left out of the score`);
+    if (s.accounts_cut) gaps.push(`${plural(s.accounts_cut, "account")} had more results than could be read, so some measures are missing`);
+    if (s.clusters_read < s.clusters) gaps.push(`${num(s.clusters - s.clusters_read)} of ${plural(s.clusters, "EKS cluster")} could not be read, shown in section 9`);
     $("#orCoverage").hidden = !gaps.length;
     $("#orCoverage").textContent = gaps.length ? `Not everything was measured: ${gaps.join("; ")}. What was not measured is not a pass.` : "";
   }
@@ -2458,6 +2464,204 @@
     $("#orFocus").innerHTML = `<thead><tr><th>Area</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th class="num-cell">Accounts</th><th>Most common</th><th>Start by</th></tr></thead><tbody>${r.focus.map((x) => `<tr><td><button type="button" class="link-btn" data-or-area="${esc(x.area)}"><strong>${esc(x.label)}</strong></button></td><td class="num-cell">${num(x.critical)}</td><td class="num-cell">${num(x.high)}</td><td class="num-cell">${num(x.medium)}</td><td class="num-cell">${num(x.accounts)}</td><td class="small">${esc(x.top.map((t) => `${t.title} (${num(t.count)})`).join(", ") || EMPTY)}</td><td class="nowrap${x.late && (x.critical || x.high) ? " warn-text" : ""}">${esc(orDate(x.start_by))}</td></tr>`).join("")}</tbody>`;
   }
 
+  // ---- Risk map: spend against risk
+  const OR_RATING_COLOR = { Critical: "var(--sev-critical)", High: "var(--sev-error)", Medium: "var(--sev-warning)", Low: "var(--good)", "Not measured": "var(--t3)" };
+  const OR_SEV_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-error)", medium: "var(--sev-warning)", low: "var(--sev-info)" };
+  const orSev = (sev) => pill(null, cap(sev), OR_SEV_COLOR[sev]);
+  const OR_RATING_INK = { Critical: "#fff", High: "#111", Medium: "#111", Low: "#fff", "Not measured": "#111" };
+
+  function renderOrMap(r) {
+    renderOrMatrix(r);
+    renderOrTreemap(r);
+    renderOrExposure(r);
+    renderOrServiceBars(r);
+    renderOrBubble(r);
+    renderOrHeat(r);
+    renderOrRunway(r);
+  }
+
+  function renderOrMatrix(r) {
+    const h = r.heatmap;
+    state.orCells = {};
+    const rows = h.rows.filter((row) => row.rating !== "Not measured" || row.cells.some((c) => c.accounts));
+    $("#orMatrix").innerHTML = `<thead><tr><th>Risk</th>${h.bands.map((b) => `<th>${esc(b)}</th>`).join("")}</tr></thead><tbody>${rows.map((row, ri) => `<tr><th scope="row">${pill(null, row.rating, OR_RATING_COLOR[row.rating])}</th>${row.cells.map((c, ci) => {
+      if (!c.accounts) return '<td class="or-cell is-empty"><span class="muted">·</span></td>';
+      const key = `${row.rating}|${c.band}`;
+      state.orCells[key] = c;
+      // Heat rises with risk and spend together; spend unknown takes the risk's colour at half strength.
+      const strength = c.band === "Spend unknown" ? 22 : Math.max(10, 58 - 12 * ri - 9 * ci);
+      const color = OR_RATING_COLOR[row.rating];
+      return `<td class="or-cell" style="background:color-mix(in srgb, ${color} ${strength}%, var(--surface))"><button type="button" class="link-btn" data-or-cell="${esc(key)}"><strong>${num(c.accounts)}</strong><span class="small">${c.monthly ? money(c.monthly) : "no spend data"}</span></button></td>`;
+    }).join("")}</tr>`).join("")}</tbody>`;
+    $("#orMatrixList").hidden = true;
+  }
+
+  function showOrCell(key) {
+    const c = state.orCells?.[key];
+    if (!c) return;
+    const [rating, band] = key.split("|");
+    const box = $("#orMatrixList");
+    box.hidden = false;
+    box.innerHTML = `<strong>${esc(rating)}, ${esc(band)}:</strong> ${c.names.map((n) => `<button type="button" class="link-btn" data-or-acct="${esc(n)}">${esc(n)}</button>`).join(", ")}${c.accounts > c.names.length ? `, and ${num(c.accounts - c.names.length)} more` : ""}`;
+  }
+
+  // Squarified treemap (Bruls, Huizing, van Wijk): keeps tiles near square, so small accounts stay readable.
+  function squarify(items, x, y, w, h) {
+    const out = [];
+    let rest = items.slice(), box = { x, y, w, h };
+    const total = rest.reduce((n, i) => n + i.value, 0);
+    if (!total) return out;
+    const scale = (w * h) / total;
+    const worst = (row, side) => {
+      const sum = row.reduce((n, i) => n + i.value * scale, 0);
+      const max = Math.max(...row.map((i) => i.value * scale)), min = Math.min(...row.map((i) => i.value * scale));
+      return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
+    };
+    while (rest.length) {
+      const side = Math.min(box.w, box.h);
+      const row = [rest[0]];
+      let i = 1;
+      while (i < rest.length && worst([...row, rest[i]], side) <= worst(row, side)) row.push(rest[i++]);
+      rest = rest.slice(i);
+      const sum = row.reduce((n, it) => n + it.value * scale, 0);
+      const across = sum / side;
+      let at = 0;
+      for (const it of row) {
+        const along = (it.value * scale) / across;
+        if (box.w >= box.h) out.push({ ...it, x: box.x, y: box.y + at, w: across, h: along });
+        else out.push({ ...it, x: box.x + at, y: box.y, w: along, h: across });
+        at += along;
+      }
+      if (box.w >= box.h) box = { ...box, x: box.x + across, w: box.w - across };
+      else box = { ...box, y: box.y + across, h: box.h - across };
+    }
+    return out;
+  }
+
+  function renderOrTreemap(r) {
+    const spent = r.accounts.filter((a) => a.monthly_spend > 0).sort((a, b) => b.monthly_spend - a.monthly_spend);
+    const W = 1000, H = Math.min(760, 340 + spent.length * 1.4);
+    const tiles = squarify(spent.map((a) => ({ a, value: a.monthly_spend })), 0, 0, W, H);
+    $("#orTreemap").innerHTML = tiles.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Treemap of accounts: size is monthly spend, colour is outage risk">${tiles.map((t) => {
+      const a = t.a, fit = Math.floor((t.w - 8) / 6.4);
+      const label = t.w > 52 && t.h > 20 ? `<text x="${(t.x + 4).toFixed(1)}" y="${(t.y + 14).toFixed(1)}" fill="${OR_RATING_INK[a.rating]}" font-size="11">${esc(a.name.length > fit ? `${a.name.slice(0, Math.max(fit - 1, 1))}…` : a.name)}</text>${t.h > 36 ? `<text x="${(t.x + 4).toFixed(1)}" y="${(t.y + 28).toFixed(1)}" fill="${OR_RATING_INK[a.rating]}" font-size="10" opacity=".85">${esc(money(a.monthly_spend))} · ${num(a.score)}</text>` : ""}` : "";
+      return `<g data-or-acct="${esc(a.name)}" class="or-tile"><rect x="${t.x.toFixed(1)}" y="${t.y.toFixed(1)}" width="${t.w.toFixed(1)}" height="${t.h.toFixed(1)}" fill="${OR_RATING_COLOR[a.rating]}" stroke="var(--surface)" stroke-width="1.5"><title>${esc(a.name)}: ${esc(money(a.monthly_spend))} a month, score ${num(a.score)} (${esc(a.rating)})</title></rect>${label}</g>`;
+    }).join("")}</svg>` : '<p class="muted small">This scan holds no spend by account.</p>';
+    const legend = ["Critical", "High", "Medium", "Low"].map((k) => pill(null, k, OR_RATING_COLOR[k])).join(" ");
+    $("#orTreemapNote").innerHTML = `${legend} <span>${r.spend.unknown ? `${plural(r.spend.unknown, "account")} with no known spend ${r.spend.unknown === 1 ? "is" : "are"} not drawn; see section 8.` : ""}</span>`;
+  }
+
+  function orBar(label, value, max, color, note, acct) {
+    const name = acct ? `<button type="button" class="link-btn" data-or-acct="${esc(acct)}">${esc(label)}</button>` : esc(label);
+    return `<div class="or-bar"><div class="or-bar-name">${name}</div><div class="or-bar-track"><i style="width:${max ? Math.max(1, (100 * value) / max).toFixed(1) : 0}%;background:${color}"></i></div><div class="or-bar-note small">${note}</div></div>`;
+  }
+
+  function renderOrExposure(r) {
+    const top = [...r.accounts].filter((a) => a.exposure > 0).sort((a, b) => b.exposure - a.exposure).slice(0, 20);
+    const max = top[0]?.exposure || 0;
+    $("#orExposure").innerHTML = top.length ? top.map((a) => orBar(a.name, a.exposure, max, OR_RATING_COLOR[a.rating], `${money(a.exposure)} · score ${num(a.score)}`, a.name)).join("") : '<p class="muted small">No account has both risk and known spend.</p>';
+  }
+
+  function renderOrServiceBars(r) {
+    const rows = r.services.filter((s) => s.critical + s.high + s.medium).sort((a, b) => (b.critical - a.critical) || (b.high - a.high) || (b.medium - a.medium)).slice(0, 18);
+    const max = Math.max(1, ...rows.map((s) => s.critical + s.high + s.medium));
+    const seg = (n, k) => (n ? `<i style="width:${((100 * n) / max).toFixed(1)}%;background:${OR_SEV_COLOR[k]}" title="${n} ${k}"></i>` : "");
+    $("#orServiceBars").innerHTML = rows.length ? rows.map((s) => `<div class="or-bar"><div class="or-bar-name"><button type="button" class="link-btn" data-or-service="${esc(s.id)}">${esc(s.label)}</button></div><div class="or-bar-track is-stack">${seg(s.critical, "critical")}${seg(s.high, "high")}${seg(s.medium, "medium")}</div><div class="or-bar-note small">${num(s.critical)} / ${num(s.high)} / ${num(s.medium)}</div></div>`).join("") : '<p class="muted small">No production finding at medium or above.</p>';
+  }
+
+  function renderOrBubble(r) {
+    const accts = r.accounts.filter((a) => a.monthly_spend > 0);
+    const dot = { Critical: css("--sev-critical"), High: css("--sev-error"), Medium: css("--sev-warning"), Low: css("--good"), "Not measured": css("--t3") };
+    chart("chOrBubble", {
+      type: "bubble",
+      data: { datasets: [{
+        label: "Accounts",
+        data: accts.map((a) => ({ x: a.monthly_spend, y: a.score, r: Math.min(22, 4 + 2.2 * Math.sqrt(a.critical * 4 + a.high)), a })),
+        backgroundColor: accts.map((a) => `${dot[a.rating]}bb`),
+        borderColor: css("--surface"), borderWidth: 1,
+      }] },
+      options: {
+        layout: { padding: 12 },
+        scales: {
+          x: { type: "logarithmic", title: { display: true, text: "Monthly spend (USD, log scale)" }, ticks: { maxRotation: 0, callback: (v) => ([1, 10, 100, 1e3, 1e4, 1e5, 1e6, 1e7].includes(v) ? money(v) : "") } },
+          y: { min: 0, max: 100, title: { display: true, text: "Outage risk score" }, grid: { color: css("--grid") } },
+        },
+        plugins: { legend: { display: false }, tooltip: { callbacks: {
+          title: (items) => items[0].raw.a.name,
+          label: (c) => { const a = c.raw.a; return [` Score ${a.score} (${a.rating}) · ${money(a.monthly_spend)}/month`, ` ${a.critical} critical, ${a.high} high`]; },
+        } } },
+      },
+    });
+  }
+
+  function renderOrHeat(r) {
+    const h = r.account_service;
+    $("#orHeatNote").textContent = `The worst finding by account and service, with how many, for the ${num(h.rows.length)} accounts with the most exposure of ${num(h.total_accounts)}.`;
+    if (!h.columns.length) { $("#orHeat").innerHTML = ""; return; }
+    $("#orHeat").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Exposure</th>${h.columns.map((c) => `<th class="or-heat-col"><button type="button" class="link-btn" data-or-service="${esc(c.id)}"><span>${esc(c.label)}</span></button></th>`).join("")}</tr></thead><tbody>${h.rows.map((a) => `<tr><th scope="row"><button type="button" class="link-btn" data-or-acct="${esc(a.name)}">${esc(a.name)}</button></th><td class="num-cell small">${a.monthly ? money(a.exposure) : "no spend"}</td>${a.cells.map((c) => (c.severity ? `<td class="or-heat-cell" style="background:${OR_SEV_COLOR[c.severity]};color:${c.severity === "critical" ? "#fff" : "#111"}" title="${esc(c.severity)}">${num(c.count)}</td>` : '<td class="or-heat-cell"></td>')).join("")}</tr>`).join("")}</tbody>`;
+  }
+
+  function renderOrRunway(r) {
+    const w = r.runway, scale = Math.max(w.days_to_peak + 30, 30);
+    $("#orRunwayNote").textContent = w.total ? `Production measures with a measured trend, soonest first: ${num(Math.min(w.rows.length, w.total))} of ${num(w.total)}. The line is the peak, in ${plural(w.days_to_peak, "day")}. A straight line through 35 days, so a surge at the peak fills sooner.` : "No production measure is on a trend to reach its limit.";
+    const at = Math.min(100, (100 * w.days_to_peak) / scale).toFixed(1);
+    $("#orRunway").innerHTML = w.rows.map((x) => `<div class="or-bar"><div class="or-bar-name small" title="${esc(x.title)}"><strong>${esc(x.res)}</strong><br><span class="muted">${esc(x.account)}</span></div><div class="or-bar-track"><i style="width:${Math.max(1, Math.min(100, (100 * x.days) / scale)).toFixed(1)}%;background:${OR_SEV_COLOR[x.severity]}"></i><b style="left:${at}%"></b></div><div class="or-bar-note small">${num(x.days, 0)} days</div></div>`).join("");
+  }
+
+  function renderOrTop(r) {
+    $("#orTop").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Severity</th><th>Risk</th><th>Account</th><th class="num-cell">Now → peak</th><th>What to do</th><th>Start by</th></tr></thead><tbody>${r.top_risks.map((f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${orSev(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small mono">${esc(f.res)}${f.more ? ` <span class="muted">and ${num(f.more)} more</span>` : ""}</div><div class="muted small">${esc(f.service || "")}${f.why ? `${f.service ? " · " : ""}${esc(f.why)}` : ""}</div></td><td><button type="button" class="link-btn" data-or-acct="${esc(f.account)}">${esc(f.account)}</button>${f.production ? "" : ' <span class="muted small">non-prod</span>'}<div class="muted small">${f.monthly ? `${money(f.monthly)}/month` : "spend unknown"}</div></td><td class="num-cell">${f.pct != null ? `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}` : EMPTY}</td><td class="small">${esc(f.fix)}</td><td class="small">${esc(orDate(f.start_by))}${f.late ? '<div class="warn-text">already late</div>' : ""}</td></tr>`).join("")}</tbody>`;
+  }
+
+  // ---- Coverage and the service reviews
+  const OR_LEVEL_COLOR = { deep: "var(--good)", partial: "var(--t2)", generic: "var(--sev-warning)", none: "var(--sev-critical)" };
+  const OR_LEVEL_LABEL = { deep: "Reviewed", partial: "Part reviewed", generic: "Quotas only", none: "Not covered" };
+  const OR_TONE_LABEL = { critical: "Act now", high: "Before the freeze", medium: "Watch", unknown: "Unknown", clear: "Nothing found" };
+  const OR_TONE_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-error)", medium: "var(--sev-warning)", unknown: "var(--t3)", clear: "var(--good)" };
+
+  function renderOrCoverageView(r) {
+    const c = r.coverage, by = Object.fromEntries(c.levels.map((l) => [l.level, l]));
+    const reviewed = by.deep.share + by.partial.share;
+    $("#orCovHead").textContent = c.total ? `${pct(reviewed, 0)} of this scan's spend is on services reviewed in whole or part, ${pct(by.generic.share, 0)} has only its quotas checked, and ${pct(by.none.share, 0)} is not covered.` : "This scan holds no spend by service, so coverage cannot be measured against it.";
+    $("#orCovBar").innerHTML = c.levels.filter((l) => l.share).map((l) => `<i style="width:${l.share}%;background:${OR_LEVEL_COLOR[l.level]}" title="${esc(l.label)}: ${pct(l.share, 1)}"></i>`).join("");
+    $("#orCovLevels").innerHTML = c.levels.map((l) => `<div><div>${pill(null, l.label, OR_LEVEL_COLOR[l.level])}</div><div class="or-cov-n">${money(l.monthly)}<span class="muted small"> a month, ${plural(l.services, "service")}</span></div><p class="muted small">${esc(l.about)}</p></div>`).join("");
+    const gap = c.not_covered;
+    $("#orCovGap").hidden = !gap.length;
+    $("#orCovGap").textContent = gap.length ? `Not covered, so nothing here says these are safe: ${gap.slice(0, 12).map((x) => `${x.name} (${money(x.monthly)})`).join(", ")}${gap.length > 12 ? `, and ${num(gap.length - 12)} more` : ""}.` : "";
+    const rows = PRINT ? c.billed.slice(0, 60) : c.billed;
+    $("#orCovTable").innerHTML = `<thead><tr><th>Billed service</th><th class="num-cell">Monthly</th><th>How far it is checked</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${x.service ? `<button type="button" class="link-btn" data-or-service="${esc(x.service)}">${esc(x.name)}</button>` : esc(x.name)}</td><td class="num-cell">${money(x.monthly)}</td><td>${pill(null, OR_LEVEL_LABEL[x.level], OR_LEVEL_COLOR[x.level])}</td></tr>`).join("")}</tbody>`;
+    $("#orCovCatalog").innerHTML = `<thead><tr><th>Service</th><th>Level</th><th>Reads</th><th>Cannot see</th></tr></thead><tbody>${c.catalog.map((s) => `<tr><td><strong>${esc(s.label)}</strong></td><td>${pill(null, OR_LEVEL_LABEL[s.level], OR_LEVEL_COLOR[s.level])}</td><td class="small">${esc(s.reads.join("; "))}</td><td class="small">${esc(s.not_seen.join("; "))}</td></tr>`).join("")}</tbody>`;
+  }
+
+  function renderOrReviews(r) {
+    const old = r.services.length && r.services[0].no_profiles;
+    $("#orReviewsNote").hidden = !old;
+    $("#orReviewsNote").textContent = old ? "This scan was made before the service reviews, so it holds findings but no settings or peak figures for each resource. Scan again for the full reviews." : "";
+    state.orReviewById = Object.fromEntries(r.services.map((s) => [s.id, s]));
+    $("#orReviews").innerHTML = r.services.map((s) => `<details class="card or-rule or-review" id="orReview-${esc(s.id)}" data-or-review="${esc(s.id)}"><summary>${pill(null, OR_TONE_LABEL[s.tone], OR_TONE_COLOR[s.tone])} <strong>${esc(s.label)}</strong> <span class="muted small">${pill(null, OR_LEVEL_LABEL[s.level], OR_LEVEL_COLOR[s.level])} ${s.monthly ? `${money(s.monthly)} a month` : "no spend seen"}</span><div class="small or-verdict">${esc(s.verdict)}</div></summary><div class="or-review-body"></div></details>`).join("");
+    for (const d of $("#orReviews").children) d.addEventListener("toggle", () => { if (d.open) fillOrReview(d); });
+  }
+
+  // Filled on opening: 50 services of up to 50 resources would otherwise weigh on every redraw.
+  function fillOrReview(d) {
+    const s = state.orReviewById?.[d.dataset?.orReview];
+    const body = d.querySelector?.(".or-review-body");
+    if (!s || !body || body.dataset.filled) return;
+    body.dataset.filled = "1";
+    const list = (rows) => `<ul class="small">${rows.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+    const usage = (f) => (f.used != null && f.limit != null ? `${num(f.used, f.used % 1 ? 1 : 0)} of ${num(f.limit, f.limit % 1 ? 1 : 0)}${f.unit ? ` ${esc(f.unit)}` : ""}` : "");
+    const stat = (x) => `<div>${esc(x.k)}: <strong>${num(x.peak, x.peak % 1 ? 1 : 0)}${esc(x.unit || "")}</strong> peak, ${num(x.avg, x.avg % 1 ? 1 : 0)}${esc(x.unit || "")} average${x.limit ? `, limit ${num(x.limit)}` : ""}${x.per_day ? `, ${x.per_day > 0 ? "+" : ""}${num(x.per_day, 2)} a day` : ""}</div>`;
+    const resources = PRINT ? s.resource_rows.slice(0, 15) : s.resource_rows;
+    const parts = [`<div class="or-facts"><div><b>${num(s.resources)}</b> resources read</div><div><b>${num(s.accounts)}</b> accounts</div><div><b>${num(s.critical)} / ${num(s.high)} / ${num(s.medium)}</b> critical, high, medium in production</div><div><b>${num(s.no_alarm)}</b> with no alarm on what fails first</div><div><b>${num(s.non_production)}</b> outside production</div></div>`];
+    if (s.not_read_count) parts.push(`<p class="warn-text small">Not read in ${plural(s.not_read_count, "account")}: ${esc(s.not_read.join(", "))}${s.not_read_count > s.not_read.length ? ", and more" : ""}. Unknown, not a pass.</p>`);
+    if (s.actions.length) parts.push(`<h4>What to do</h4><div class="table-wrap"><table class="data compact"><thead><tr><th>Impact</th><th>Finding</th><th class="num-cell">Found</th><th>Why it matters</th><th>What to do</th></tr></thead><tbody>${s.actions.map((a) => `<tr><td>${orSev(a.severity)}</td><td><strong>${esc(a.title)}</strong></td><td class="num-cell">${num(a.findings)}<div class="muted small">${plural(a.accounts, "account")}</div></td><td class="small">${esc(a.why)}</td><td class="small">${esc(a.fix)}</td></tr>`).join("")}</tbody></table></div>`);
+    if (s.limits.length) parts.push(`<h4>Limits and how soon</h4><div class="table-wrap"><table class="data compact"><thead><tr><th>Resource</th><th>Account</th><th>Measure</th><th class="num-cell">Now → peak</th><th>Detail</th></tr></thead><tbody>${s.limits.map((f) => `<tr><td class="mono small">${esc(f.res)}</td><td class="small">${esc(f.account)}</td><td class="small">${orSev(f.severity)} ${esc(f.title)}</td><td class="num-cell">${f.pct != null ? `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}` : EMPTY}</td><td class="small">${usage(f)}${f.days != null ? ` · at its limit in about ${num(f.days, 0)} days` : ""}</td></tr>`).join("")}</tbody></table></div>`);
+    if (resources.length) parts.push(`<h4>Resources, worst first</h4><p class="muted small">Live settings, and peak against average over 35 days. Showing ${num(resources.length)} of ${num(s.resources)}.</p><div class="table-wrap"><table class="data compact"><thead><tr><th>Resource</th><th>Settings</th><th>Peak against average</th></tr></thead><tbody>${resources.map((p) => `<tr><td>${p.severity ? `${orSev(p.severity)} ` : ""}<span class="mono small">${esc(p.res)}</span><div class="muted small">${esc(p.account)} · ${esc(p.region)}</div></td><td class="small">${Object.entries(p.facts).map(([k, v]) => `${esc(k)}: <strong>${esc(v)}</strong>`).join(" · ")}</td><td class="small">${p.stats.map(stat).join("") || EMPTY}</td></tr>`).join("")}</tbody></table></div>`);
+    if (s.options.length) parts.push(`<h4>Another design</h4><p class="muted small">Designs that remove a class of outage. Prices are not read, so cost is not compared.</p><div class="table-wrap"><table class="data compact"><thead><tr><th>Option</th><th>Removes</th><th>To weigh</th></tr></thead><tbody>${s.options.map((o) => `<tr><td><strong>${esc(o.name)}</strong></td><td class="small">${esc(o.removes)}</td><td class="small">${esc(o.note)}</td></tr>`).join("")}</tbody></table></div>`);
+    parts.push(`<div class="or-two"><div><h4>What was read</h4>${list(s.reads)}</div><div><h4>Not checked</h4>${list(s.not_seen)}</div></div>`);
+    if (s.docs.length) parts.push(`<p class="small">AWS guidance: ${s.docs.map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.label)}</a>`).join(" · ")}</p>`);
+    body.innerHTML = parts.join("");
+  }
+
   function renderOrForm(r) {
     const f = $("#orForm");
     for (const el of f.elements) {
@@ -2469,15 +2673,16 @@
   function fillOrFilters(r) {
     const keep = (id, html) => { const el = $(id), v = el.value; el.innerHTML = html; if ([...el.options].some((o) => o.value === v)) el.value = v; };
     keep("#orArea", `<option value="">All</option>${Object.entries(r.areas).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("")}`);
+    keep("#orService", `<option value="">All</option>${r.services.filter((x) => x.findings).map((x) => `<option value="${esc(x.id)}">${esc(x.label)} (${num(x.findings)})</option>`).join("")}`);
     keep("#orRule", `<option value="">All</option>${r.rules.map((x) => `<option value="${esc(x.id)}">${esc(x.title)} (${num(x.findings)})</option>`).join("")}`);
     const acct = $("#orSearch");
     if (state.orAccount) acct.value = state.orAccount;
   }
 
   function orShown() {
-    const area = $("#orArea").value, sev = $("#orSev").value, rule = $("#orRule").value, prod = $("#orProd").checked;
+    const area = $("#orArea").value, sev = $("#orSev").value, rule = $("#orRule").value, service = $("#orService").value, prod = $("#orProd").checked;
     const q = $("#orSearch").value.trim().toLowerCase();
-    return state.or.findings.filter((f) => (!area || f.area === area) && (!sev || f.severity === sev) && (!rule || f.rule === rule) && (!prod || f.production)
+    return state.or.findings.filter((f) => (!area || f.area === area) && (!service || f.service === service) && (!sev || f.severity === sev) && (!rule || f.rule === rule) && (!prod || f.production)
       && (!q || `${f.account} ${f.res} ${f.region} ${f.title}`.toLowerCase().includes(q)));
   }
 
@@ -2490,7 +2695,7 @@
       return `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}`;
     };
     const usage = (f) => (f.used != null && f.limit != null ? `${num(f.used, f.used % 1 ? 1 : 0)} of ${num(f.limit, f.limit % 1 ? 1 : 0)}${f.unit ? ` ${esc(f.unit)}` : ""}${f.hard ? " · hard limit" : ""}` : "");
-    $("#orTable").innerHTML = `<thead><tr><th>Severity</th><th>Finding</th><th>Account</th><th>Resource</th><th class="num-cell">Now → peak</th><th>Detail</th></tr></thead><tbody>${rows.slice(0, n).map((f) => `<tr><td>${sevPill(f.severity)}</td><td>${esc(f.title)}</td><td class="small">${esc(f.account)}${f.production ? "" : ' <span class="muted">non-prod</span>'}</td><td class="small mono or-res">${esc(f.res)}<div class="muted">${esc(f.region)}</div></td><td class="num-cell nowrap">${value(f)}</td><td class="small">${esc(f.why)}${usage(f) ? `<div class="muted">${usage(f)}</div>` : ""}${f.note && f.note !== f.why ? `<div class="muted">${esc(f.note)}</div>` : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">Nothing matches.</td></tr>`}</tbody>`;
+    $("#orTable").innerHTML = `<thead><tr><th>Severity</th><th>Finding</th><th>Account</th><th>Resource</th><th class="num-cell">Now → peak</th><th>Detail</th></tr></thead><tbody>${rows.slice(0, n).map((f) => `<tr><td>${orSev(f.severity)}</td><td>${esc(f.title)}</td><td class="small">${esc(f.account)}${f.production ? "" : ' <span class="muted">non-prod</span>'}</td><td class="small mono or-res">${esc(f.res)}<div class="muted">${esc(f.region)}</div></td><td class="num-cell nowrap">${value(f)}</td><td class="small">${esc(f.why)}${usage(f) ? `<div class="muted">${usage(f)}</div>` : ""}${f.note && f.note !== f.why ? `<div class="muted">${esc(f.note)}</div>` : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">Nothing matches.</td></tr>`}</tbody>`;
     const cut = state.or.findings_total > state.or.findings.length;
     $("#orFindCount").textContent = `${num(rows.length)} shown of ${num(state.or.findings_total)} findings${cut ? `; the worst ${num(state.or.findings.length)} are listed here and in the CSV` : ""}.`;
     $("#orMoreNote").textContent = n < rows.length ? `Showing ${num(n)} of ${num(rows.length)}` : "";
@@ -2500,7 +2705,7 @@
 
   function renderOrRules(r) {
     const top = r.rules.filter((x) => x.critical || x.high).slice(0, PRINT ? 40 : 15);
-    $("#orRules").innerHTML = top.map((x) => `<details class="card or-rule"><summary>${sevPill(x.critical ? "critical" : "high")} <strong>${esc(x.title)}</strong> <span class="muted small">${plural(x.findings, "finding")} in ${plural(x.accounts, "account")}</span></summary><p class="small"><strong>Why it matters.</strong> ${esc(x.why)}</p><p class="small"><strong>What to do.</strong> ${esc(x.fix)}</p></details>`).join("");
+    $("#orRules").innerHTML = top.map((x) => `<details class="card or-rule"><summary>${orSev(x.critical ? "critical" : "high")} <strong>${esc(x.title)}</strong> <span class="muted small">${plural(x.findings, "finding")} in ${plural(x.accounts, "account")}</span></summary><p class="small"><strong>Why it matters.</strong> ${esc(x.why)}</p><p class="small"><strong>What to do.</strong> ${esc(x.fix)}</p></details>`).join("");
   }
 
   function renderOrAccounts(more) {
@@ -2531,12 +2736,14 @@
     const a = r.answers;
     $("#orMethod").innerHTML = `<ul>
       <li><strong>Now</strong> is the highest hourly average of the last 35 days, which holds a month-end; quota usage on API rates uses five-minute figures over 14 days. Hourly averages hide short spikes, so real headroom is lower.</li>
-      <li><strong>At peak</strong> multiplies usage that rises with traffic by ${esc(a.peak_multiplier)}, an assumption you set in section 2. Counts of things someone creates, and storage, are not multiplied.</li>
+      <li><strong>At peak</strong> multiplies usage that rises with traffic by ${esc(a.peak_multiplier)}, an assumption you set in section 6. Counts of things someone creates, and storage, are not multiplied.</li>
       <li><strong>Critical</strong>: at ${esc(a.critical_pct)}% now, or full before the peak. <strong>High</strong>: past 100% at peak, or full within 30 days after it. <strong>Medium</strong>: past ${esc(a.warn_pct)}% at peak. Everything is one level lower outside production.</li>
+      <li><strong>Exposure</strong> is the risk score as a share, times monthly spend. It ranks by money, not by what the account does: use it to choose where to look first, not to dismiss a cheap account.</li>
+      <li><strong>Service reviews</strong> are as deep as section 4 says. Reading a resource's settings and metrics does not show drift from Terraform, topic detail in Kafka, or the price of another design.</li>
       <li><strong>Days to full</strong> is a straight line through the last 35 days, so a sudden rise in data at peak fills sooner.</li>
       <li><strong>Limits</strong> come from Service Quotas where AWS publishes a usage metric, plus the limits IAM, Route 53, RDS, load balancers, Lambda, S3 and Connect report themselves. Quotas with no usage metric are not compared.</li>
       <li><strong>S3 request rates</strong> need request metrics on the bucket, and compare the whole bucket against the rate per prefix: well spread keys have more room than shown.</li>
-      <li><strong>Not measured:</strong> database connections against their maximum, load test results, runbooks, DNS and conntrack limits on instances, and anything inside a cluster that could not be read. Regional dependence is in the Multi-Region Report; controls are in the Cloud Assurance Report.</li>
+      <li><strong>Not measured:</strong> load test results, runbooks, DNS and conntrack limits on instances, and anything inside a cluster that could not be read. Regional dependence is in the Multi-Region Report; controls are in the Cloud Assurance Report.</li>
       <li>Measures under 30% are counted, not kept. A scan is a point in time: scan again after changes, and before the freeze.</li></ul>`;
     $("#orFooter").textContent = `Generated ${new Date().toLocaleString()} by aws-regulatory-risk-review-framework · outage rules v${r.catalog_version} · scan ${r.scan_id}`;
   }
@@ -2549,7 +2756,7 @@
     $("#btnOrDemo").addEventListener("click", () => $("#btnDemo").click());
     $("#orForm").addEventListener("change", () => { saveOrAnswers(readOrForm()); loadOutage(); });
     $("#orForm").addEventListener("submit", (e) => e.preventDefault());
-    for (const id of ["#orArea", "#orSev", "#orRule", "#orProd"]) $(id).addEventListener("change", () => renderOrFindings());
+    for (const id of ["#orArea", "#orService", "#orSev", "#orRule", "#orProd"]) $(id).addEventListener("change", () => renderOrFindings());
     $("#orSearch").addEventListener("input", () => { state.orAccount = ""; renderOrFindings(); });
     $("#btnOrMore").addEventListener("click", () => renderOrFindings(true));
     $("#btnOrAcctMore").addEventListener("click", () => renderOrAccounts(true));
@@ -2561,16 +2768,24 @@
       renderOrFindings();
       $("#or-findings").scrollIntoView({ behavior: "smooth" });
     });
-    $("#orAccounts").addEventListener("click", (e) => {
+    $("#orContent").addEventListener("click", (e) => {
       const b = e.target.closest("[data-or-acct]");
-      if (!b) return;
-      state.orAccount = b.dataset.orAcct;
-      $("#orSearch").value = state.orAccount;
-      $("#orProd").checked = false;
-      $("#orArea").value = "";
-      $("#orRule").value = "";
-      renderOrFindings();
-      $("#or-findings").scrollIntoView({ behavior: "smooth" });
+      if (b) {
+        state.orAccount = b.dataset.orAcct;
+        $("#orSearch").value = state.orAccount;
+        $("#orProd").checked = false;
+        for (const id of ["#orArea", "#orService", "#orRule"]) $(id).value = "";
+        renderOrFindings();
+        $("#or-findings").scrollIntoView({ behavior: "smooth" });
+        return;
+      }
+      const c = e.target.closest("[data-or-cell]");
+      if (c) showOrCell(c.dataset.orCell);
+      const s = e.target.closest("[data-or-service]");
+      if (s) {
+        const box = document.getElementById(`orReview-${s.dataset.orService}`);
+        if (box) { box.open = true; box.scrollIntoView({ behavior: "smooth" }); }
+      }
     });
     $("#btnOrCsv").addEventListener("click", async () => {
       try {
@@ -2579,7 +2794,7 @@
         downloadText(await res.text(), `outage-risk-${state.scanId}.csv`, "text/csv");
       } catch (e) { toast(`Could not export: ${e.message}`, 6000); }
     });
-    window.addEventListener("beforeprint", () => { if (state.view === "outage") document.querySelectorAll("#orContent details").forEach((d) => { d.open = true; }); });
+    window.addEventListener("beforeprint", () => { if (state.view === "outage") document.querySelectorAll("#orContent details").forEach((d) => { fillOrReview(d); d.open = true; }); });
   }
 
   const VIEWS = ["exit", "multiregion", "assurance", "outage"];
@@ -3293,7 +3508,7 @@
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         state.runningScan = null;
         showScanRunning();
-        if (s.status === "cancelled") { toast("Scan stopped. Nothing was saved."); return; }
+        if (s.status === "cancelled") { toast(s.message || "Scan stopped."); return; }
         if (s.status === "failed") {
           $("#scanError").textContent = `Scan failed: ${s.message}. See section 9 and the log for details.`;
         } else {

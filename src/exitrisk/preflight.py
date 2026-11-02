@@ -221,6 +221,27 @@ OUTAGE_PROBES = [
     ("rds:DescribeAccountAttributes", "rds", "describe_account_attributes", {}),
     ("elasticloadbalancing:DescribeAccountLimits", "elbv2", "describe_account_limits", {"PageSize": 1}),
     ("lambda:GetAccountSettings", "lambda", "get_account_settings", {}),
+    # The per-service reviews.
+    ("cloudwatch:DescribeAlarms", "cloudwatch", "describe_alarms", {"MaxRecords": 1}),
+    ("rds:DescribeDBParameters", "rds", "describe_db_parameters", {"DBParameterGroupName": _NO_SUCH}),
+    ("rds:DescribePendingMaintenanceActions", "rds", "describe_pending_maintenance_actions", {"MaxRecords": 20}),
+    ("elasticache:DescribeReplicationGroups", "elasticache", "describe_replication_groups", {"MaxRecords": 20}),
+    ("lambda:ListFunctions", "lambda", "list_functions", {"MaxItems": 1}),
+    ("dynamodb:DescribeLimits", "dynamodb", "describe_limits", {}),
+    ("dynamodb:ListTables", "dynamodb", "list_tables", {"Limit": 1}),
+    ("dynamodb:DescribeTable", "dynamodb", "describe_table", {"TableName": _NO_SUCH}),
+    ("kinesis:ListStreams", "kinesis", "list_streams", {"Limit": 1}),
+    ("kinesis:DescribeStreamSummary", "kinesis", "describe_stream_summary", {"StreamName": _NO_SUCH}),
+    ("sqs:ListQueues", "sqs", "list_queues", {"MaxResults": 1}),
+    ("mq:ListBrokers", "mq", "list_brokers", {"MaxResults": 1}),
+    ("apigateway:GET", "apigateway", "get_account", {}),
+    ("redshift:DescribeClusters", "redshift", "describe_clusters", {"MaxRecords": 20}),
+    ("fsx:DescribeFileSystems", "fsx", "describe_file_systems", {"MaxResults": 1}),
+    ("elasticfilesystem:DescribeFileSystems", "efs", "describe_file_systems", {"MaxItems": 1}),
+    ("ec2:DescribeNatGateways", "ec2", "describe_nat_gateways", {"MaxResults": 5}),
+    ("ec2:DescribeTransitGateways", "ec2", "describe_transit_gateways", {"MaxResults": 5}),
+    ("ec2:DescribeVpnConnections", "ec2", "describe_vpn_connections", {}),
+    ("cloudfront:ListDistributions", "cloudfront", "list_distributions", {"MaxItems": "1"}),
 ]  # fmt: skip
 # The organisation-level assurance reads, in the management account.
 ASSURANCE_ORG_PROBES = [

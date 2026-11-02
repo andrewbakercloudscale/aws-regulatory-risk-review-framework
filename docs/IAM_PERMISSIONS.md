@@ -138,7 +138,10 @@ Only for **Run the outage risk checks** (`--outage`). All reads.
 
 - **Member accounts**: the `ExitRiskOutageRisk` statement of
   [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json) (Service Quotas,
-  CloudWatch `GetMetricData`, account limits, MSK, Amazon Connect, capacity and autoscaling settings;
+  CloudWatch `GetMetricData` and `DescribeAlarms`, account limits, MSK, Amazon Connect, capacity and
+  autoscaling settings, and the settings the service reviews read (RDS parameters and maintenance,
+  ElastiCache, Lambda, DynamoDB, Kinesis, SQS, Amazon MQ, API Gateway, Redshift, FSx, EFS, NAT, Transit
+  Gateway, VPN, CloudFront);
   the StackSet and Terraform include it). On IAM Identity Center, add it to the permission set used
   in the member accounts. AWS's ReadOnlyAccess covers most of it; Check access names what is missing.
 - **EKS workloads are a separate grant.** Replica counts, requests and limits come from each cluster's

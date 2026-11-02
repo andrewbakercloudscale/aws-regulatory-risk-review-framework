@@ -15,6 +15,20 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   maximum. The report ranks where to focus before a peak date (Black Friday by default) beside the
   published evidence on what causes outages. Needs new read permissions in the member role;
   EKS workloads also need a read-only access entry on each cluster.
+- **Outage Risk Report, for hundreds of accounts**: a risk map (accounts by spend and risk, a treemap of
+  every account, exposure, account by service, what reaches a limit first), the top 50 risks, service
+  coverage against the bill (reviewed, part reviewed, quotas only, not covered), and a review of each
+  service: verdict, what to do, limits, live settings, peak against average, alarms, what was read and
+  what cannot be seen. More read permissions in the member role: redeploy it.
+- A scan saves what it has read every 25 accounts or 5 minutes, and on Stop.
+
+### Fixed
+- A network drop no longer reads as "this service is not offered in the region".
+- A check that failed in part, an account no check could read, and a task that hit a bug now show as not
+  measured or as an error, rather than as a pass, a Low rating or a complete scan.
+- A sign-in AWS revoked mid-scan waits for a new sign-in rather than failing every remaining account.
+- Stop works while accounts are slow, and the log names the accounts when none has finished for 10 minutes.
+- Status polls no longer fill the log.
 
 ### Changed
 - The console is now **AWS Cloud Risk Review**, with three separate reports: Exit Risk Report,

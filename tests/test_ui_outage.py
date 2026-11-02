@@ -20,12 +20,14 @@ def console():
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning"))
-    threading.Thread(target=server.run, daemon=True).start()
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
     while not server.started:
         time.sleep(0.05)
     scan_id = create_demo_scan(12)["id"]
     yield f"http://127.0.0.1:{port}/?scan={scan_id}&view=outage"
     server.should_exit = True
+    thread.join(10)  # a server left running crashes at interpreter exit
 
 
 @pytest.fixture(scope="module")
@@ -90,3 +92,22 @@ def test_the_other_tabs_hide_it(page):
     page.locator(".vtab[data-view='outage']").click()
     page.wait_for_selector("#orContent:not([hidden])")
     assert not page.errors
+
+
+def test_the_risk_map_top_risks_coverage_and_reviews_draw(page):
+    assert page.locator("#orMatrix .or-cell button").count() > 0
+    assert page.locator("#orTreemap svg rect").count() > 5
+    assert page.locator("#orExposure .or-bar").count() > 0
+    assert page.locator("#orHeat tbody tr").count() > 0
+    assert 0 < page.locator("#orTop tbody tr").count() <= 50
+    assert "not covered" in page.locator("#orCovHead").inner_text()
+    assert page.locator("#orCovTable tbody tr").count() > 10
+    first = page.locator("#orReviews details").first
+    first.locator("summary").click()
+    assert first.locator(".or-review-body h4").first.inner_text() == "What to do"
+
+
+def test_an_account_on_the_map_opens_its_findings(page):
+    name = page.locator("#orExposure [data-or-acct]").first.inner_text()
+    page.locator("#orExposure [data-or-acct]").first.click()
+    assert page.locator("#orSearch").input_value() == name

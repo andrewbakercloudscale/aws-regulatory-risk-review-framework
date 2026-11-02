@@ -1,0 +1,360 @@
+# What the Outage Risk Report checks for each AWS service, and what it does not.
+#
+# Every service billed in a scan is matched to an entry here by its Cost Explorer name; one with no
+# entry is reported as "not covered", with its spend, so a gap cannot go unseen.
+#
+#   level     deep: settings, peak against average, limits and resilience, per resource
+#             partial: some settings or events, per resource
+#             generic: only Service Quotas that publish a usage metric. No view of the resources
+#   billed    Cost Explorer SERVICE names that belong to it
+#   rules     outage.yaml rules that report on it
+#   quota     Service Quotas code(s): findings named "code: quota" belong to it
+#   reads     what is read, in the report's words
+#   not_seen  what a review from these calls cannot see. Shown in the review, never as a pass
+#   checks    the scan's checks for it: one unread in an account marks the service not read there
+#   options   a design that removes a class of outage. Nothing here is a price or a recommendation
+version: "2026.11.1"
+always_not_seen:
+  - Infrastructure as code. Live settings are not compared with Terraform or CloudFormation, so drift is not shown.
+  - The prices of other designs.
+  - Whether it survives the load, which only a load test shows.
+  - Peaks under an hour, unless stated. Figures are hourly, so real headroom is lower.
+levels:
+  deep: {label: Reviewed, about: "Settings, peak against average, limits and resilience for each resource."}
+  partial: {label: Part reviewed, about: "Some settings or events for each resource. See what it does not see."}
+  generic: {label: Quotas only, about: "Only Service Quotas that publish a usage metric. The resources themselves are not looked at."}
+  none: {label: Not covered, about: "Nothing is read. A finding of nothing here says nothing about this service."}
+services:
+  - id: msk
+    label: Amazon MSK (Kafka)
+    checks: [msk]
+    level: deep
+    billed: ["Amazon Managed Streaming for Apache Kafka"]
+    quota: [kafka]
+    rules: [msk_disk, msk_no_autoscale, msk_cpu, msk_partitions, msk_imbalance, msk_unclean_leader, msk_low_replication, msk_under_replicated, msk_offline]
+    reads: [Broker type count and zones, Kafka version, Storage and its autoscaling, Monitoring level and client authentication, "Cluster defaults for replication, in-sync replicas, unclean leader election and retention", "Disk, CPU, partitions and traffic: peak, average and trend", Date partitions reach AWS's guidance, Alarm on broker disk]
+    not_seen: ["Topics, retention per topic, empty topics and consumer groups: these need Kafka admin access, which the scan does not have", "Topic overrides of the cluster defaults", "Bytes in and out where the monitoring level does not publish them"]
+    options:
+      - {name: Express brokers, removes: "Running out of broker disk, as storage is managed by AWS", note: "A migration with its own limits and client changes; check throughput quotas per broker."}
+      - {name: Storage autoscaling and alarms at 70% and 85%, removes: "Filling up unseen", note: "Storage can only grow."}
+    docs:
+      - {label: MSK best practices, url: "https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html"}
+      - {label: Express brokers, url: "https://docs.aws.amazon.com/msk/latest/developerguide/msk-broker-types-express.html"}
+  - id: rds
+    label: Amazon RDS and Aurora
+    checks: [rds, fixed, storage]
+    level: deep
+    billed: ["Amazon Relational Database Service", "Amazon RDS Optimize CPU License Included Third Party Fees", "Amazon DocumentDB (with MongoDB compatibility)", "Amazon Neptune"]
+    quota: [rds]
+    rules: [rds_cpu, aurora_acu, rds_storage, rds_burst, rds_replica_mismatch, rds_single_az, rds_connections, rds_memory, rds_replica_lag, rds_maintenance, aurora_no_reader]
+    reads: [Engine version and class, Multi-AZ and readers, Storage and its ceiling, "Connections against max_connections from the parameter group", "CPU, memory, free storage and replica lag: peak and average", Maintenance AWS will apply by the peak, Alarm on free storage]
+    not_seen: ["Slow queries and locks", "A max_connections formula using log(): shown as not compared", "Connection pool settings in applications"]
+    options:
+      - {name: RDS Proxy, removes: "Connection exhaustion from many short-lived clients", note: "Adds a hop and needs testing."}
+      - {name: Aurora Serverless v2, removes: "Fixed CPU and memory, up to its maximum", note: "An engine move for a non-Aurora database."}
+    docs:
+      - {label: RDS best practices, url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_BestPractices.html"}
+  - id: eks
+    label: Amazon EKS
+    checks: [eks]
+    level: deep
+    billed: ["Amazon Elastic Container Service for Kubernetes", "Amazon Elastic Kubernetes Service"]
+    quota: [eks]
+    rules: [eks_single_replica, eks_fixed_replicas, eks_hpa_max, eks_low_cpu, eks_low_memory, eks_no_memory_limit, eks_oom, eks_memory_pressure, eks_cpu_pressure, eks_pending, eks_coredns, eks_nodegroup_max, eks_not_read, eks_subnet_ips, eks_no_pdb, eks_no_readiness]
+    reads: [Kubernetes version, Node groups against their maximum, "Replicas, autoscalers, requests and limits of each workload", "OOM kills, Pending pods, CoreDNS, disruption budgets and readiness probes", Subnet addresses, Memory and CPU against limits where Container Insights is on]
+    not_seen: ["Anything in a cluster with no access entry or no network path: listed as not read", "KEDA and Karpenter settings", "Live CPU and memory use without Container Insights"]
+    docs:
+      - {label: EKS best practices, url: "https://docs.aws.amazon.com/eks/latest/best-practices/introduction.html"}
+  - id: elasticache
+    label: Amazon ElastiCache
+    checks: [elasticache, fixed]
+    level: deep
+    billed: ["Amazon ElastiCache"]
+    quota: [elasticache]
+    rules: [cache_cpu, cache_memory, cache_evictions, cache_connections, cache_no_failover, cache_no_multi_az]
+    reads: [Node type shards and replicas, Failover and Multi-AZ, "Engine CPU, memory, connections and hit rate: peak and average", Evictions, Alarm on memory]
+    not_seen: ["Key sizes and hot keys", "Memcached connection settings", "Serverless caches"]
+    options:
+      - {name: ElastiCache Serverless, removes: "Sizing nodes for the peak", note: "Check its own limits and price."}
+    docs:
+      - {label: Engine parameters, url: "https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/ParameterGroups.Engine.html"}
+  - id: dynamodb
+    label: Amazon DynamoDB
+    checks: [dynamodb, fixed]
+    level: deep
+    billed: ["Amazon DynamoDB"]
+    quota: [dynamodb]
+    rules: [ddb_provisioned, ddb_throttles, ddb_table_limit]
+    reads: ["Billing mode, indexes, size and global tables", "Reads and writes against provisioned capacity, the autoscaling maximum or the on-demand table limit", Throttling]
+    not_seen: ["Hot partition keys", "Index throughput apart from its table", "Tables with no traffic in the lookback window"]
+    docs:
+      - {label: DynamoDB quotas, url: "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ServiceQuotas.html"}
+  - id: lambda
+    label: AWS Lambda
+    checks: [lambda, lambda_functions]
+    level: deep
+    billed: ["AWS Lambda"]
+    quota: [lambda]
+    rules: [lambda_throttles, lambda_timeout]
+    reads: [Account concurrency and code storage, "Memory, timeout and runtime", "Invocations, longest run against the timeout, errors and throttles"]
+    not_seen: ["Reserved concurrency per function", "Downstream limits it runs into", "Functions with no invocations in the lookback window"]
+    docs:
+      - {label: Lambda quotas, url: "https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html"}
+  - id: opensearch
+    label: Amazon OpenSearch Service
+    checks: [opensearch, fixed]
+    level: deep
+    billed: ["Amazon OpenSearch Service"]
+    quota: [es]
+    rules: [search_cpu, search_jvm, search_red, search_storage, search_no_zone, search_no_master, search_write_blocked, search_rejected, search_shards]
+    reads: [Engine and node sizes, Zones and dedicated masters, "CPU, JVM pressure, storage and shards", "Red status, blocked and rejected writes", Alarm on free storage]
+    not_seen: ["Index and shard layout", "Query and indexing latency", "OpenSearch Serverless"]
+    docs:
+      - {label: OpenSearch best practices, url: "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/bp.html"}
+  - id: kinesis
+    label: Amazon Kinesis Data Streams
+    checks: [kinesis, fixed]
+    level: deep
+    billed: ["Amazon Kinesis"]
+    quota: [kinesis]
+    rules: [kinesis_throttles, kinesis_shards, kinesis_iterator]
+    reads: [Mode shards retention and consumers, "Writes against shard capacity", "How far readers are behind against retention", Throttling]
+    not_seen: ["An uneven spread of keys over shards", "Read throughput per consumer"]
+    docs:
+      - {label: Kinesis quotas, url: "https://docs.aws.amazon.com/streams/latest/dev/service-sizes-and-limits.html"}
+  - id: sqs
+    label: Amazon SQS
+    checks: [sqs, sqs_queues]
+    level: deep
+    billed: ["Amazon Simple Queue Service"]
+    quota: [sqs]
+    rules: [sqs_backlog, sqs_no_dlq]
+    reads: ["The oldest message against retention, on queues with a backlog", Messages waiting, "Retention, visibility timeout and dead-letter queue, on those queues", Alarm on message age]
+    not_seen: ["Queues with no backlog are not profiled", "FIFO throughput limits", "Consumer scaling"]
+    docs:
+      - {label: SQS best practices, url: "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-best-practices.html"}
+  - id: apigateway
+    label: Amazon API Gateway
+    checks: [apigateway]
+    level: deep
+    billed: ["Amazon API Gateway"]
+    quota: [apigateway]
+    rules: [apigw_rate, apigw_5xx]
+    reads: ["The account's rate and burst limits", "Requests of every REST and HTTP API against them", Server errors per API]
+    not_seen: ["Stage and usage plan limits", "Integration timeouts", "Bursts within the hour: the account limit is per second"]
+    docs:
+      - {label: API Gateway quotas, url: "https://docs.aws.amazon.com/apigateway/latest/developerguide/limits.html"}
+  - id: ec2
+    label: Amazon EC2, EBS and Auto Scaling
+    checks: [fixed, storage]
+    level: deep
+    billed: ["Amazon Elastic Compute Cloud - Compute", "EC2 - Other"]
+    quota: [ec2, ebs, autoscaling]
+    rules: [ec2_cpu, ec2_credits, asg_near_max, asg_fixed, asg_one_az, ebs_instance_mismatch, ebs_burst, ebs_exceeded, disk_full]
+    reads: ["CPU of instances outside an Auto Scaling group", "Burstable credits", Auto Scaling groups against their maximum and zones, "Volumes against what the instance can deliver", gp2 burst and provisioned IOPS, Disk use where the CloudWatch agent is installed]
+    not_seen: ["Memory, unless the CloudWatch agent reports it", "Capacity for the instance type in the zone at the moment it is needed", "What runs on each instance"]
+  - id: ecs
+    label: Amazon ECS and Fargate
+    checks: [fixed]
+    level: deep
+    billed: ["Amazon Elastic Container Service"]
+    quota: [ecs, fargate]
+    rules: [ecs_util, ecs_near_max, ecs_single_task, ecs_no_circuit_breaker, ecs_below_desired]
+    reads: [Services with no autoscaling and their use, Services against their scaling maximum, One-task services, Running against desired, Deployment rollback setting]
+    not_seen: ["Capacity providers", "Task-level memory kills"]
+  - id: connect
+    label: Amazon Connect
+    checks: [connect]
+    level: partial
+    billed: ["Amazon Connect", "Contact Lens for Amazon Connect", "Amazon Connect Customer Profiles", "Contact Center Telecommunications (service sold by AMCS, LLC)", "Contact Center Telecommunications South Africa"]
+    quota: [connect]
+    rules: [limit_connect, connect_throttled]
+    reads: [Concurrent calls against the quota, Throttled calls and calls over the quota, "Users, queues, phone numbers, routing profiles and flows against their quotas"]
+    not_seen: ["Queue wait and missed calls", "Agent staffing", "Lambda and Lex limits behind flows, except as their own services", "Carrier capacity"]
+  - id: s3
+    label: Amazon S3
+    checks: [s3_limits, s3_review]
+    level: partial
+    billed: ["Amazon Simple Storage Service"]
+    quota: [s3]
+    rules: [limit_s3, s3_5xx]
+    reads: [Buckets against the account quota, "Request rates and 5xx, only on buckets with request metrics turned on"]
+    not_seen: ["Rates per prefix: the bucket's total is compared with the per-prefix figure, so well spread keys look worse than they are", "Buckets with no request metrics", "Replication lag"]
+    docs:
+      - {label: S3 performance, url: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance.html"}
+  - id: redshift
+    label: Amazon Redshift
+    checks: [redshift, fixed]
+    level: partial
+    billed: ["Amazon Redshift"]
+    quota: [redshift]
+    rules: [redshift_cpu, redshift_disk, redshift_single_node]
+    reads: [Node type and count, Multi-AZ, "CPU and disk: peak, average and time to full", Alarm on disk]
+    not_seen: ["Queueing and workload management", "Concurrency scaling use", "Redshift Serverless"]
+  - id: elb
+    label: Load balancers
+    checks: [elb, network]
+    level: partial
+    billed: ["Amazon Elastic Load Balancing"]
+    quota: [elasticloadbalancing]
+    rules: [lb_rejected, nlb_port_errors, lb_5xx, lb_one_az]
+    reads: [Zones, Requests, Rejected connections and port errors, Errors from the load balancer itself]
+    not_seen: ["Target health over time", "How quickly it scales for a sudden surge: ask AWS about pre-warming", "Classic Load Balancers"]
+  - id: vpc
+    label: VPC and NAT
+    checks: [vpc, network]
+    level: partial
+    billed: ["Amazon Virtual Private Cloud"]
+    quota: [vpc]
+    rules: [subnet_ips, nat_port_errors, nat_drops, nat_one_az]
+    reads: [Free addresses per subnet, "NAT port errors, dropped packets and connections", NAT gateways per zone]
+    not_seen: ["DNS and connection-tracking limits per instance", "Security group and route quotas with no usage metric"]
+  - id: transit_gateway
+    label: Transit Gateway
+    checks: [vpc]
+    level: partial
+    billed: []
+    rules: [tgw_drops]
+    reads: [Packets dropped for a blackhole or no route]
+    not_seen: ["Bandwidth per attachment"]
+  - id: vpn
+    label: Site-to-Site VPN
+    checks: [vpc]
+    level: partial
+    billed: []
+    rules: [vpn_tunnel_down]
+    reads: [Tunnel state when read, Routing type]
+    not_seen: ["Tunnel bandwidth"]
+  - id: directconnect
+    label: AWS Direct Connect
+    checks: [network]
+    level: partial
+    billed: ["AWS Direct Connect"]
+    rules: [dx_bandwidth]
+    reads: [Bandwidth used against each connection's speed]
+    not_seen: ["Whether a second connection can carry the first's traffic", "Connections owned by another account"]
+  - id: cloudfront
+    label: Amazon CloudFront
+    checks: [cloudfront]
+    level: partial
+    billed: ["Amazon CloudFront"]
+    quota: [cloudfront]
+    rules: [cf_errors, cf_no_failover]
+    reads: ["Requests and 5xx rate", Origins and origin groups]
+    not_seen: ["Cache hit rate", "Origin capacity behind it"]
+  - id: efs
+    label: Amazon EFS
+    checks: [files, storage]
+    level: partial
+    billed: ["Amazon Elastic File System"]
+    quota: [elasticfilesystem]
+    rules: [efs_burst, efs_io]
+    reads: [Modes and size, Burst credits, I/O limit used]
+    not_seen: ["Throughput against the elastic limit"]
+  - id: fsx
+    label: Amazon FSx
+    checks: [files, storage]
+    level: partial
+    billed: ["Amazon FSx"]
+    rules: [fsx_storage, fsx_single_az]
+    reads: [Type deployment and capacity, Storage used and time to full]
+    not_seen: ["Throughput and IOPS against what is provisioned"]
+  - id: mq
+    label: Amazon MQ
+    checks: [mq]
+    level: partial
+    billed: ["Amazon MQ"]
+    quota: [mq]
+    rules: [mq_single, mq_cpu, mq_heap, mq_storage]
+    reads: [Engine and deployment mode, "CPU, heap and store: peak and average", Alarm on store]
+    not_seen: ["Queue depth and consumers", "Connection limits per instance size"]
+  - id: sns
+    label: Amazon SNS
+    checks: [sns]
+    level: partial
+    billed: ["Amazon Simple Notification Service"]
+    quota: [sns]
+    rules: [sns_failed]
+    reads: [Failed notifications per topic]
+    not_seen: ["Publish rate against the regional quota, unless Service Quotas publishes it"]
+  - id: stepfunctions
+    label: AWS Step Functions
+    checks: [small_services]
+    level: partial
+    billed: ["AWS Step Functions"]
+    quota: [states]
+    rules: [sfn_throttled]
+    reads: [Throttled executions]
+    not_seen: ["State transition rate", "Failed executions as a finding"]
+  - id: eventbridge
+    label: Amazon EventBridge
+    checks: [small_services]
+    level: partial
+    billed: ["Amazon EventBridge", "CloudWatch Events"]
+    quota: [events]
+    rules: [events_throttled, events_failed]
+    reads: [Throttled rules, Failed invocations]
+    not_seen: ["Put events rate, unless Service Quotas publishes it"]
+  - id: cognito
+    label: Amazon Cognito
+    checks: [small_services]
+    level: partial
+    billed: ["Amazon Cognito"]
+    quota: [cognito-idp]
+    rules: [cognito_throttled]
+    reads: [Throttled sign-ins]
+    not_seen: ["Other throttled operations", "Hosted UI and federation dependencies"]
+  - id: bedrock
+    label: Amazon Bedrock
+    checks: [small_services]
+    level: partial
+    billed: ["Amazon Bedrock", "Amazon Bedrock AgentCore"]
+    quota: [bedrock]
+    rules: [bedrock_throttled]
+    reads: [Throttled calls per model, Quotas that publish usage]
+    not_seen: ["Tokens per minute against the model's quota, unless Service Quotas publishes it", "Latency", "Dependence on one region's capacity"]
+  - id: acm
+    label: AWS Certificate Manager
+    checks: [certificates]
+    level: partial
+    billed: ["AWS Certificate Manager"]
+    rules: [cert_expiry]
+    reads: [Certificates in use that expire by the peak]
+    not_seen: ["Certificates outside ACM, such as on instances or pods"]
+  - id: route53
+    label: Amazon Route 53
+    level: generic
+    billed: ["Amazon Route 53"]
+    quota: [route53]
+    reads: [Hosted zones against the limit, Quotas that publish usage]
+    not_seen: ["Health checks and failover records", "Resolver endpoint limits"]
+  - {id: kms, label: AWS KMS, level: generic, billed: ["AWS Key Management Service"], quota: [kms], reads: [Request rate quotas that publish usage], not_seen: ["Which callers drive the rate"]}
+  - {id: secrets, label: AWS Secrets Manager, level: generic, billed: ["AWS Secrets Manager"], quota: [secretsmanager], reads: [Quotas that publish usage], not_seen: ["Callers with no caching"]}
+  - {id: ecr, label: Amazon ECR, level: generic, billed: ["Amazon EC2 Container Registry (ECR)"], quota: [ecr], reads: [Quotas that publish usage], not_seen: ["Pull rate during a scale-out"]}
+  - {id: cloudformation, label: AWS CloudFormation, level: generic, billed: ["AWS CloudFormation"], quota: [cloudformation], reads: [Quotas that publish usage], not_seen: ["Stack health"]}
+  - {id: cloudwatch, label: Amazon CloudWatch and Logs, level: generic, billed: ["AmazonCloudWatch"], quota: [logs], reads: [Log quotas that publish usage], not_seen: ["Throttled PutLogEvents at the caller"]}
+  - {id: iam, label: AWS IAM, level: generic, billed: [], quota: [iam], reads: ["Roles, policies, users and more against their limits"], not_seen: ["STS rate limits"]}
+  - {id: waf, label: AWS WAF, level: generic, billed: ["AWS WAF"], quota: [wafv2], reads: [Quotas that publish usage], not_seen: ["Rule capacity per web ACL", "Blocked requests"]}
+  - {id: ssm, label: AWS Systems Manager, level: generic, billed: ["AWS Systems Manager"], quota: [ssm], reads: [Quotas that publish usage], not_seen: ["Parameter Store throughput setting"]}
+  - {id: firehose, label: Amazon Data Firehose, level: generic, billed: ["Amazon Kinesis Firehose"], quota: [firehose], reads: [Quotas that publish usage], not_seen: ["Throttled records and delivery failures"]}
+  - {id: glue, label: AWS Glue, level: generic, billed: ["AWS Glue"], quota: [glue], reads: [Quotas that publish usage], not_seen: ["Job failures and concurrent runs"]}
+  - {id: athena, label: Amazon Athena, level: generic, billed: ["Amazon Athena"], quota: [athena], reads: [Quotas that publish usage], not_seen: ["Queries queued"]}
+  - {id: sagemaker, label: Amazon SageMaker, level: generic, billed: ["Amazon SageMaker"], quota: [sagemaker], reads: [Quotas that publish usage], not_seen: ["Endpoint use, scaling and errors"]}
+  - {id: ses, label: Amazon SES, level: generic, billed: ["Amazon Simple Email Service"], quota: [ses], reads: [Quotas that publish usage], not_seen: ["Sending rate, bounce rate and account pause"]}
+  - {id: emr, label: Amazon EMR, level: generic, billed: ["Amazon Elastic MapReduce"], quota: [elasticmapreduce], reads: [Quotas that publish usage], not_seen: ["Cluster health and capacity"]}
+  - {id: batch, label: AWS Batch, level: generic, billed: ["AWS Batch"], quota: [batch], reads: [Quotas that publish usage], not_seen: ["Queued jobs"]}
+  - {id: appsync, label: AWS AppSync, level: generic, billed: ["AWS AppSync"], quota: [appsync], reads: [Quotas that publish usage], not_seen: ["Throttled requests"]}
+# Billed but with nothing that could fail at a peak on its own, so not counted as a gap in coverage.
+not_runtime:
+  - AWS Cost Explorer
+  - Savings Plans for AWS Compute usage
+  - Tax
+  - AWS Support (Business)
+  - AWS Support (Enterprise)
+  - AWS Support (Developer)
+  - AWS CloudTrail
+  - AWS Config
+  - AWS Security Hub
+  - Amazon GuardDuty
+  - AWS Identity and Access Management Access Analyzer
+  - AWS Fault Injection Simulator

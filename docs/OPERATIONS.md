@@ -13,8 +13,9 @@
    shows a year of growth by product type) → optionally tick **Deep scan** and give the member role name.
 3. Watch the progress bar. A spend-only scan of a few hundred accounts takes seconds; a deep scan takes
    about 20 seconds per account with 18 regions enabled (every service in every region read in parallel), with
-   8 accounts at a time (`EXITRISK_MAX_WORKERS`, default 8), each in its own worker process
-   (`EXITRISK_PROCESSES`): about 15 minutes for 166 accounts on a quiet network. Behind a TLS-inspecting
+   16 accounts at a time (`EXITRISK_MAX_WORKERS`, default 16), each in its own worker process
+   (`EXITRISK_PROCESSES`, default twice the cores up to 16). The scan saves what it has read every 25
+   accounts or 5 minutes, and on Stop: a scan cut short opens as interrupted, with the accounts it read. Behind a TLS-inspecting
    proxy the proxy sets the pace, and a scan can take twice that. Tick
    **Only regions with spend** to read just the regions billing US$1 a month or more (about half the time;
    resources that cost nothing yet, and the landing-zone baseline elsewhere, are then not counted).
@@ -74,7 +75,7 @@ Each file records the date AWS published it, which the report shows next to the 
 |---|---|---|
 | `EXITRISK_DATA_DIR` | `~/.exitrisk` | Scans (`scans/`) and logs (`logs/`) |
 | `EXITRISK_LOG_LEVEL` | `INFO` | `DEBUG` adds per-call detail |
-| `EXITRISK_MAX_WORKERS` | `8` | Parallel accounts in a deep scan; lower it if throttled |
+| `EXITRISK_MAX_WORKERS` | `16` | Parallel accounts in a deep scan; lower it if throttled |
 | `EXITRISK_PROCESSES` | CPU cores, up to 8 | Worker processes a deep scan parses AWS answers in; `1` keeps it in the console process |
 | `AWS_PROFILE`, `AWS_CONFIG_FILE` | standard | Honoured by boto3 as usual |
 

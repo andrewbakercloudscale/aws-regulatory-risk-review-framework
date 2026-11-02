@@ -28,6 +28,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
@@ -88,6 +89,21 @@ QUOTA_SERVICES = {
     "states": "AWS Step Functions",
     "events": "Amazon EventBridge",
     "ecr": "Amazon EC2 Container Registry (ECR)",
+    "cloudfront": "Amazon CloudFront",
+    "wafv2": "AWS WAF",
+    "cognito-idp": "Amazon Cognito",
+    "ssm": "AWS Systems Manager",
+    "firehose": "Amazon Kinesis Firehose",
+    "glue": "AWS Glue",
+    "athena": "Amazon Athena",
+    "sagemaker": "Amazon SageMaker",
+    "bedrock": "Amazon Bedrock",
+    "ses": "Amazon Simple Email Service",
+    "mq": "Amazon MQ",
+    "redshift": "Amazon Redshift",
+    "elasticmapreduce": "Amazon Elastic MapReduce",
+    "batch": "AWS Batch",
+    "appsync": "AWS AppSync",
 }
 ACCOUNT_QUOTAS = ("ec2", "vpc", "ebs", "iam", "route53", "autoscaling")
 # Usage that rises with traffic, as opposed to a count of things someone has created.
@@ -338,6 +354,9 @@ class OutageCtx(Ctx):
         self.subnets: dict[str, list[dict]] = {}
         self.eks_subnets: dict[str, dict[str, str]] = {}
         self.quota_values: dict[str, dict[str, float]] = {}
+        self.profiles: list[dict] = []  # what each resource is set to, for the per-service reviews
+        self.alarm_wants: list[tuple[str, str, str, str]] = []
+        self.alarms: dict[str, set[tuple[str, str, str]]] = {}
         self._metric_locks = {r: threading.Lock() for r in regions}
         self._metrics: dict[str, dict | Exception] = {}
 
@@ -427,6 +446,9 @@ def _gather(cw, queries: list[dict], start, end, ids: dict, out: dict, ctx: Outa
             key = ids.get(qid)
             if key is None:
                 continue
+            if r.get("StatusCode") in ("InternalError", "Forbidden"):
+                ctx.r.fact("metrics_cut", True)
+                log.warning("outage %s %s: metric %s answered %s", ctx.account_id, region, key, r["StatusCode"])
             series = out[key].setdefault(res, Series())
             for when, value in zip(r.get("Timestamps") or [], r.get("Values") or [], strict=False):
                 series.add(when, value)
@@ -891,6 +913,8 @@ def task_asg(ctx: OutageCtx, region: str) -> None:
             g.get("MaxSize", 0),
             g.get("DesiredCapacity", 0),
         )
+        if want and len(g.get("AvailabilityZones") or []) == 1:
+            ctx.add("asg_one_az", name, region, note=f"{want} instance(s) in {g['AvailabilityZones'][0]}")
         if high and low == high and high > 0:
             ctx.add("asg_fixed", name, region, note=f"{high} instance(s), minimum equals maximum")
         elif high:
@@ -930,6 +954,9 @@ def _ecs_service(ctx: OutageCtx, region: str, cluster: str, svc: dict, targets: 
     if not want:
         return
     res = f"{cluster}/{name}"
+    running = svc.get("runningCount", want)
+    if running < want:
+        ctx.add("ecs_below_desired", res, region, used=running, limit=want, unit="tasks running")
     target = (targets.get(f"service/{cluster}/{name}") or [None])[0]
     if target:
         if target.get("MaxCapacity"):
@@ -1151,8 +1178,20 @@ def task_msk(ctx: OutageCtx, region: str) -> None:
                 used=round(parts),
                 limit=guide,
                 unit="per broker",
+                days=_partitions_days(m, name, guide),
             )
+        outage_services.msk_profile(ctx, client, c, region, m)
     ctx.r.ok("msk")
+
+
+def _partitions_days(m: dict, name: str, guide: int) -> float | None:
+    """Days until the busiest broker reaches the guidance at the rate of the lookback window."""
+    series = [s for res, s in m["msk_parts"].items() if res.split("|")[0] == name and s.n]
+    worst = max(series, key=lambda s: s.high, default=None)
+    if not worst:
+        return None
+    days = days_until(worst.last, guide, worst.slope())
+    return days if days is not None and days <= 365 else None
 
 
 def task_network(ctx: OutageCtx, region: str) -> None:
@@ -1313,6 +1352,14 @@ def _pod_sizes(template: dict) -> dict:
     return out
 
 
+def _selects(budget: dict, namespace: str, labels: dict) -> bool:
+    """Does this pod disruption budget cover pods with these labels?"""
+    if (budget.get("metadata") or {}).get("namespace") != namespace:
+        return False
+    want = ((budget.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
+    return bool(want) and all(labels.get(k) == v for k, v in want.items())
+
+
 _POD_HASH = re.compile(r"-[a-z0-9]{5,10}$")
 
 
@@ -1323,6 +1370,7 @@ def read_workloads(list_items) -> dict:
     stateful = list_items("/apis/apps/v1/statefulsets", None)
     hpas = list_items("/apis/autoscaling/v2/horizontalpodautoscalers", None)
     pods = list_items("/api/v1/pods", MAX_PODS)
+    budgets = list_items("/apis/policy/v1/poddisruptionbudgets", None)
     scalers = {}
     for h in hpas:
         ref = (h.get("spec") or {}).get("scaleTargetRef") or {}
@@ -1354,7 +1402,11 @@ def read_workloads(list_items) -> dict:
             replicas = spec.get("replicas", 1)
             if not replicas:
                 continue  # scaled to nothing on purpose
-            row = {"ns": ns, "name": name, "kind": kind, "replicas": replicas, **_pod_sizes(spec.get("template") or {})}
+            template = spec.get("template") or {}
+            row = {"ns": ns, "name": name, "kind": kind, "replicas": replicas, **_pod_sizes(template)}
+            labels = (template.get("metadata") or {}).get("labels") or {}
+            row["pdb"] = any(_selects(b, ns, labels) for b in budgets)
+            row["ready"] = all(c.get("readinessProbe") for c in (template.get("spec") or {}).get("containers") or [])
             h = scalers.get((ns, kind, name))
             if h:
                 row["hpa_max"] = (h.get("spec") or {}).get("maxReplicas")
@@ -1419,6 +1471,20 @@ def task_eks(ctx: OutageCtx, region: str) -> None:
                 if parts[0] == name and s.n and len(parts) == 3:
                     row["insights"] = True
                     ctx.add(rule, f"{name}/{parts[1]}/{parts[2]}", region, pct=min(s.high, 100.0), load=True)
+        outage_services.profile(
+            ctx,
+            "eks",
+            name,
+            region,
+            {
+                "Kubernetes": c.get("version"),
+                "Platform": c.get("platformVersion"),
+                "Node groups": len(groups),
+                "Workloads read": row.get("workload_count") if row.get("access") == "read" else "not read",
+                "Pods": row.get("pods"),
+                "Endpoint": "public" if (c.get("resourcesVpcConfig") or {}).get("endpointPublicAccess") else "private",
+            },
+        )
         with ctx._lock:
             ctx.clusters.append(row)
     with ctx._lock:
@@ -1428,6 +1494,7 @@ def task_eks(ctx: OutageCtx, region: str) -> None:
 
 # ------------------------------------------------------------------------------------------------ running
 AREAS = ("limits", "s3_limits", "connect", "fixed", "storage", "msk", "eks", "network", "certificates")
+EKS_BILLED = "Amazon Elastic Container Service for Kubernetes"  # what Cost Explorer calls EKS
 GLOBAL_TASKS = [
     ("account limits", ("limits",), task_account_limits, None),
     ("s3 limits", ("s3_limits",), task_s3_limits, None),
@@ -1448,7 +1515,7 @@ REGION_TASKS = [
     ("dynamodb", ("fixed",), task_dynamodb, ("Amazon DynamoDB",)),
     ("kinesis", ("fixed",), task_kinesis, ("Amazon Kinesis",)),
     ("msk", ("msk",), task_msk, ("Amazon Managed Streaming for Apache Kafka",)),
-    ("eks", ("eks",), task_eks, ("Amazon Elastic Container Service for Kubernetes",)),
+    ("eks", ("eks",), task_eks, ("Amazon Elastic Kubernetes Service", EKS_BILLED)),
     ("network", ("network",), task_network, None),
     ("direct connect", ("network",), task_dx, ("AWS Direct Connect",)),
     ("certificates", ("certificates",), task_certificates, None),
@@ -1457,6 +1524,7 @@ REGION_TASKS = [
 
 def _finish(ctx: OutageCtx) -> None:
     """Subnets, once it is known which of them EKS uses; quota values kept only for quotas near a limit."""
+    outage_services.finish_alarms(ctx)
     for region, subnets in ctx.subnets.items():
         used_by = ctx.eks_subnets.get(region) or {}
         for s in subnets:
@@ -1478,6 +1546,20 @@ def _finish(ctx: OutageCtx) -> None:
                 load=bool(cluster),
                 note=f"EKS cluster {cluster}" if cluster else "",
             )
+
+
+def _keep_profiles(profiles: list[dict]) -> list[dict]:
+    """The busiest of each service in the account: a task that ran twice counts once."""
+    unique = {(p["svc"], p["res"], p["region"]): p for p in profiles}
+    by_service: dict[str, list[dict]] = {}
+    for p in unique.values():
+        by_service.setdefault(p["svc"], []).append(p)
+    keep = outage_services.MAX_PROFILES
+    return [
+        p
+        for rows in by_service.values()
+        for p in sorted(rows, key=lambda p: -max((s.get("peak") or 0 for s in p["stats"]), default=0))[:keep]
+    ]
 
 
 def account_checks(
@@ -1513,6 +1595,8 @@ def account_checks(
         "rows": rows[:MAX_ROWS],
         "rows_cut": max(len(rows) - MAX_ROWS, 0),
         "clusters": list({(c["name"], c["region"]): c for c in ctx.clusters}.values()),
+        "profiles": _keep_profiles(ctx.profiles),
+        "profile_counts": dict(Counter(p for p, _, _ in {(p["svc"], p["res"], p["region"]) for p in ctx.profiles})),
         "quota_values": {k: v for k, v in ctx.quota_values.items() if k in kept and len(v) > 1},
         "checks": ctx.r.finish(),
         "facts": ctx.r.facts,
@@ -1522,3 +1606,7 @@ def account_checks(
         "seconds": round(time.monotonic() - started, 1),
     }
     return out, _collapse(ctx.issues)
+
+
+# The per-service reviews add their metrics and tasks to the ones above. Last, as they use this module.
+from . import outage_services  # noqa: E402

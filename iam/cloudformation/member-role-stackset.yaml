@@ -69,6 +69,16 @@ Resources:
               - Effect: Allow
                 Action:
                   - cloudwatch:GetMetricData
+                  - cloudwatch:DescribeAlarms
+                  - kafka:DescribeConfigurationRevision
+                  - rds:DescribeDBParameters
+                  - rds:DescribePendingMaintenanceActions
+                  - dynamodb:DescribeLimits
+                  - kinesis:DescribeStreamSummary
+                  - sqs:GetQueueAttributes
+                  - mq:ListBrokers
+                  - fsx:DescribeFileSystems
+                  - ec2:DescribeTransitGateways
                   - servicequotas:ListServiceQuotas
                   - servicequotas:ListAWSDefaultServiceQuotas
                   - application-autoscaling:DescribeScalableTargets

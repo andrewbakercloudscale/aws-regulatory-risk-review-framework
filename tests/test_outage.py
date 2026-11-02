@@ -96,6 +96,7 @@ def _lists():
     return {
         "/apis/apps/v1/deployments": [deploy("api", 3), deploy("worker", 1), deploy("off", 0)],
         "/apis/apps/v1/statefulsets": [],
+        "/apis/policy/v1/poddisruptionbudgets": [],
         "/apis/autoscaling/v2/horizontalpodautoscalers": [{
             "metadata": {"namespace": "pay", "name": "api"},
             "spec": {"scaleTargetRef": {"kind": "Deployment", "name": "api"}, "maxReplicas": 4},
@@ -339,6 +340,7 @@ def _answering(status: int):
 
     denied = b"<ErrorResponse><Error><Code>AccessDenied</Code><Message>no</Message></Error></ErrorResponse>"
     xml = ("iam.", "ec2.", "rds.", "autoscaling.", "elasticloadbalancing.", "route53.", "s3.", "sts.", "monitoring.")
+    xml += ("cloudfront.", "elasticache.", "redshift.")
 
     class Raw:
         def __init__(self, body):

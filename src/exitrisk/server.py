@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import contextvars
 import json
+import logging
 import os
 import queue
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from importlib import resources
 from typing import Annotated
@@ -49,6 +51,9 @@ from .scanner import ScanParams, get_job, running_scans, start_scan
 from .scoring import build_report
 
 log = get_logger("server")
+
+OUTAGE_CACHE_SIZE = 4  # reports kept; each answer or filter tried is one
+POLLS = ("/status", "/progress", "/health", "/sso/sessions", "/sessions")
 
 
 def _aws_error(exc: Exception) -> bool:
@@ -251,7 +256,16 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             return JSONResponse({"error": "internal error - see the log", "request_id": req_id}, status_code=500)
         ms = (time.perf_counter() - started) * 1000
         if request.url.path.startswith("/api/"):
-            log.info("%s %s -> %d (%.0f ms)", request.method, request.url.path, response.status_code, ms)
+            # Polling a long scan otherwise fills the log and pushes its errors out of the Log view.
+            poll = request.method == "GET" and response.status_code < 400 and request.url.path.endswith(POLLS)
+            log.log(
+                logging.DEBUG if poll else logging.INFO,
+                "%s %s -> %d (%.0f ms)",
+                request.method,
+                request.url.path,
+                response.status_code,
+                ms,
+            )
         response.headers["X-Request-Id"] = req_id
         if request.url.path.startswith("/static/"):
             # Revalidate on every load so an upgraded console never runs stale JS/CSS.
@@ -613,6 +627,9 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         return ownership_export(_assurance(req), req.approved, req.tag)
 
     # ------------------------------------------------------------------ Outage risk
+    outage_cache: OrderedDict[tuple, dict] = OrderedDict()
+    outage_lock = threading.Lock()
+
     def _outage(req: OutageRequest) -> dict:
         try:
             scan = store.load_scan(req.scan_id)
@@ -624,15 +641,35 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         return build_outage(scan, flt, req.answers)
 
+    def _outage_cached(req: OutageRequest) -> dict:
+        """A scan does not change once saved, so moving between the report and its export reads it once.
+        Parsing a 300-account scan takes seconds, and each opening of the report would repeat it."""
+        try:
+            stamp = store.scan_stamp(req.scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        key = (req.scan_id, stamp, req.model_dump_json())
+        with outage_lock:
+            hit = outage_cache.get(key)
+            if hit is not None:
+                outage_cache.move_to_end(key)
+                return hit
+        report = _outage(req)
+        with outage_lock:
+            outage_cache[key] = report
+            while len(outage_cache) > OUTAGE_CACHE_SIZE:
+                outage_cache.popitem(last=False)
+        return report
+
     @app.post("/api/outage")
     def outage(req: OutageRequest):
-        return _outage(req)
+        return _outage_cached(req)
 
     @app.post("/api/outage/csv")
     def outage_csv(req: OutageRequest):
         name = f"outage-risk-{req.scan_id}.csv"
         return Response(
-            findings_csv(_outage(req)),
+            findings_csv(_outage_cached(req)),
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
         )

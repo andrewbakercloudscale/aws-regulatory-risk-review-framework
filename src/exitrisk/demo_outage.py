@@ -58,6 +58,162 @@ def _workloads(rng: random.Random, prod: bool) -> list[dict]:
     return rows
 
 
+def _review_rows(rng: random.Random, name: str, region: str, prod: bool) -> tuple[list[dict], list[dict], dict]:
+    """Findings and live settings for the service reviews. Invented, like the rest of the demo."""
+    rows: list[dict] = []
+    profiles: list[dict] = []
+    res = f"{name}-db"
+    conn = rng.randint(200, 1500)
+    limit = 1802
+    profiles.append(
+        {
+            "svc": "rds",
+            "res": res,
+            "region": region,
+            "facts": {
+                "Engine": "postgres 15.8",
+                "Class": "db.r6g.2xlarge",
+                "Multi-AZ": "yes" if prod else "no",
+                "Backups, days": 7,
+            },
+            "stats": [
+                {
+                    "k": "CPU",
+                    "peak": round(rng.uniform(40, 88), 1),
+                    "avg": round(rng.uniform(15, 35), 1),
+                    "unit": "%",
+                    "limit": 100,
+                },
+                {"k": "Connections", "peak": conn, "avg": round(conn * 0.45), "unit": "", "limit": limit},
+            ],
+        }
+    )
+    rows.append(
+        {
+            "rule": "rds_connections",
+            "res": res,
+            "region": region,
+            "pct": round(100 * conn / limit, 1),
+            "used": conn,
+            "limit": limit,
+            "load": True,
+            "note": "db.r6g.2xlarge; from parameter group default",
+        }
+    )
+    if rng.random() < 0.4:
+        rows.append(
+            {
+                "rule": "no_alarm",
+                "res": f"rds: {res}",
+                "region": region,
+                "note": "no CloudWatch alarm on FreeStorageSpace",
+            }
+        )
+    if rng.random() < 0.5:
+        cache = f"{name}-cache"
+        profiles.append(
+            {
+                "svc": "elasticache",
+                "res": cache,
+                "region": region,
+                "facts": {"Engine": "redis", "Node": "cache.r6g.large", "Failover": "enabled" if prod else "disabled"},
+                "stats": [
+                    {
+                        "k": "Engine CPU",
+                        "peak": round(rng.uniform(20, 75), 1),
+                        "avg": round(rng.uniform(5, 20), 1),
+                        "unit": "%",
+                        "limit": 100,
+                    }
+                ],
+            }
+        )
+        if rng.random() < 0.4:
+            rows.append(
+                {"rule": "cache_no_failover", "res": cache, "region": region, "note": "one primary, no replica"}
+            )
+    if rng.random() < 0.6:
+        fn = f"{name}-handler"
+        ran = round(rng.uniform(4, 29), 1)
+        profiles.append(
+            {
+                "svc": "lambda",
+                "res": fn,
+                "region": region,
+                "facts": {"Runtime": "python3.12", "Memory": "512 MB", "Timeout": "30 s"},
+                "stats": [{"k": "Longest run", "peak": ran, "avg": round(ran / 4, 1), "unit": "s", "limit": 30}],
+            }
+        )
+        rows.append(
+            {
+                "rule": "lambda_timeout",
+                "res": fn,
+                "region": region,
+                "pct": round(100 * ran / 30, 1),
+                "used": ran,
+                "limit": 30,
+                "unit": "s",
+                "load": True,
+            }
+        )
+    if rng.random() < 0.5:
+        queue = f"{name}-events"
+        age = rng.randint(1000, 300000)
+        profiles.append(
+            {
+                "svc": "sqs",
+                "res": queue,
+                "region": region,
+                "facts": {"Retention": "4 days", "Dead-letter queue": "no"},
+                "stats": [{"k": "Oldest message", "peak": age, "avg": round(age / 3), "unit": "s", "limit": 345600}],
+            }
+        )
+        rows.append(
+            {
+                "rule": "sqs_backlog",
+                "res": queue,
+                "region": region,
+                "pct": round(100 * age / 345600, 1),
+                "used": age,
+                "limit": 345600,
+                "unit": "s",
+                "load": True,
+            }
+        )
+        rows.append({"rule": "sqs_no_dlq", "res": queue, "region": region, "note": "backlog seen"})
+    if rng.random() < 0.35:
+        lb = f"{name}-alb"
+        profiles.append(
+            {
+                "svc": "elb",
+                "res": lb,
+                "region": region,
+                "facts": {"Type": "application", "Zones": 1 if prod else 2},
+                "stats": [],
+            }
+        )
+        if prod:
+            rows.append({"rule": "lb_one_az", "res": lb, "region": region, "note": "one subnet"})
+    if rng.random() < 0.25:
+        rows.append(
+            {"rule": "rds_maintenance", "res": res, "region": region, "ends": "2026-11-29", "note": "system-update"}
+        )
+    if rng.random() < 0.2:
+        rows.append(
+            {
+                "rule": "bedrock_throttled",
+                "res": "anthropic.model",
+                "region": region,
+                "used": rng.randint(5, 900),
+                "unit": "calls throttled",
+            }
+        )
+    counts: dict[str, int] = {}
+    for p in profiles:
+        counts[p["svc"]] = counts.get(p["svc"], 0) + 1
+    return rows, profiles, counts
+
+
 def build(accounts: list[dict], seed: int = 21) -> dict:
     rng = random.Random(seed)  # noqa: S311 - deterministic synthetic data, not security
     out: dict[str, dict] = {}
@@ -210,7 +366,25 @@ def build(accounts: list[dict], seed: int = 21) -> dict:
                     "unit": "in the lookback window",
                 }
             )
+        extra, profiles, counts = _review_rows(rng, name, region, prod)
+        for c in clusters:
+            counts["eks"] = counts.get("eks", 0) + 1
+            profiles.append(
+                {
+                    "svc": "eks",
+                    "res": c["name"],
+                    "region": c["region"],
+                    "facts": {
+                        "Kubernetes": c.get("version", ""),
+                        "Workloads": c.get("workload_count", len(c.get("workloads") or [])),
+                    },
+                    "stats": [],
+                }
+            )
+        rows += extra
         out[acct["id"]] = {
+            "profiles": profiles,
+            "profile_counts": counts,
             "rows": rows,
             "rows_cut": 0,
             "clusters": clusters,

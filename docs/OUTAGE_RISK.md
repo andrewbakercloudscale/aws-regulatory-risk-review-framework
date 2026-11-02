@@ -18,9 +18,36 @@ What could fail at a peak such as Black Friday, in every account, and where to s
 | MSK | Broker disk and time to full, brokers out of balance, no storage autoscaling, CPU against AWS's advice of 60%, partitions per broker |
 | EKS | CPU request or memory limit under a floor, no limit, fixed replica counts, one replica, autoscaler at maximum, recent OOM kills, Pending pods, CoreDNS that cannot scale, node groups at maximum, subnet addresses |
 | Network | Subnets running out of addresses, NAT and load balancer port errors, rejected connections, Direct Connect bandwidth |
+| Per-service reviews | See [Service coverage](#service-coverage). Live settings, peak against average, limits with a forecast, resilience, CloudWatch alarms on what fails first, and what cannot be seen. |
 | Change and certificates | ECS deployments with no circuit breaker, certificates expiring before the peak that will not renew by themselves |
 
 Every rule is in [`data/outage.yaml`](../src/exitrisk/data/outage.yaml).
+
+## Service coverage
+
+The report states for every billed service how far it is checked, with its spend. Anything billed that is
+not in [`data/outage_services.yaml`](../src/exitrisk/data/outage_services.yaml) is shown as not covered, so a
+new service cannot go unseen.
+
+| Level | Means | Services |
+|---|---|---|
+| Reviewed | Settings, peak against average, limits and resilience for each resource | MSK, RDS and Aurora, EKS, ElastiCache, DynamoDB, Lambda, OpenSearch, Kinesis, SQS, API Gateway, EC2 and EBS, ECS |
+| Part reviewed | Some settings or events for each resource | Connect, S3, Redshift, load balancers, VPC and NAT, Transit Gateway, VPN, Direct Connect, CloudFront, EFS, FSx, Amazon MQ, SNS, Step Functions, EventBridge, Cognito, Bedrock, ACM |
+| Quotas only | Service Quotas with a usage metric; the resources are not looked at | Route 53, KMS, Secrets Manager, ECR, CloudFormation, CloudWatch and Logs, IAM, WAF, Systems Manager, Firehose, Glue, Athena, SageMaker, SES, EMR, Batch, AppSync |
+| Not covered | Nothing is read | Everything else billed, listed with its spend in the report |
+
+Each review says what it read and what it cannot see. Even a Reviewed service does not show drift from
+Terraform or CloudFormation, Kafka topic detail (which needs Kafka admin access), or the price of another
+design.
+
+## Risk map
+
+Exposure is the risk score as a share, times monthly spend. Spend stands in for importance: a cheap account
+that takes payments can matter more than a large data platform, so use it to choose where to look first, not
+to dismiss an account. The map shows accounts by spend and risk, every account as a treemap, the most exposed
+accounts, severity by account and service, and what reaches a limit first. An account with no known spend is
+shown apart. An account that could not be read at all is rated Not measured, listed first, and left out of the
+score.
 
 ## How severity is set
 
@@ -46,12 +73,12 @@ So: hold the freeze and rollback first, then fix what the scan finds. A scan mea
 ## What is not measured
 
 - **Short spikes.** Hourly averages hide them, so real headroom is lower than shown.
-- **Database connections** against `max_connections`, which depends on each parameter group.
+- **Database connections where `max_connections` is a formula with `log()`.** Numbers and `LEAST` formulas are compared.
 - **S3 request rates** need request metrics on the bucket, and compare the whole bucket against a per-prefix limit: well spread keys have far more room than shown.
 - **Quotas with no usage metric**, and Trusted Advisor's own limit checks.
 - **Whether the system survives the load**: a load test does that. So do DNS and connection-tracking limits on instances, runbooks and rollback rehearsals.
 - **Clusters that could not be read.** Shown as not read, never as a pass. Container Insights, where on, still gives memory and CPU against limits.
-- **Pod disruption budgets and the rate of change**; regional dependence is in the Multi-Region Report, change controls in the Cloud Assurance Report.
+- **The rate of change**; regional dependence is in the Multi-Region Report, change controls in the Cloud Assurance Report.
 
 ## Answers file
 

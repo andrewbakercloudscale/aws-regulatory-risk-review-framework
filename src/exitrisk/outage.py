@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 from .assurance import _monthly_spend, _points_score, _rating, is_production
 from .filtering import AccountFilter
 from .logging_config import get_logger
+from .outage_views import build_views
 from .resilience import _patterns, owner_of
 
 log = get_logger("outage")
@@ -41,6 +42,7 @@ SEVERITIES = ("critical", "high", "medium", "low")
 SEV_ORDER = {s: i for i, s in enumerate(SEVERITIES)}
 AFTER_PEAK_DAYS = 30  # filling this soon after the peak is still worth doing before it
 MAX_FINDINGS = 4000  # sent to the page, worst first; the counts always cover every finding
+NOT_MEASURED = "Not measured"  # no check could read the account: no score, and first in the list, not "Low"
 SYSTEM_NS = "kube-system,kube-public,kube-node-lease,amazon-cloudwatch,amazon-guardduty,aws-observability"
 
 
@@ -89,13 +91,13 @@ def judge_capacity(row: dict, a: OutageAnswers, days_to_peak: int) -> tuple[str 
     peak = pct * a.peak_multiplier if row.get("load") else pct
     days = row.get("days")
     if days is not None and days <= days_to_peak:
-        return "critical", round(peak, 1), f"full in about {days:.0f} days, before the peak"
+        return "critical", round(peak, 1), f"at its limit in about {days:.0f} days, before the peak"
     if pct >= a.critical_pct:
         return "critical", round(peak, 1), f"at {pct:.0f}% already"
     if row.get("load") and peak >= 100:
         return "high", round(peak, 1), f"{pct:.0f}% now, {peak:.0f}% at {a.peak_multiplier:g}x load"
     if days is not None and days <= days_to_peak + AFTER_PEAK_DAYS:
-        return "high", round(peak, 1), f"full in about {days:.0f} days, soon after the peak"
+        return "high", round(peak, 1), f"at its limit in about {days:.0f} days, soon after the peak"
     if peak >= a.warn_pct:
         return (
             "medium",
@@ -116,7 +118,12 @@ def _judge(row: dict, rule: dict, a: OutageAnswers, peak: date, days_to_peak: in
             return None
     else:
         sev, why = rule["severity"], row.get("note", "")
-        if rule["id"] == "cert_expiry":
+        if rule["id"] == "rds_maintenance":
+            ends = date.fromisoformat(row["ends"])
+            if ends > peak + timedelta(days=7):
+                return None
+            why = f"applies on {row['ends']}: {row.get('note', '')}"
+        elif rule["id"] == "cert_expiry":
             ends = date.fromisoformat(row["ends"])
             if ends > peak + timedelta(days=7):
                 return None
@@ -183,6 +190,10 @@ def workload_rows(cluster: dict, a: OutageAnswers) -> list[dict]:
             add("eks_low_memory", w, f"{mem_lim} MiB limit across the pod, under {a.memory_limit_floor_mi} MiB")
         if mem_lim is None and mem_req is None:
             add("eks_no_memory_limit", w, "no request or limit on at least one container")
+        if w.get("pdb") is False and n > 1:
+            add("eks_no_pdb", w, f"{n} replicas")
+        if w.get("ready") is False:
+            add("eks_no_readiness", w, "at least one container has none")
         if w.get("oom"):
             add("eks_oom", w, f"{w['oom']} container(s) last ended OOMKilled")
     if cluster.get("pending"):
@@ -257,7 +268,13 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
         score = round(_points_score(list(worst.values()), points, 1.0), 1) if worst else 0.0
         counts = Counter(f["severity"] for f in found)
         top = min(found, key=lambda f: (SEV_ORDER[f["severity"]], -(f["at_peak"] or 0)), default=None)
-        unread = [k for k, v in (raw.get("checks") or {}).items() if v.get("status") == "unknown"]
+        checks = raw.get("checks") or {}
+        # A check that passed in one region and failed to read in another is not measured either.
+        unread = [
+            k for k, v in checks.items() if v.get("status") == "unknown" or "not measured" in (v.get("note") or "")
+        ]
+        blind = bool(checks) and not any(v.get("status") in ("pass", "fail") for v in checks.values())
+        blind = blind and not found and any(v.get("status") == "unknown" for v in checks.values())
         table.append(
             {
                 "id": acct["id"],
@@ -266,7 +283,7 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
                 "owner": owner_of(acct)[0],
                 "production": production,
                 "score": score,
-                "rating": _rating(score),
+                "rating": NOT_MEASURED if blind else _rating(score),
                 "monthly_spend": spend.get(acct["id"], 0.0),
                 **{s: counts.get(s, 0) for s in SEVERITIES},
                 "top": f"{top['title']}: {top['res']}" if top else "",
@@ -274,10 +291,11 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
                 "regions": raw.get("regions") or [],
                 "compared": raw.get("compared", 0),
                 "rows_cut": raw.get("rows_cut", 0),
+                "metrics_cut": bool((raw.get("facts") or {}).get("metrics_cut")),
             }
         )
         findings += found
-    table.sort(key=lambda r: (-r["score"], -r["monthly_spend"], r["name"].lower()))
+    table.sort(key=lambda r: (r["rating"] != NOT_MEASURED, -r["score"], -r["monthly_spend"], r["name"].lower()))
     findings.sort(
         key=lambda f: (not f["production"], SEV_ORDER[f["severity"]], -(f["at_peak"] or f["pct"] or 0), f["account"])
     )
@@ -367,7 +385,7 @@ def _summary(table, findings, clusters, not_checked, a, peak, freeze, today) -> 
     counts = Counter(f["severity"] for f in prod)
     all_counts = Counter(f["severity"] for f in findings)
     limited = [f for f in prod if f["area"] == "limits"]
-    weights = [(r["score"], max(r["monthly_spend"], 1.0)) for r in table]
+    weights = [(r["score"], max(r["monthly_spend"], 1.0)) for r in table if r["rating"] != NOT_MEASURED]
     total = sum(w for _, w in weights)
     score = round(sum(s * w for s, w in weights) / total, 1) if total else 0.0
     checks = sum(r["compared"] for r in table)
@@ -376,6 +394,8 @@ def _summary(table, findings, clusters, not_checked, a, peak, freeze, today) -> 
         "accounts": len(table),
         "not_checked": len(not_checked),
         "accounts_full": len(measured),
+        "accounts_blind": sum(1 for r in table if r["rating"] == NOT_MEASURED),
+        "accounts_cut": sum(1 for r in table if r["rows_cut"] or r["metrics_cut"]),
         "score": score,
         "rating": _rating(score),
         "critical_accounts": sum(1 for r in table if r["rating"] == "Critical"),
@@ -441,6 +461,7 @@ def build_outage(scan: dict, account_filter: AccountFilter | None = None, a: Out
         if x["id"] not in checked and x.get("status", "ACTIVE") in ("ACTIVE", "UNKNOWN")
     ]
     focus = _focus(findings, cat, peak, freeze, today)
+    views = build_views(scan, accounts, checked, table, findings, rules, cat, peak, freeze, today)
     area_rank = {x["area"]: x for x in focus}
 
     def found_for(cause: dict) -> dict | None:
@@ -465,6 +486,7 @@ def build_outage(scan: dict, account_filter: AccountFilter | None = None, a: Out
         "accounts": table,
         "clusters": clusters,
         "not_checked": not_checked,
+        **views,
         "build_ms": round((time.perf_counter() - started) * 1000),
     }
 
@@ -491,6 +513,7 @@ def findings_csv(report: dict) -> str:
         [
             "severity",
             "area",
+            "service",
             "finding",
             "account",
             "production",
@@ -512,6 +535,7 @@ def findings_csv(report: dict) -> str:
             [
                 f["severity"],
                 areas.get(f["area"], f["area"]),
+                f.get("service_label", ""),
                 f["title"],
                 _cell(f["account"]),
                 "yes" if f["production"] else "no",

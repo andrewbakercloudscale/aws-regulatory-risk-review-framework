@@ -22,6 +22,7 @@ import fnmatch
 import io
 import json
 import re
+import socket
 import threading
 import time
 from collections.abc import Callable
@@ -1661,7 +1662,7 @@ REGION_TASKS: list[tuple[str, tuple[str, ...], Callable, tuple[str, ...] | None]
     ("sagemaker", ("sagemaker_notebook_internet",), task_sagemaker, ("Amazon SageMaker",)),
 ]  # fmt: skip
 # Calls that fail this way mean the service is not offered (or not opted in) in that region.
-_NOT_HERE = ("OptInRequired", "UnrecognizedClientException", "InvalidClientTokenId", "EndpointConnectionError",
+_NOT_HERE = ("OptInRequired", "UnrecognizedClientException", "InvalidClientTokenId",
              "UnsupportedOperation", "InvalidAction", "SubscriptionRequiredException")  # fmt: skip
 # The account, not the caller, is refused: the API is not offered to it in that region (Bedrock
 # guardrails in af-south-1 answer AccessDeniedException this way). Not a missing permission.
@@ -1669,7 +1670,18 @@ _ACCOUNT_NOT_AUTHORIZED = "your account is not authorized to invoke this api"
 TASK_ATTEMPTS = 3  # a task that fails on a timeout, a dropped connection or a 5xx runs again
 
 
-def _not_here(exc: BaseException, code: str) -> bool:
+def _network_up(region: str) -> bool:
+    """STS answers in every region, so if it cannot be reached either, it is the network and not the service."""
+    try:
+        socket.create_connection((f"sts.{region}.amazonaws.com", 443), timeout=3).close()
+        return True
+    except OSError:
+        return False
+
+
+def _not_here(exc: BaseException, code: str, region: str) -> bool:
+    if code == "EndpointConnectionError":  # no such endpoint, or a dropped network: only the first is "not here"
+        return _network_up(region)
     return code in _NOT_HERE or (code == "AccessDeniedException" and _ACCOUNT_NOT_AUTHORIZED in str(exc).lower())
 
 
@@ -1684,7 +1696,7 @@ def _run(ctx: Ctx, task: tuple, region: str | None) -> None:
     except (ClientError, BotoCoreError, TimeoutError) as exc:
         code = _code(exc)
         where = region or "global"
-        if region and region != "us-east-1" and _not_here(exc, code):
+        if region and region != "us-east-1" and _not_here(exc, code, region):
             return  # the service is not offered there: nothing to measure, nothing failed
         code_, msg, hint = describe_exception(exc)
         for cid in checks:
@@ -1697,6 +1709,9 @@ def _run(ctx: Ctx, task: tuple, region: str | None) -> None:
         log.exception("%s %s %s %s failed with an unexpected error", ctx.what, ctx.account_id, region, name)
         for cid in checks:
             ctx.r.unknown(cid, f"{type(exc).__name__} in {region or 'global'}")
+        ctx.issue(Issue("error", ctx.what, f"{name} in {region or 'global'} failed with an unexpected error: {exc}",
+                        "This is a bug in the scan, and the checks it feeds are shown as not measured. The log has "
+                        "the details.", account_id=ctx.account_id, region=region))  # fmt: skip
 
 
 def _finish(ctx: Ctx) -> None:

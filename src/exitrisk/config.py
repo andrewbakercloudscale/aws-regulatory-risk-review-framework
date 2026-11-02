@@ -11,7 +11,7 @@ def _default_data_dir() -> Path:
     return Path(os.environ.get("EXITRISK_DATA_DIR", Path.home() / ".exitrisk")).expanduser()
 
 
-def _workers(raw: str, default: int = 8) -> int:
+def _workers(raw: str, default: int = 16) -> int:
     """EXITRISK_MAX_WORKERS / EXITRISK_PROCESSES, read at import: a typo must not stop every command,
     so fall back to the default."""
     try:
@@ -29,7 +29,9 @@ class Settings:
     max_workers: int = field(default_factory=lambda: _workers(os.environ.get("EXITRISK_MAX_WORKERS", "")))
     # Worker processes a deep scan reads accounts in (procs.py); 1 reads them in the console process.
     processes: int = field(
-        default_factory=lambda: _workers(os.environ.get("EXITRISK_PROCESSES", ""), default=min(os.cpu_count() or 1, 8))
+        default_factory=lambda: _workers(
+            os.environ.get("EXITRISK_PROCESSES", ""), default=min((os.cpu_count() or 1) * 2, 16)
+        )
     )
 
     @property

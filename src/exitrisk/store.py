@@ -42,7 +42,7 @@ def save_scan(scan: dict) -> None:
         fd, tmp = tempfile.mkstemp(dir=settings.scans_dir, prefix=".tmp-", suffix=".json")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(scan, fh, indent=1, default=str)
+                json.dump(scan, fh, separators=(",", ":"), default=str)
                 fh.flush()
                 os.fsync(fh.fileno())  # a crash after the rename never leaves an empty scan
             os.chmod(tmp, 0o600)
@@ -51,6 +51,15 @@ def save_scan(scan: dict) -> None:
             Path(tmp).unlink(missing_ok=True)
             log.exception("could not save scan %s", scan["id"])
             raise
+
+
+def scan_stamp(scan_id: str) -> tuple[int, int]:
+    """Changes when the saved scan does: its modified time and size."""
+    path = _path(scan_id)
+    if not path.exists():
+        raise ScanNotFound(scan_id)
+    st = path.stat()
+    return st.st_mtime_ns, st.st_size
 
 
 def load_scan(scan_id: str) -> dict:

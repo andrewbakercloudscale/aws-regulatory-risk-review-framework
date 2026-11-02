@@ -294,6 +294,21 @@ def _outage_facts(rep: dict) -> tuple[dict, list[dict]]:
             {k: r[k] for k in ("title", "area", "findings", "accounts", "critical", "high")} for r in rep["rules"][:30]
         ],
         "worst_production_findings": worst,
+        "top_risks": [
+            {k: x[k] for k in ("severity", "title", "account_id", "service", "res", "more", "why", "start_by", "late")}
+            for x in rep.get("top_risks", [])[:25]
+        ],
+        "coverage_by_spend": [
+            {k: x[k] for k in ("label", "share", "services")} for x in (rep.get("coverage") or {}).get("levels", [])
+        ],
+        "not_covered": [
+            {k: x[k] for k in ("name", "monthly")} for x in (rep.get("coverage") or {}).get("not_covered", [])[:15]
+        ],
+        "services_at_risk": [
+            {k: x[k] for k in ("label", "level", "tone", "critical", "high", "resources", "not_read_count")}
+            for x in rep.get("services", [])
+            if x["tone"] in ("critical", "high", "unknown")
+        ][:25],
         "clusters_not_read": [
             {k: c[k] for k in ("account", "name", "access")} for c in rep["clusters"] if c["access"] != "read"
         ][:20],
