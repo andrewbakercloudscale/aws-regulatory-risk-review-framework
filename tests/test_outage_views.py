@@ -295,3 +295,33 @@ def test_a_revoked_sign_in_waits_for_a_new_token(monkeypatch):
     monkeypatch.setattr(scanner, "SIGN_IN_POLL_SECONDS", 0)
     job = scanner.ScanJob(id="20260102-000000-abcf", params=scanner.ScanParams(profile="p"))
     assert job.wait_for_sign_in("s", rejected="old") is True
+
+
+def test_a_count_of_resources_is_not_scaled_as_a_rate():
+    """AWS gives RDS's counts an hourly period: reading one as a rate reported 7 subnets as 84."""
+    count = {"Period": {"PeriodValue": 1, "PeriodUnit": "HOUR"}, "UsageMetric": {"MetricName": "ResourceCount"}}
+    calls = {"Period": {"PeriodValue": 1, "PeriodUnit": "SECOND"}, "UsageMetric": {"MetricName": "CallCount"}}
+    assert not collector._is_rate(count)
+    assert collector._is_rate(calls)
+    assert not collector._is_rate({"UsageMetric": {"MetricName": "ResourceCount"}})
+
+
+def test_a_saved_scan_has_its_rds_counts_settled_and_one_row_per_quota():
+    from exitrisk.outage import _one_per_quota, _settled_rds_quotas
+
+    quota = {
+        "rule": "limit_product",
+        "res": "rds: DB instances",
+        "region": "r",
+        "qcode": "L-1",
+        "pct": 1500.0,
+        "used": 600.0,
+        "limit": 40.0,
+        "load": True,
+    }
+    native = {"rule": "limit_product", "res": "rds: DBInstances", "region": "r", "pct": 25.0, "used": 10, "limit": 40}
+    settled = _settled_rds_quotas({"rows": [quota, native]})
+    assert settled[0]["used"] == 50 and settled[0]["pct"] == 125.0 and not settled[0]["load"]
+    fine = {**quota, "used": 24.0, "pct": 60.0}
+    assert _settled_rds_quotas({"rows": [fine], "profiles": []}) == [fine]  # made since the fix
+    assert len(_one_per_quota([fine, native])) == 1

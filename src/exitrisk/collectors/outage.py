@@ -222,7 +222,7 @@ METRICS = {
         "AWS/RDS",
         ("DBInstanceIdentifier",),
         "ACUUtilization",
-        "Maximum",
+        "Average",
         "Amazon Relational Database Service",
     ),
     "cache_cpu": (
@@ -425,7 +425,8 @@ def _read_metrics(ctx: OutageCtx, region: str) -> dict[str, dict[str, Series]]:
                 "ReturnData": True,
             }
         )
-    out: dict[str, dict[str, Series]] = {key: {} for key in ids.values()}
+    # Every metric has an entry, read or not: a task shared by two services may have only one billed.
+    out: dict[str, dict[str, Series]] = {key: {} for key in (*METRICS, *ids.values())}
     cw = ctx.client("cloudwatch", region)
     end = ctx.now
     start = end - timedelta(days=LOOKBACK_DAYS)
@@ -503,7 +504,7 @@ def _quota_usage(ctx: OutageCtx, region: str, found: list[tuple[str, dict]]) -> 
         queries = []
         for i, (_, q) in enumerate(batch):
             m = q["UsageMetric"]
-            rate = bool(q.get("Period"))
+            rate = _is_rate(q)
             stat = m.get("MetricStatisticRecommendation") or ("Sum" if rate else "Maximum")
             queries.append(
                 {
@@ -542,8 +543,14 @@ def _quota_usage(ctx: OutageCtx, region: str, found: list[tuple[str, dict]]) -> 
 _PERIOD_SECONDS = {"MICROSECOND": 1e-6, "MILLISECOND": 1e-3, "SECOND": 1, "MINUTE": 60, "HOUR": 3600, "DAY": 86400}
 
 
+def _is_rate(q: dict) -> bool:
+    """A count of calls in a period. A count of resources has a Period too (an hour for RDS's), but it is a level:
+    reading it as a rate reported 7 subnets as 84."""
+    return bool(q.get("Period")) and (q.get("UsageMetric") or {}).get("MetricName") != "ResourceCount"
+
+
 def _quota_row(ctx: OutageCtx, region: str, code: str, q: dict, high: float) -> None:
-    per = q.get("Period") or {}
+    per = (q.get("Period") or {}) if _is_rate(q) else {}
     if per:  # a rate: the sum over RATE_PERIOD, as a figure for the quota's own period
         seconds = per.get("PeriodValue", 1) * _PERIOD_SECONDS.get(per.get("PeriodUnit"), 1)
         high = high / RATE_PERIOD * seconds

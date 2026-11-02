@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import time
 from collections import Counter, defaultdict
 from datetime import date, timedelta
@@ -40,6 +41,7 @@ log = get_logger("outage")
 
 SEVERITIES = ("critical", "high", "medium", "low")
 SEV_ORDER = {s: i for i, s in enumerate(SEVERITIES)}
+KEEP_PCT = 30.0  # the collector keeps no measure under this
 AFTER_PEAK_DAYS = 30  # filling this soon after the peak is still worth doing before it
 MAX_FINDINGS = 4000  # sent to the page, worst first; the counts always cover every finding
 NOT_MEASURED = "Not measured"  # no check could read the account: no score, and first in the list, not "Low"
@@ -230,6 +232,33 @@ def _region_mismatch(rows: list[dict], values: dict[str, dict[str, float]]) -> l
     return out
 
 
+def _settled_rds_quotas(raw: dict) -> list[dict]:
+    """Saved scans' RDS quotas, read before the fix for counts of resources taken as rates: their usage is 12 times
+    too high (AWS gives these an hourly period, and five-minute samples were scaled up to it)."""
+    rows = list(raw.get("rows") or [])
+    if "profiles" in raw:
+        return rows
+    out = []
+    for r in rows:
+        if r.get("qcode") and r["res"].startswith("rds: ") and r.get("load") and not r.get("used", 1) % 12:
+            r = {**r, "used": r["used"] / 12, "pct": round(r["pct"] / 12, 1), "load": False}
+            if r["pct"] < KEEP_PCT:
+                continue
+        out.append(r)
+    return out
+
+
+def _one_per_quota(rows: list[dict]) -> list[dict]:
+    """RDS reports its limits itself and through Service Quotas, by different names: keep one of each."""
+    norm = lambda name: re.sub(r"[^a-z]", "", name.lower())  # noqa: E731
+    named = {(r["region"], norm(r["res"])) for r in rows if r.get("qcode") and r["res"].startswith("rds: ")}
+    return [
+        r
+        for r in rows
+        if r.get("qcode") or not r["res"].startswith("rds: ") or (r["region"], norm(r["res"])) not in named
+    ]
+
+
 def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak) -> tuple[list[dict], list[dict]]:
     points = catalog()["points"]
     prod_p = _patterns(a.production_patterns)
@@ -240,7 +269,7 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
         if raw is None:
             continue
         production = is_production(acct, prod_p)
-        rows = list(raw.get("rows") or [])
+        rows = _one_per_quota(_settled_rds_quotas(raw))
         rows += _region_mismatch(rows, raw.get("quota_values") or {})
         for c in raw.get("clusters") or []:
             rows += workload_rows(c, a)

@@ -488,3 +488,30 @@ def test_the_rules_for_what_the_answers_hold_fire(read):
     }  # fmt: skip
     assert want <= rules, want - rules
     assert rules <= {r["id"] for r in catalog()["rules"]}
+
+
+@pytest.mark.parametrize(
+    "billed",
+    [
+        ["Amazon Elastic File System"],
+        ["Amazon FSx"],
+        ["Amazon Relational Database Service"],
+        ["Amazon Managed Streaming for Apache Kafka"],
+        ["Amazon Simple Queue Service"],
+        [],
+    ],
+)
+def test_a_task_runs_with_only_its_own_service_billed(billed):
+    """Metrics are read only for billed services, so a task sharing several must not assume all of them."""
+    session = Session()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("exitrisk.collectors.inventory.enabled_regions", lambda s, r: ["eu-west-1"])
+        out, _ = collector.account_checks(
+            session, "111111111111", ["eu-west-1"], {"home": "eu-west-1", "services": billed}
+        )
+    down = {
+        k: v["note"]
+        for k, v in out["checks"].items()
+        if v["status"] == "unknown" or "not measured" in (v.get("note") or "")
+    }
+    assert not down
