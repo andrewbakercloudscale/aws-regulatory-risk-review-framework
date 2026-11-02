@@ -194,3 +194,14 @@ def test_expiring_token_is_renewed_with_the_refresh_token(monkeypatch):
     # Without a refresh token, an expired sign-in is simply not signed in.
     path.write_text(json.dumps(cached | {"expiresAt": "2020-01-01T00:00:00Z"}))
     assert sso.load_token("corp") is None and len(calls) == 1
+
+
+def test_profile_sign_in_says_whether_the_profile_can_be_used(isolated_aws):
+    assert sso.profile_sign_in("default") == {"sso": False}
+    with (isolated_aws / "config").open("a") as fh:
+        fh.write("\n[profile p]\nsso_session = corp\nsso_account_id = 111111111111\nsso_role_name = Read\n")
+    assert sso.profile_sign_in("p") == {"sso": True, "session": "corp", "signed_in": False, "expires_at": None}
+    _signed_in()
+    resp = TestClient(create_app(), base_url="http://127.0.0.1").get("/api/sign-in", params={"profile": "p"})
+    got = resp.json()
+    assert got["signed_in"] is True and got["session"] == "corp" and got["expires_at"]

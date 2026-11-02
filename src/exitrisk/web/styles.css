@@ -858,3 +858,5 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 @media print { .or-filters { display: none; } }
 #orForm .mr-grid label { justify-content: flex-start; }
 .or-note { white-space: normal; min-width: 160px; }
+.sign-in-state { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between; margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; font-size: 13.5px; border-left: 4px solid var(--good); background: color-mix(in srgb, var(--good) 8%, var(--surface)); }
+.sign-in-state.out { border-left-color: var(--sev-critical); background: color-mix(in srgb, var(--sev-critical) 9%, var(--surface)); font-weight: 600; }

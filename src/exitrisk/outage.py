@@ -443,7 +443,6 @@ def build_outage(scan: dict, account_filter: AccountFilter | None = None, a: Out
     focus = _focus(findings, cat, peak, freeze, today)
     area_rank = {x["area"]: x for x in focus}
 
-
     def found_for(cause: dict) -> dict | None:
         """What this scan found for a cause: its area, or the rules named. None when a scan cannot see it."""
         if cause.get("rules"):

@@ -479,6 +479,9 @@ def run_checks(
     member.result()
     for check in member_checks:  # in their order, after the ones above
         checks.append(check)
+    # Last and on its own: the member checks above are known well before the count of every account.
+    if ctx.pop("count_assignments", False):
+        _assignment_check(checks, pair, ctx, counted)
     checks.append(ai.result())
     return _result(checks, ctx)
 
@@ -508,7 +511,8 @@ AI_LABEL = "AI review (optional)"
 
 
 def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=None) -> None:
-    """Reach one member account the way a deep scan does, then make every call the scan makes there."""
+    """Reach one member account the way a deep scan does, then make every call the scan makes there.
+    The count of assignments is left to the caller (ctx["count_assignments"]), as it takes far longer."""
     pair = None if role_name else sso.profile_permission_set(profile)
     ctx["member_access"] = role_name or (f"permission set {pair[1]}" if pair else None)
 
@@ -519,7 +523,7 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
         if assignments is not None:
             checks.append(Check("assignments", ASSIGN_LABEL, "skip", assignments))
         else:
-            _assignment_check(checks, pair, ctx, counted)
+            ctx["count_assignments"] = True
 
     if not role_name and not pair:
         checks.append(
@@ -591,7 +595,7 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
             )
         )
     else:
-        _assignment_check(checks, pair, ctx, counted)
+        ctx["count_assignments"] = True
 
 
 def _member_with_role(pair: tuple[str, str], preferred: str | None, own: str | None) -> str | None:

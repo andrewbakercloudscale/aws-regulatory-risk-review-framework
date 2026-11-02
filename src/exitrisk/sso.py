@@ -402,7 +402,7 @@ PORTAL_BULK = Config(
     signature_version=botocore.UNSIGNED, retries={"max_attempts": 10, "mode": "standard"}, max_pool_connections=20
 )
 PORTAL_WORKERS = 16
-ROLE_COUNT_SECONDS = 900
+ROLE_COUNT_SECONDS = 3600
 _role_counts: dict[tuple[str, str], tuple[float, list[str], list[str]]] = {}
 _role_count_lock = threading.Lock()
 
@@ -498,6 +498,20 @@ def profile_permission_set(profile: str | None) -> tuple[str, str] | None:
     if p.get("sso_session") and p.get("sso_role_name"):
         return p["sso_session"], p["sso_role_name"]
     return None
+
+
+def profile_sign_in(profile: str | None) -> dict:
+    """Is the sign-in behind this profile live? Only an IAM Identity Center profile can be asked in advance."""
+    pair = profile_permission_set(profile)
+    if not pair:
+        return {"sso": False}
+    token = load_token(pair[0])
+    return {
+        "sso": True,
+        "session": pair[0],
+        "signed_in": bool(token),
+        "expires_at": token["expiresAt"] if token else None,
+    }
 
 
 def ensure_profile(session_name: str, account_id: str, role: str, region: str = "us-east-1") -> str:

@@ -336,3 +336,27 @@ def test_ai_review_check_is_optional_and_uses_the_saved_provider(monkeypatch):
     c = preflight._ai_check()
     assert c.status == "warn" and "401" in c.detail and "AI review" in c.fix
     assert "ai" in preflight.OPTIONAL
+
+
+def test_the_member_checks_are_reported_before_the_slow_count_of_every_account(monkeypatch):
+    """The count takes 20 seconds or more on a large estate: nothing else may wait for it."""
+    from concurrent.futures import Future
+
+    from exitrisk import preflight
+
+    counted: Future = Future()
+    monkeypatch.setattr(preflight.sso, "profile_permission_set", lambda p: ("corp", "Read"))
+    monkeypatch.setattr(preflight, "_member_with_role", lambda pair, m, own: "222222222222")
+    monkeypatch.setattr(preflight, "member_session", lambda *a: object())
+    monkeypatch.setattr(preflight, "probe_actions", lambda *a: ([], []))
+    ctx: dict = {}
+    checks: list = []
+    preflight._member_checks(checks, object(), "p", None, "222222222222", ctx, counted)
+    assert {c.id for c in checks} == {
+        "deep_scan",
+        "inventory_reads",
+        "dependency_reads",
+        "assurance_reads",
+        "outage_reads",
+    }
+    assert ctx["count_assignments"] is True and not counted.done()

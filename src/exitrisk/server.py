@@ -284,6 +284,10 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
     def profiles():
         return {"profiles": available_profiles(), "accounts": profile_accounts()}
 
+    @app.get("/api/sign-in")
+    def sign_in_state(profile: str | None = None):
+        return sso.profile_sign_in(profile or None)
+
     def sso_call(fn, *args):
         try:
             return fn(*args)

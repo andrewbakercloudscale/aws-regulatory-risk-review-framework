@@ -1657,7 +1657,7 @@
   }
 
   function needDeepScan() {
-    if ($("#sDepth").value !== "quick") return;
+    if (!$("#sRepExit").checked || $("#sDepth").value !== "quick") return;
     $("#sDepth").value = "dependency";
     $("#sDepth").dispatchEvent(new Event("change"));
   }
@@ -3028,15 +3028,83 @@
     $("#scanError").textContent = "";
     $("#sTarget").innerHTML = Object.entries(state.options.target).map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
     $("#sTarget").value = $("#qForm").target.value || "azure";
+    let profiles = [];
     try {
-      const profiles = await fillProfiles($("#sProfile"), typeof selectProfile === "string" ? selectProfile : null);
-      if (profiles.length) loadOus();
+      profiles = await fillProfiles($("#sProfile"), typeof selectProfile === "string" ? selectProfile : null);
     } catch (e) { $("#scanError").textContent = e.message; }
     await loadAiCfg();
+    if (!state.runningScan) pickScanReports(document.body.dataset.view);
     syncScanAi();
-    $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked && !$("#sOutage").checked;
+    syncScanForm();
     showScanRunning();
     dlg.showModal();
+    state.scanSignInAsked = false;
+    if (profiles.length) await scanProfileChanged();
+  }
+
+  // The scan is for the report on screen unless the analyst ticks others.
+  const SCAN_REPORTS = { exit: "#sRepExit", multiregion: "#sRepMr", assurance: "#sAssurance", outage: "#sOutage" };
+  function pickScanReports(view) {
+    for (const [v, id] of Object.entries(SCAN_REPORTS)) $(id).checked = v === (view in SCAN_REPORTS ? view : "exit");
+  }
+
+  // Only what the chosen reports use is shown, and only that is sent: an exit target means nothing to
+  // an outage scan, and a resource inventory would only add time to it.
+  function syncScanForm() {
+    const exit = $("#sRepExit").checked, assurance = $("#sAssurance").checked, outage = $("#sOutage").checked, mr = $("#sRepMr").checked;
+    $("#sExitOpts").hidden = !exit;
+    $("#sDepthWrap").hidden = !exit;
+    $("#sMaterialWrap").hidden = !exit;
+    $("#invOpts").hidden = !(exit && $("#sDepth").value !== "quick") && !assurance && !outage;
+    for (const el of document.querySelectorAll("#scanForm [data-for]")) {
+      const on = $(el.dataset.for).checked;
+      el.hidden = !on;
+      const box = el.querySelector("input");
+      if (!on && box.checked) box.checked = false;
+    }
+    const names = [exit && "exit risk", mr && "multi-region", assurance && "cloud assurance", outage && "outage risk"].filter(Boolean);
+    $("#scanWhat").textContent = names.length ? `For the ${names.join(", ")} report${names.length > 1 ? "s" : ""}.` : "";
+    state.scanNoReport = !names.length && !state.runningScan;
+    if (!state.scanNoReport && $("#scanError").textContent === NO_REPORT) $("#scanError").textContent = "";
+    if (state.scanNoReport) $("#scanError").textContent = NO_REPORT;
+    showScanRunning();
+  }
+  const NO_REPORT = "Tick at least one report.";
+
+  // New scan always starts from the sign-in: nothing is read with a sign-in that has ended, and the
+  // sign-in opens by itself. The OUs load once it is live.
+  async function scanProfileChanged() {
+    if (!$("#scanDialog").open) return;  // closed while the sign-in was open
+    const profile = $("#sProfile").value;
+    const st = await signInState(profile);
+    if (profile !== $("#sProfile").value) return;  // changed again while this was asked
+    if (st?.sso && !st.signed_in) {
+      scanSignedOut(st.session);
+      return;
+    }
+    const box = $("#scanSignIn");
+    box.hidden = !st?.sso;
+    box.classList.remove("out");
+    $("#btnScanSignIn").hidden = true;
+    showScanRunning();
+    if (st?.sso) $("#scanSignInText").textContent = `Signed in to ${st.session} until ${new Date(st.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
+    loadOus();
+  }
+
+  function scanSignedOut(session) {
+    const box = $("#scanSignIn");
+    box.hidden = false;
+    box.classList.add("out");
+    $("#scanSignInText").textContent = `You are not signed in to AWS${session ? ` (${session})` : ""}. Sign in to scan.`;
+    $("#btnScanSignIn").hidden = false;
+    $("#btnScanSignIn").dataset.session = session || "";
+    $("#btnStartScan").disabled = true;
+    $("#sOu").innerHTML = `<p class="muted small">The organizational units load once you are signed in.</p>`;
+    $("#ouChosen").textContent = "";
+    $("#ouStatus").textContent = "";
+    if (state.scanSignInAsked) return;  // opened once by itself: the button above opens it again
+    state.scanSignInAsked = true;
+    openSsoDialog(null, true, session, scanProfileChanged);
   }
 
   // Accounts in an OU and everything below it (null if the tree came without counts).
@@ -3086,6 +3154,7 @@
       try { if ($("#sProfile").value) localStorage.setItem(LS_ORG_PROFILE, $("#sProfile").value); } catch { /* ignore */ }
     } catch (e) {
       if (seq !== state.ouSeq) return;
+      if (SIGNED_OUT_RE.test(`${e.code} ${e.message}`)) { scanSignedOut((await signInState($("#sProfile").value))?.session); return; }
       $("#sOu").innerHTML = `<p class="muted small">Whole organisation</p>`;
       $("#ouChosen").textContent = "";
       const cur = $("#sProfile").value;
@@ -3099,7 +3168,7 @@
         (likely.length ? `Try ${likely.map((v) => `<a href="#" class="ou-try" data-p="${esc(v)}">${esc(v)}</a>`).join(" or ")}. ` : "Pick a management-account profile, or sign in with SSO and choose the management account. ") +
         "Without OUs the scan covers only what this profile can see.";
       $("#ouStatus").querySelectorAll(".ou-try").forEach((a) => a.addEventListener("click", (ev) => {
-        ev.preventDefault(); $("#sProfile").value = a.dataset.p; loadOus();
+        ev.preventDefault(); $("#sProfile").value = a.dataset.p; state.scanSignInAsked = false; scanProfileChanged();
       }));
     } finally { if (seq === state.ouSeq) { $("#btnLoadOus").disabled = false; } }
   }
@@ -3108,8 +3177,8 @@
     const f = $("#scanForm");
     const body = {
       profile: f.profile.value || null, ou_ids: pickedOus(), months: Number(f.months.value || 12),
-      inventory: f.depth.value !== "quick", dependencies: f.depth.value === "dependency",
-      inventory_scope: f.material_only.checked ? "material" : "all", role_name: f.role_name.value || null,
+      inventory: $("#sRepExit").checked && f.depth.value !== "quick", dependencies: $("#sRepExit").checked && f.depth.value === "dependency",
+      inventory_scope: $("#sRepExit").checked && f.material_only.checked ? "material" : "all", role_name: f.role_name.value || null,
       region_scope: f.spend_regions.checked ? "spend" : "all",
       regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: f.label.value,
       target: f.target.value || "azure", assurance: f.assurance.checked, outage: f.outage.checked,
@@ -3135,7 +3204,7 @@
       $("#scanProgress").hidden = true;
       $("#scanError").textContent = e.message;
       $("#btnStartScan").disabled = false;
-      if (e.status === 401) openSsoDialog(null, true);  // the AWS sign-in has ended
+      if (e.status === 401) { state.scanSignInAsked = false; scanProfileChanged(); }  // the AWS sign-in has ended
     }
   }
 
@@ -3146,7 +3215,11 @@
     $("#btnScanRunning").hidden = !on;
     $("#btnStopScan").hidden = !on;
     $("#btnStopScan").disabled = false;
-    $("#btnStartScan").disabled = on;
+    $("#btnStartScan").disabled = on || !!state.scanNoReport || $("#scanSignIn").classList.contains("out");
+    // Plain words: this button never stops a scan. Stop scan does that.
+    $("#btnScanClose").textContent = on ? "Hide (scan keeps running)" : "Cancel";
+    $("#btnScanClose").title = on ? "Hide this window; the scan carries on, and the top bar shows its progress" : "Close this window; no scan starts";
+    $("#scanTitle").textContent = on ? "Scan running" : "New scan";
     if (on) $("#scanProgress").hidden = false;
     else if (!$("#scanError").textContent) $("#scanProgress").hidden = true;
   }
@@ -3323,13 +3396,21 @@
   }
   setInterval(tickBusy, 500);
 
+  const SIGNED_OUT_RE = /TokenRetrieval|UnauthorizedSSO|SSOToken|ExpiredToken/i;
+  async function signInState(profile) {
+    try { return await api(`/api/sign-in${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`); }
+    catch (e) { console.error("sign-in state", e); return null; }
+  }
+
   function currentSso() { return sso.sessions.find((s) => s.name === $("#ssoSession").value); }
 
   // overScan: the sign-in has ended and a scan needs it; keep New scan open underneath and close
   // this dialog again once signed in.
-  async function openSsoDialog(ev, overScan = false) {
+  // after: what to do once signed in, in place of the dialog's next steps.
+  async function openSsoDialog(ev, overScan = false, session = null, after = null) {
     ev?.preventDefault?.();
     sso.overScan = overScan;
+    sso.after = after;
     if ($("#scanDialog").open && !overScan) $("#scanDialog").close();
     $("#ssoError").textContent = "";
     $("#ssoPending").hidden = true;
@@ -3340,6 +3421,7 @@
     $("#ssoSession").innerHTML = sso.sessions.length
       ? sso.sessions.map((s) => `<option value="${esc(s.name)}">${esc(s.name)} · ${esc(s.start_url.replace("https://", ""))}</option>`).join("")
       : `<option value="">(no portals configured - add one below)</option>`;
+    if (session && sso.sessions.some((s) => s.name === session)) want = session;
     if (want && sso.sessions.some((s) => s.name === want)) $("#ssoSession").value = want;
     $("#ssoAdd").hidden = sso.sessions.length > 0;
     $("#ssoDialog").showModal();
@@ -3432,7 +3514,9 @@
   async function ssoLogin() {
     const s = currentSso();
     if (!s) return;
+    clearInterval(sso.loginTimer);  // pressed while one is waiting: that one is given up for a new code
     $("#ssoError").textContent = "";
+    $("#ssoPending").hidden = true;
     // Open the tab inside the click so pop-up blockers allow it, then point it at AWS.
     const tab = window.open("", "_blank");
     try {
@@ -3441,27 +3525,36 @@
       $("#ssoLink").href = login.verification_uri;
       $("#ssoCode").textContent = login.user_code;
       $("#ssoPending").hidden = false;
-      $("#btnSsoLogin").disabled = true;
+      $("#btnSsoLogin").textContent = "Start again";  // never locked: a sign-in that failed on AWS's page reports nothing here
       clearInterval(sso.loginTimer);
-      sso.loginTimer = setInterval(async () => {
+      const timer = sso.loginTimer = setInterval(async () => {
         try {
           const st = await api(`/api/sso/login/${encodeURIComponent(login.id)}`);
+          if (timer !== sso.loginTimer) return;  // started again while this was asked
           if (st.status === "pending") return;
           clearInterval(sso.loginTimer);
           $("#ssoPending").hidden = true;
-          $("#btnSsoLogin").disabled = false;
-          if (st.status !== "complete") { $("#ssoError").textContent = st.message; return; }
+          $("#btnSsoLogin").textContent = "Sign in";
+          if (st.status !== "complete") { $("#ssoError").textContent = `${st.message} Press Sign in to try again.`; return; }
           toast(`Signed in to ${s.name}`);
           await refreshSsoBadge();
           if (sso.overScan) {
+            const after = sso.after;
             sso.overScan = false;
+            sso.after = null;
             $("#ssoDialog").close();
             if (state.scanWaitsForSignIn) toast(`Signed in to ${s.name}: the scan carries on`);
-            else $("#scanError").textContent = "Signed in again: start the scan.";
+            after?.();
             return;
           }
           await showSsoState();
-        } catch (e) { clearInterval(sso.loginTimer); $("#ssoError").textContent = e.message; $("#btnSsoLogin").disabled = false; }
+        } catch (e) {
+          if (timer !== sso.loginTimer) return;
+          clearInterval(sso.loginTimer);
+          $("#ssoPending").hidden = true;
+          $("#btnSsoLogin").textContent = "Sign in";
+          $("#ssoError").textContent = `${e.message}. Press Sign in to try again.`;
+        }
       }, 2000);
     } catch (e) {
       tab?.close();
@@ -3543,6 +3636,13 @@
   }
 
   async function runAccessCheck() {
+    const st = await signInState($("#aProfile").value);
+    if (st?.sso && !st.signed_in) {
+      $("#aChecks").innerHTML = "";
+      $("#aError").textContent = `You are not signed in to AWS (${st.session}). Sign in, and the check runs by itself.`;
+      openSsoDialog(null, true, st.session, runAccessCheck);
+      return;
+    }
     $("#btnAccessRun").disabled = true;
     $("#aChecks").innerHTML = "";
     $("#aVerdict").hidden = true;
@@ -3567,6 +3667,11 @@
       $("#aChecks").innerHTML = order.map((st) => done[st.id] ? checkRow(done[st.id])
         : st === current ? `<li class="pending"><span class="ic">${spinner()}</span><strong>${esc(st.label)}</strong><span class="d">${prog[st.id] ? `${num(prog[st.id].done)} of ${num(prog[st.id].total)} accounts checked` : "Checking…"}</span>${prog[st.id] ? `<span class="meter" aria-hidden="true"><i style="width:${(100 * prog[st.id].done / prog[st.id].total).toFixed(1)}%"></i></span>` : ""}</li>`
         : `<li class="wait"><span class="ic" aria-hidden="true">·</span><strong>${esc(st.label)}</strong></li>`).join("");
+      // The count of every account and the AI test change nothing about a scan starting: no need to wait.
+      const left = steps.filter((st) => !done[st.id]).map((st) => st.id);
+      if (steps.length && left.every((id) => id === "assignments" || id === "ai") && !Object.values(done).some((c) => c.status === "fail")) {
+        $("#btnAccessScan").disabled = false;
+      }
       if (current) {
         $("#aBusy .busy-text").textContent = `Step ${n + 1} of ${steps.length}: ${current.label}` +
           (current.id === "identity" ? " (approve Touch ID if prompted)" : "") +
@@ -3796,6 +3901,7 @@
     $("#btnAccessScan").addEventListener("click", () => { const p = $("#aProfile").value; $("#accessDialog").close(); openScanDialog(p); });
     refreshGettingStarted();
     $("#lnkSso").addEventListener("click", openSsoDialog);
+    $("#btnScanSignIn").addEventListener("click", (e) => openSsoDialog(null, true, e.currentTarget.dataset.session || null, scanProfileChanged));
     $("#ssoSession").addEventListener("change", showSsoState);
     $("#ssoAccount").addEventListener("change", () => loadSsoRoles($("#ssoRole").value));
     $("#btnSsoLogin").addEventListener("click", ssoLogin);
@@ -3809,7 +3915,7 @@
     setInterval(refreshSsoBadge, 5 * 60 * 1000);
     $("#btnLoadOus").addEventListener("click", loadOus);
     $("#sOu").addEventListener("change", syncOus);
-    $("#sProfile").addEventListener("change", loadOus);
+    $("#sProfile").addEventListener("change", () => { state.scanSignInAsked = false; scanProfileChanged(); });
     $("#btnStartScan").addEventListener("click", startScan);
     // Enter in a text field acts, rather than submitting the dialog form (whose first button is Close).
     const enterDoes = (form, fn) => $(form).addEventListener("keydown", (e) => {
@@ -3818,17 +3924,18 @@
     enterDoes("#scanForm", () => { if (!$("#btnStartScan").disabled) startScan(); });
     enterDoes("#ssoForm", (el) => { if (el.closest("#ssoAdd")) ssoAddPortal(); });
     enterDoes("#accessForm", () => runAccessCheck());
+    for (const id of ["#sRepExit", "#sRepMr"]) $(id).addEventListener("change", syncScanForm);
     $("#sOutage").addEventListener("change", () => {
-      $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked && !$("#sOutage").checked;
+      syncScanForm();
       if (!$("#sOutage").checked && $("#sAiOr").checked) { $("#sAiOr").checked = false; toast("Outage risk AI insights unticked: they need the outage risk checks", 5000); }
     });
     // The member role, regions and region scope apply to the assurance checks too.
     $("#sAssurance").addEventListener("change", () => {
-      $("#invOpts").hidden = $("#sDepth").value === "quick" && !$("#sAssurance").checked && !$("#sOutage").checked;
+      syncScanForm();
       if (!$("#sAssurance").checked && $("#sAiAs").checked) { $("#sAiAs").checked = false; toast("Cloud Assurance AI insights unticked: they need the assurance checks", 5000); }
     });
     $("#sDepth").addEventListener("change", (e) => {
-      $("#invOpts").hidden = e.target.value === "quick" && !$("#sAssurance").checked && !$("#sOutage").checked;
+      syncScanForm();
       $("#sDepthHint").textContent = DEPTH_HINT[e.target.value];
       if (e.target.value === "quick" && $("#sAi").checked) {
         $("#sAi").checked = false;

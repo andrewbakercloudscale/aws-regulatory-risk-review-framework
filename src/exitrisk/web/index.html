@@ -1003,20 +1003,29 @@
   <form method="dialog" id="scanForm">
     <header class="fd-head">
       <h2 id="scanTitle">New scan</h2>
-      <p>Read-only: reads the account list and Cost Explorer spend, changes nothing.</p>
+      <p>Read-only: changes nothing in AWS. <span id="scanWhat"></span></p>
     </header>
     <div class="fd-body">
       <section class="fd-sec">
-        <h3><span class="step">1</span>Sign-in</h3>
+        <h3><span class="step">1</span>What is this scan for?</h3>
+        <p class="fd-hint">Starts from the report you are on. Tick more to get several from one scan; each adds time.</p>
+        <label class="check fd-check"><input type="checkbox" id="sRepExit"><span><strong>Exit Risk Report</strong><br><span class="fd-hint">How hard it is to leave AWS, and what it would cost. Needs spend, plus resources for a sharper estimate.</span></span></label>
+        <label class="check fd-check"><input type="checkbox" id="sRepMr"><span><strong>Multi-Region Report</strong><br><span class="fd-hint">Where a second region is worth it. Needs spend only, so it adds no time.</span></span></label>
+        <label class="check fd-check"><input type="checkbox" name="assurance" id="sAssurance"><span><strong>Cloud Assurance Report</strong><br><span class="fd-hint">Reads each account's controls (access, internet exposure, audit trail, threat detection, data protection, change management, resilience and DR, lifecycle, ownership) and the organisation's guardrails. Needs the assurance read permissions (Check access tests them). Adds about a minute per 8 accounts.</span></span></label>
+        <label class="check fd-check"><input type="checkbox" name="outage" id="sOutage"><span><strong>Outage Risk Report</strong><br><span class="fd-hint">Reads each account's quotas and usage, CloudWatch utilisation over 35 days, storage, MSK, Amazon Connect, subnets and EKS workloads. Needs the outage read permissions (Check access tests them). EKS workloads also need a read-only access entry on each cluster. CloudWatch bills about US$0.01 per 1,000 metrics.</span></span></label>
+      </section>
+      <section class="fd-sec">
+        <h3><span class="step">2</span>Sign-in</h3>
         <label for="sProfile">AWS profile</label>
         <div class="inline-field">
           <select name="profile" id="sProfile" autofocus></select>
           <button type="button" class="btn" id="btnScanCheck">Check access</button>
         </div>
         <p class="fd-hint">Use a profile in the <strong>management (payer) account</strong> for the whole organisation. No profile? <button type="button" class="link-btn" id="lnkSso">Sign in with AWS SSO</button></p>
+        <div id="scanSignIn" class="sign-in-state" role="status" hidden><span id="scanSignInText"></span> <button type="button" class="btn primary" id="btnScanSignIn" hidden>Sign in</button></div>
       </section>
       <section class="fd-sec">
-        <h3><span class="step">2</span>Scope</h3>
+        <h3><span class="step">3</span>Scope</h3>
         <div class="ou-head">
           <span class="fd-label">Organizational units</span>
           <button type="button" class="btn ghost sm" id="btnLoadOus" title="Read the OU list from AWS again"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>Reload</button>
@@ -1027,12 +1036,12 @@
         <p class="fd-hint">OUs decide what is scanned. To narrow the report to some accounts (for example names containing prod), use the account filter in the top bar after the scan; it changes the report without a new scan.</p>
       </section>
       <section class="fd-sec">
-        <h3><span class="step">3</span>Options</h3>
-        <div class="fd-grid">
+        <h3><span class="step">4</span>Options</h3>
+        <div class="fd-grid" id="sExitOpts">
           <label>Exit target<select name="target" id="sTarget"></select><span class="fd-hint">For the cost and time estimate. Change later under Exit model.</span></label>
           <label>Months of spend history<input name="months" type="number" min="1" max="12" value="12"><span class="fd-hint">12 shows a year of growth by product type.</span></label>
         </div>
-        <label>Scan depth<select name="depth" id="sDepth">
+        <label id="sDepthWrap">Scan depth<select name="depth" id="sDepth">
           <option value="quick">Quick scan: billing only</option>
           <option value="inventory">Inventory scan: count resources in each account</option>
           <option value="dependency">Dependency scan: resources and the integrations between them</option>
@@ -1040,26 +1049,18 @@
         <div id="invOpts" class="fd-grid" hidden>
           <label><span>Member account role <span class="opt">optional</span></span><input name="role_name" placeholder="ExitRiskReadOnly" pattern="[\w+=,.@\-]+"><span class="fd-hint">With an IAM Identity Center sign-in, leave blank to use the permission set you signed in with in each account.</span></label>
           <label><span>Regions <span class="opt">blank = all enabled</span></span><input name="regions" placeholder="eu-west-1,us-east-1"></label>
-          <label class="check fd-check span-2"><input type="checkbox" name="material_only" id="sMaterial"><span><strong>Only material accounts</strong><br><span class="fd-hint">Deep-scan the accounts that make up 95% of spend, plus any with AWS-only services; the rest stay sized from spend.</span></span></label>
+          <label class="check fd-check span-2" id="sMaterialWrap"><input type="checkbox" name="material_only" id="sMaterial"><span><strong>Only material accounts</strong><br><span class="fd-hint">Deep-scan the accounts that make up 95% of spend, plus any with AWS-only services; the rest stay sized from spend.</span></span></label>
           <label class="check fd-check span-2"><input type="checkbox" name="spend_regions" id="sSpendRegions" checked><span><strong>Only regions with spend</strong><br><span class="fd-hint">In each account, read only the regions billing US$1 a month or more: several times faster, as most accounts bill in 3 or 4 of the 17 or more enabled regions. Resources in regions that cost nothing yet are not counted; untick to read every enabled region.</span></span></label>
         </div>
         <label><span>Label <span class="opt">optional</span></span><input name="label" maxlength="120" placeholder="e.g. Q4 board pack"></label>
       </section>
       <section class="fd-sec">
-        <h3><span class="step">4</span>Cloud Assurance Framework <span class="opt">optional</span></h3>
-        <label class="check fd-check"><input type="checkbox" name="assurance" id="sAssurance" checked><span><strong>Run the Cloud Assurance Framework checks</strong><br><span class="fd-hint">Reads each account's controls (access, internet exposure, audit trail, threat detection, data protection, change management, resilience and DR, lifecycle, ownership) and the organisation's guardrails, for the Cloud assurance report. Read-only; needs the assurance read permissions (Check access tests them). Adds about a minute per 8 accounts.</span></span></label>
-      </section>
-      <section class="fd-sec">
-        <h3><span class="step">5</span>Outage risk <span class="opt">optional</span></h3>
-        <label class="check fd-check"><input type="checkbox" name="outage" id="sOutage" checked><span><strong>Run the outage risk checks</strong><br><span class="fd-hint">Reads each account's quotas and usage, CloudWatch utilisation over 35 days, storage, MSK, Amazon Connect, subnets and EKS workloads, for the Outage Risk Report. Read-only; needs the outage read permissions (Check access tests them). EKS workloads also need a read-only access entry on each cluster. CloudWatch bills about US$0.01 per 1,000 metrics.</span></span></label>
-      </section>
-      <section class="fd-sec">
-        <h3><span class="step">6</span>AI insights <span class="opt">optional</span></h3>
+        <h3><span class="step">5</span>AI insights <span class="opt">optional</span></h3>
         <p class="fd-hint" id="sAiInfo"></p>
-        <label class="check fd-check"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Exit Risk Report: AI review</strong><br><span class="fd-hint">For the executive committee: what matters most in an exit, the accounts to focus on and how to tackle them, in three passes. Needs a deep scan: ticking it switches Scan depth to a dependency scan. 5 to 40 minutes.</span></span></label>
-        <label class="check fd-check"><input type="checkbox" name="ai_mr" id="sAiMr"><span><strong>Multi-Region Report: AI insights</strong><br><span class="fd-hint">For the CIO, risk and infrastructure leads: where a second region is worth it, what it does to the teams, the recovery gaps and the region to use. Works on any scan. About a minute.</span></span></label>
-        <label class="check fd-check"><input type="checkbox" name="ai_as" id="sAiAs"><span><strong>Cloud Assurance Report: AI insights</strong><br><span class="fd-hint">For the CISO, risk and audit: the control gaps that matter, the accounts to fix first and what the regulator will ask. Needs the Cloud Assurance checks (step 4). About a minute.</span></span></label>
-        <label class="check fd-check"><input type="checkbox" name="ai_or" id="sAiOr"><span><strong>Outage Risk Report: AI insights</strong><br><span class="fd-hint">For the CIO and infrastructure leads: what is most likely to fail at peak, what to start this week and what the change freeze should cover. Needs the outage risk checks (step 5). About a minute.</span></span></label>
+        <label class="check fd-check" data-for="#sRepExit"><input type="checkbox" name="ai_review" id="sAi"><span><strong>Exit Risk Report: AI review</strong><br><span class="fd-hint">For the executive committee: what matters most in an exit, the accounts to focus on and how to tackle them, in three passes. Needs a deep scan: ticking it switches Scan depth to a dependency scan. 5 to 40 minutes.</span></span></label>
+        <label class="check fd-check" data-for="#sRepMr"><input type="checkbox" name="ai_mr" id="sAiMr"><span><strong>Multi-Region Report: AI insights</strong><br><span class="fd-hint">For the CIO, risk and infrastructure leads: where a second region is worth it, what it does to the teams, the recovery gaps and the region to use. Works on any scan. About a minute.</span></span></label>
+        <label class="check fd-check" data-for="#sAssurance"><input type="checkbox" name="ai_as" id="sAiAs"><span><strong>Cloud Assurance Report: AI insights</strong><br><span class="fd-hint">For the CISO, risk and audit: the control gaps that matter, the accounts to fix first and what the regulator will ask. About a minute.</span></span></label>
+        <label class="check fd-check" data-for="#sOutage"><input type="checkbox" name="ai_or" id="sAiOr"><span><strong>Outage Risk Report: AI insights</strong><br><span class="fd-hint">For the CIO and infrastructure leads: what is most likely to fail at peak, what to start this week and what the change freeze should cover. About a minute.</span></span></label>
         <p class="fd-hint">Each starts when the scan finishes and appears in its own report; the reports are ready to read meanwhile. Each can also be run later from its report. <button type="button" class="link-btn" id="lnkAiConfig">AI configuration</button></p>
       </section>
     </div>
@@ -1079,7 +1080,7 @@
         <p id="scanError" class="error-text" role="alert"></p>
       </div>
       <button type="button" id="btnStopScan" class="btn danger" title="Stop the running scan; nothing is saved" hidden>Stop scan</button>
-      <button value="cancel" class="btn" formnovalidate title="Close this window; a running scan carries on">Close</button>
+      <button value="cancel" class="btn" id="btnScanClose" formnovalidate>Cancel</button>
       <button type="button" id="btnStartScan" class="btn primary">Start scan</button>
     </footer>
   </form>
@@ -1105,7 +1106,7 @@
     <div id="ssoPending" class="subpanel" hidden>
       <p>Approve the sign-in in the AWS tab that just opened. Check it shows this code:</p>
       <p class="code-big" id="ssoCode"></p>
-      <p class="small">Tab didn't open? <a id="ssoLink" target="_blank" rel="noopener noreferrer">Open the AWS approval page</a>.</p>
+      <p class="small">Sign-in failed, or the page closed? Press <strong>Start again</strong> for a new code. Tab didn't open? <a id="ssoLink" target="_blank" rel="noopener noreferrer">Open the AWS approval page</a>.</p>
     </div>
     <div id="ssoUse" class="subpanel" hidden>
       <p class="small muted">This only picks the credentials. The scan covers the OUs you choose next, the whole organisation by default. Sign in through the <strong>management account</strong> so the scan can see every account.</p>
