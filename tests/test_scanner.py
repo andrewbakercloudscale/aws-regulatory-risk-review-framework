@@ -310,7 +310,7 @@ def test_one_account_inventory_bug_does_not_fail_the_scan(monkeypatch, caplog):
 def test_bad_worker_setting_falls_back():
     from exitrisk.config import _workers
 
-    assert _workers("") == 8 and _workers("abc") == 8 and _workers("0") == 1 and _workers("12") == 12
+    assert _workers("") == 16 and _workers("abc") == 16 and _workers("0") == 1 and _workers("12") == 12
 
 
 def test_inventory_without_role_uses_identity_center_permission_set(monkeypatch):
