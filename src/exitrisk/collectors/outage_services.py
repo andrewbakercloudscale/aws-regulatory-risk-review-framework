@@ -33,6 +33,7 @@ from .outage import (
     Series,
     _filling,
     _search,
+    add_burstable,
 )
 
 log = get_logger("outage")
@@ -73,6 +74,8 @@ METRICS.update(
         "rds_lag": ("AWS/RDS", ("DBInstanceIdentifier",), "ReplicaLag", "Maximum", RDS),
         "cache_conn": ("AWS/ElastiCache", ("CacheClusterId", "CacheNodeId"), "CurrConnections", "Maximum", CACHE),
         "cache_hit": ("AWS/ElastiCache", ("CacheClusterId", "CacheNodeId"), "CacheHitRate", "Minimum", CACHE),
+        "cache_host_cpu": ("AWS/ElastiCache", ("CacheClusterId", "CacheNodeId"), "CPUUtilization", "Average", CACHE),
+        "cache_credits": ("AWS/ElastiCache", ("CacheClusterId", "CacheNodeId"), "CPUCreditBalance", "Minimum", CACHE),
         "search_blocked": ("AWS/ES", ("ClientId", "DomainName"), "ClusterIndexWritesBlocked", "Maximum", SEARCH),
         "search_shards": ("AWS/ES", ("ClientId", "DomainName"), "Shards.active", "Maximum", SEARCH),
         "search_nodes": ("AWS/ES", ("ClientId", "DomainName"), "Nodes", "Minimum", SEARCH),
@@ -462,6 +465,19 @@ def task_cache_review(ctx: OutageCtx, region: str) -> None:
                 load=True,
             )
         first = members[0] if members else name
+        cpus = [s for member in members for s in _per_node(m["cache_host_cpu"], member)]
+        credits = [s for member in members for s in _per_node(m["cache_credits"], member)]
+        # ElastiCache runs T-family nodes in standard mode: out of credits, a node is held to its baseline.
+        add_burstable(
+            ctx,
+            "cache_burstable",
+            name,
+            region,
+            g.get("CacheNodeType") or "",
+            cpu=max((s.high for s in cpus), default=None),
+            credits=min(credits, key=lambda s: s.low, default=None),
+            unlimited=False,
+        )
         groups = g.get("NodeGroups") or []
         stats = [
             stat(_busiest(m["cache_cpu"], first), "Engine CPU", "%", limit=100),
@@ -599,6 +615,11 @@ def task_search_review(ctx: OutageCtx, region: str) -> None:
                 ctx.add(
                     "search_shards", name, region, pct=100.0 * shards.high / limit, used=round(shards.high), limit=limit
                 )
+            busiest = _busiest(m["search_cpu"], name, -1)
+            kind = c.get("InstanceType") or ""
+            add_burstable(ctx, "search_burstable", name, region, kind, cpu=busiest.high if busiest else None)
+            if c.get("DedicatedMasterEnabled"):
+                add_burstable(ctx, "search_burstable", f"{name} masters", region, c.get("DedicatedMasterType") or "")
             ebs = d.get("EBSOptions") or {}
             facts = {
                 "Engine": d.get("EngineVersion"),

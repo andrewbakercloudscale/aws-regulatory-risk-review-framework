@@ -96,6 +96,7 @@ Resources:
                   - ec2:DescribeInstances
                   - ec2:DescribeVolumes
                   - ec2:DescribeInstanceTypes
+                  - ec2:DescribeInstanceCreditSpecifications
                   - ec2:DescribeSubnets
                   - route53:GetAccountLimit
                   - rds:DescribeDBInstances

@@ -119,6 +119,17 @@ MSK_PARTITIONS = {
     "m7g.2xlarge": 2000,
 }
 MSK_PARTITIONS_LARGE = 4000
+# Burstable (T-family) sizes: the CPU each vCPU sustains without spending credits, in percent, from
+# AWS's instance type pages. CPUUtilization is a share of all vCPUs, so it compares directly.
+_T3_BASELINE = {"nano": 5, "micro": 10, "small": 20, "medium": 20, "large": 30, "xlarge": 40, "2xlarge": 40}
+BURST_BASELINE = {
+    "t2": {"nano": 5, "micro": 10, "small": 20, "medium": 20, "large": 30, "xlarge": 22.5, "2xlarge": 16.9},
+    "t3": _T3_BASELINE,
+    "t3a": _T3_BASELINE,
+    "t4g": _T3_BASELINE,
+}
+BURST_TYPE = re.compile(r"^(?:db\.|cache\.|kafka\.)?(t2|t3a?|t4g)\.(\w+?)(?:\.search|\.elasticsearch)?$")
+CREDITS_LOW = 5  # a balance this low means the credits ran out in the window
 # Amazon Connect objects counted per instance: (a phrase in the quota's name, the call, its result key, arguments).
 CONNECT_COUNTS = (
     ("users per instance", "list_users", "UserSummaryList", {}),
@@ -215,6 +226,13 @@ METRICS = {
         "AWS/RDS",
         ("DBInstanceIdentifier",),
         "EBSByteBalance%",
+        "Minimum",
+        "Amazon Relational Database Service",
+    ),
+    "rds_credits": (
+        "AWS/RDS",
+        ("DBInstanceIdentifier",),
+        "CPUCreditBalance",
         "Minimum",
         "Amazon Relational Database Service",
     ),
@@ -768,6 +786,48 @@ def _filling(ctx: OutageCtx, rule: str, res: str, region: str, pct: float, slope
     ctx.add(rule, res, region, pct=pct, days=days, **kw)
 
 
+def burstable(kind: str) -> tuple[str, float | None] | None:
+    """(family, baseline CPU % per vCPU or None) of a T-family size; None for a fixed-performance one."""
+    hit = BURST_TYPE.match(kind or "")
+    return (hit[1], BURST_BASELINE[hit[1]].get(hit[2])) if hit else None
+
+
+def add_burstable(
+    ctx: OutageCtx,
+    rule: str,
+    res: str,
+    region: str,
+    kind: str,
+    cpu: float | None = None,
+    credits: Series | None = None,
+    unlimited: bool | None = None,
+) -> None:
+    """A burstable size, with what the report needs to judge it against the expected peak load:
+    the busiest hour's CPU, the baseline it can hold, the lowest credit balance and the credit mode."""
+    found = burstable(kind)
+    if not found:
+        return
+    extra = {"type": kind, "baseline": found[1], "unlimited": unlimited}
+    if cpu is not None:
+        extra["cpu"] = round(min(cpu, 100.0), 1)
+    if credits and credits.n:
+        extra["credits"] = round(credits.low, 1)
+    ctx.add(rule, res, region, **extra)
+
+
+def _credit_modes(ec2, ids: list[str]) -> dict[str, bool]:
+    """{instance: True when unlimited} for T-family instances; empty when the read is refused."""
+    modes = {}
+    try:
+        for at in range(0, len(ids), 1000):
+            got = ec2.describe_instance_credit_specifications(InstanceIds=ids[at : at + 1000])
+            for c in got.get("InstanceCreditSpecifications") or []:
+                modes[c["InstanceId"]] = c.get("CpuCredits") == "unlimited"
+    except ClientError as exc:
+        log.info("credit specifications not read: %s", _code(exc))
+    return modes
+
+
 def task_ec2(ctx: OutageCtx, region: str) -> None:
     ec2 = ctx.client("ec2", region)
     instances = {}
@@ -787,8 +847,10 @@ def task_ec2(ctx: OutageCtx, region: str) -> None:
     for iid, s in m["ec2_cpu"].items():
         if iid in instances and not instances[iid]["scaled"] and s.n:
             ctx.add("ec2_cpu", label(iid), region, pct=min(s.high, 100.0), load=True, note=instances[iid]["type"])
+    out_of_credits = set()
     for iid, s in m["ec2_credits"].items():
-        if iid in instances and s.n and s.low < 5:
+        if iid in instances and s.n and s.low < CREDITS_LOW:
+            out_of_credits.add(iid)
             ctx.add(
                 "ec2_credits",
                 label(iid),
@@ -797,6 +859,20 @@ def task_ec2(ctx: OutageCtx, region: str) -> None:
                 unit="credits at the lowest",
                 note=instances[iid]["type"],
             )
+    bursting = [iid for iid, i in instances.items() if burstable(i["type"]) and iid not in out_of_credits]
+    modes = _credit_modes(ec2, bursting) if bursting else {}
+    for iid in bursting:
+        cpu = m["ec2_cpu"].get(iid)
+        add_burstable(
+            ctx,
+            "ec2_burstable",
+            label(iid),
+            region,
+            instances[iid]["type"],
+            cpu=cpu.high if cpu and cpu.n else None,
+            credits=m["ec2_credits"].get(iid),
+            unlimited=modes.get(iid),
+        )
     for key, unit in (("ebs_iops", "IOPS"), ("ebs_tput", "throughput")):
         for vol, s in m[key].items():
             if s.n and s.high > 0:
@@ -866,6 +942,17 @@ def task_rds(ctx: OutageCtx, region: str) -> None:
             s = m["rds_cpu"].get(name)
             if s and s.n:
                 ctx.add("rds_cpu", name, region, pct=min(s.high, 100.0), load=True, note=f"{cls}, {engine}")
+            # RDS runs T3 and T4g classes in unlimited mode, T2 in standard: it cannot be changed.
+            add_burstable(
+                ctx,
+                "rds_burstable",
+                name,
+                region,
+                cls,
+                cpu=s.high if s and s.n else None,
+                credits=m["rds_credits"].get(name),
+                unlimited=not cls.startswith("db.t2."),
+            )
         for key, what in (("rds_burst", "gp2 burst"), ("rds_ebsio", "EBS IO"), ("rds_ebsbyte", "EBS byte")):
             s = m[key].get(name)
             if s and s.n:
@@ -1174,6 +1261,7 @@ def task_msk(ctx: OutageCtx, region: str) -> None:
             ctx.add(
                 "msk_cpu", name, region, pct=min(cpu, 100.0), load=True, note=f"{size}; AWS advises staying under 60%"
             )
+        add_burstable(ctx, "msk_burstable", name, region, size, cpu=cpu or None)
         guide = MSK_PARTITIONS.get(size, MSK_PARTITIONS_LARGE if re.search(r"\d+xlarge", size) else None)
         parts = max((s.high for res, s in m["msk_parts"].items() if res.split("|")[0] == name and s.n), default=None)
         if guide and parts is not None:

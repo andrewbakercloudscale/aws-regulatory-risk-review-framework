@@ -98,6 +98,12 @@ ANSWERS = {
         },
     },
     "ec2": {
+        "describe_instances": {
+            "Reservations": [{"Instances": [{"InstanceId": "res1", "InstanceType": "t3.medium", "Tags": []}]}]
+        },
+        "describe_instance_credit_specifications": {
+            "InstanceCreditSpecifications": [{"InstanceId": "res1", "CpuCredits": "standard"}]
+        },
         "describe_instance_types": {
             "InstanceTypes": [{"InstanceType": "r6g.large", "MemoryInfo": {"SizeInMiB": 16384}}]
         },
@@ -149,6 +155,7 @@ ANSWERS = {
                 },
                 {
                     "ReplicationGroupId": "two",
+                    "CacheNodeType": "cache.t4g.small",
                     "AutomaticFailover": "enabled",
                     "MultiAZ": "disabled",
                     "MemberClusters": [],
@@ -190,7 +197,7 @@ ANSWERS = {
                     "ARN": "arn:d",
                     "EngineVersion": "OpenSearch_2.11",
                     "ClusterConfig": {
-                        "InstanceType": "r6g.large.search",
+                        "InstanceType": "t3.medium.search",
                         "InstanceCount": 3,
                         "ZoneAwarenessEnabled": False,
                         "DedicatedMasterEnabled": False,
@@ -484,7 +491,7 @@ def test_the_rules_for_what_the_answers_hold_fire(read):
         "msk_unclean_leader", "msk_low_replication", "rds_connections", "rds_maintenance", "aurora_no_reader",
         "cache_no_failover", "cache_no_multi_az", "lambda_timeout", "search_no_zone", "search_no_master", "sqs_no_dlq",
         "mq_single", "lb_one_az", "nat_one_az", "vpn_tunnel_down", "redshift_single_node", "fsx_single_az",
-        "cf_no_failover", "no_alarm",
+        "cf_no_failover", "no_alarm", "ec2_burstable", "cache_burstable", "search_burstable",
     }  # fmt: skip
     assert want <= rules, want - rules
     assert rules <= {r["id"] for r in catalog()["rules"]}

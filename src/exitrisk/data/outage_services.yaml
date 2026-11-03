@@ -13,7 +13,7 @@
 #   not_seen  what a review from these calls cannot see. Shown in the review, never as a pass
 #   checks    the scan's checks for it: one unread in an account marks the service not read there
 #   options   a design that removes a class of outage. Nothing here is a price or a recommendation
-version: "2026.11.1"
+version: "2026.11.2"
 always_not_seen:
   - Infrastructure as code. Live settings are not compared with Terraform or CloudFormation, so drift is not shown.
   - The prices of other designs.
@@ -31,7 +31,7 @@ services:
     level: deep
     billed: ["Amazon Managed Streaming for Apache Kafka"]
     quota: [kafka]
-    rules: [msk_disk, msk_no_autoscale, msk_cpu, msk_partitions, msk_imbalance, msk_unclean_leader, msk_low_replication, msk_under_replicated, msk_offline]
+    rules: [msk_disk, msk_no_autoscale, msk_burstable, msk_cpu, msk_partitions, msk_imbalance, msk_unclean_leader, msk_low_replication, msk_under_replicated, msk_offline]
     reads: [Broker type count and zones, Kafka version, Storage and its autoscaling, Monitoring level and client authentication, "Cluster defaults for replication, in-sync replicas, unclean leader election and retention", "Disk, CPU, partitions and traffic: peak, average and trend", Date partitions reach AWS's guidance, Alarm on broker disk]
     not_seen: ["Topics, retention per topic, empty topics and consumer groups: these need Kafka admin access, which the scan does not have", "Topic overrides of the cluster defaults", "Bytes in and out where the monitoring level does not publish them"]
     options:
@@ -46,8 +46,8 @@ services:
     level: deep
     billed: ["Amazon Relational Database Service", "Amazon RDS Optimize CPU License Included Third Party Fees", "Amazon DocumentDB (with MongoDB compatibility)", "Amazon Neptune"]
     quota: [rds]
-    rules: [rds_cpu, aurora_acu, rds_storage, rds_burst, rds_replica_mismatch, rds_single_az, rds_connections, rds_memory, rds_replica_lag, rds_maintenance, aurora_no_reader]
-    reads: [Engine version and class, Multi-AZ and readers, Storage and its ceiling, "Connections against max_connections from the parameter group", "CPU, memory, free storage and replica lag: peak and average", Maintenance AWS will apply by the peak, Alarm on free storage]
+    rules: [rds_cpu, aurora_acu, rds_burstable, rds_storage, rds_burst, rds_replica_mismatch, rds_single_az, rds_connections, rds_memory, rds_replica_lag, rds_maintenance, aurora_no_reader]
+    reads: [Engine version and class, "Burstable classes: busiest hour against baseline and credit balance", Multi-AZ and readers, Storage and its ceiling, "Connections against max_connections from the parameter group", "CPU, memory, free storage and replica lag: peak and average", Maintenance AWS will apply by the peak, Alarm on free storage]
     not_seen: ["Slow queries and locks", "A max_connections formula using log(): shown as not compared", "Connection pool settings in applications"]
     options:
       - {name: RDS Proxy, removes: "Connection exhaustion from many short-lived clients", note: "Adds a hop and needs testing."}
@@ -71,8 +71,8 @@ services:
     level: deep
     billed: ["Amazon ElastiCache"]
     quota: [elasticache]
-    rules: [cache_cpu, cache_memory, cache_evictions, cache_connections, cache_no_failover, cache_no_multi_az]
-    reads: [Node type shards and replicas, Failover and Multi-AZ, "Engine CPU, memory, connections and hit rate: peak and average", Evictions, Alarm on memory]
+    rules: [cache_cpu, cache_memory, cache_burstable, cache_evictions, cache_connections, cache_no_failover, cache_no_multi_az]
+    reads: [Node type shards and replicas, "Burstable nodes: busiest hour against baseline and credit balance", Failover and Multi-AZ, "Engine CPU, memory, connections and hit rate: peak and average", Evictions, Alarm on memory]
     not_seen: ["Key sizes and hot keys", "Memcached connection settings", "Serverless caches"]
     options:
       - {name: ElastiCache Serverless, removes: "Sizing nodes for the peak", note: "Check its own limits and price."}
@@ -106,8 +106,8 @@ services:
     level: deep
     billed: ["Amazon OpenSearch Service"]
     quota: [es]
-    rules: [search_cpu, search_jvm, search_red, search_storage, search_no_zone, search_no_master, search_write_blocked, search_rejected, search_shards]
-    reads: [Engine and node sizes, Zones and dedicated masters, "CPU, JVM pressure, storage and shards", "Red status, blocked and rejected writes", Alarm on free storage]
+    rules: [search_cpu, search_jvm, search_burstable, search_red, search_storage, search_no_zone, search_no_master, search_write_blocked, search_rejected, search_shards]
+    reads: [Engine and node sizes, "Burstable data and master nodes", Zones and dedicated masters, "CPU, JVM pressure, storage and shards", "Red status, blocked and rejected writes", Alarm on free storage]
     not_seen: ["Index and shard layout", "Query and indexing latency", "OpenSearch Serverless"]
     docs:
       - {label: OpenSearch best practices, url: "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/bp.html"}
@@ -150,9 +150,9 @@ services:
     level: deep
     billed: ["Amazon Elastic Compute Cloud - Compute", "EC2 - Other"]
     quota: [ec2, ebs, autoscaling]
-    rules: [ec2_cpu, ec2_credits, asg_near_max, asg_fixed, asg_one_az, ebs_instance_mismatch, ebs_burst, ebs_exceeded, disk_full]
-    reads: ["CPU of instances outside an Auto Scaling group", "Burstable credits", Auto Scaling groups against their maximum and zones, "Volumes against what the instance can deliver", gp2 burst and provisioned IOPS, Disk use where the CloudWatch agent is installed]
-    not_seen: ["Memory, unless the CloudWatch agent reports it", "Capacity for the instance type in the zone at the moment it is needed", "What runs on each instance"]
+    rules: [ec2_cpu, ec2_credits, ec2_burstable, asg_near_max, asg_fixed, asg_one_az, ebs_instance_mismatch, ebs_burst, ebs_exceeded, disk_full]
+    reads: ["CPU of instances outside an Auto Scaling group", "Burstable sizes: busiest hour against baseline, credit balance and credit mode", Auto Scaling groups against their maximum and zones, "Volumes against what the instance can deliver", gp2 burst and provisioned IOPS, Disk use where the CloudWatch agent is installed]
+    not_seen: ["Memory, unless the CloudWatch agent reports it", "Network and EBS burst balances of non-T sizes: AWS publishes no network credit metric", "Capacity for the instance type in the zone at the moment it is needed", "What runs on each instance"]
   - id: ecs
     label: Amazon ECS and Fargate
     checks: [fixed]

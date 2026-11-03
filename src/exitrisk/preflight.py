@@ -216,6 +216,7 @@ OUTAGE_PROBES = [
     ("connect:ListInstances", "connect", "list_instances", {"MaxResults": 1}),
     ("eks:ListNodegroups", "eks", "list_nodegroups", {"clusterName": _NO_SUCH}),
     ("ec2:DescribeInstanceTypes", "ec2", "describe_instance_types", {"MaxResults": 5}),
+    ("ec2:DescribeInstanceCreditSpecifications", "ec2", "describe_instance_credit_specifications", {"MaxResults": 5}),
     ("ec2:DescribeSubnets", "ec2", "describe_subnets", {"MaxResults": 5}),
     ("route53:GetAccountLimit", "route53", "get_account_limit", {"Type": "MAX_HOSTED_ZONES_BY_OWNER"}),
     ("rds:DescribeAccountAttributes", "rds", "describe_account_attributes", {}),

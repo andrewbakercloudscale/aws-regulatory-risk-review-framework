@@ -194,6 +194,17 @@ def _review_rows(rng: random.Random, name: str, region: str, prod: bool) -> tupl
         )
         if prod:
             rows.append({"rule": "lb_one_az", "res": lb, "region": region, "note": "one subnet"})
+            rows.append(
+                {
+                    "rule": "ec2_burstable",
+                    "res": f"{name}-worker",
+                    "region": region,
+                    "type": "t3.large",
+                    "baseline": 30,
+                    "cpu": 24.0,
+                    "unlimited": False,
+                }
+            )
     if rng.random() < 0.25:
         rows.append(
             {"rule": "rds_maintenance", "res": res, "region": region, "ends": "2026-11-29", "note": "system-update"}

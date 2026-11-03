@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **Outage Risk Report: burstable sizes.** Every T-family EC2 instance (including Auto Scaling and EKS
+  nodes), RDS class, ElastiCache node, OpenSearch data or master node and MSK broker in production is
+  listed with its busiest hour against the CPU baseline it can hold, its lowest credit balance and its
+  credit mode. Judged against the expected peak load: high when the peak would spend the credits and
+  hold it to its baseline, medium when unlimited mode would bill instead, low when it stays under.
+  Needs `ec2:DescribeInstanceCreditSpecifications` in the member role (without it the mode shows as
+  not known).
+
 ## [0.21.0] - 2026-11-03
 
 ### Added

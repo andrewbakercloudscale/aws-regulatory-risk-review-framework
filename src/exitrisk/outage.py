@@ -109,6 +109,30 @@ def judge_capacity(row: dict, a: OutageAnswers, days_to_peak: int) -> tuple[str 
     return None, round(peak, 1), ""
 
 
+def judge_burstable(row: dict, a: OutageAnswers) -> tuple[str, str]:
+    """(severity, why) of a burstable size, against the expected peak load: high when the peak would
+    spend its credits and hold it to its baseline, medium when it bills for the surplus instead or
+    nothing says how busy it is, low when it stays under its baseline even at the peak."""
+    kind, base, cpu, unlimited = row.get("type", ""), row.get("baseline"), row.get("cpu"), row.get("unlimited")
+    mode = {True: "unlimited credits", False: "standard credits"}.get(unlimited, "credit mode not known")
+    credits = row.get("credits")
+    floor = f" {base:g}%" if base else " its baseline"
+    if credits is not None and credits < 5 and unlimited is not True:
+        return "high", f"{kind}, {mode}: CPU credits fell to {credits:g}; at zero it is held to{floor} CPU"
+    if cpu is None or not base:
+        return "medium", f"{kind}, {mode}: no CPU figure to compare with its baseline"
+    peak = cpu * a.peak_multiplier
+    said = f"{kind}, {mode}: busiest hour {cpu:g}% CPU, {peak:.0f}% at {a.peak_multiplier:g}x load, baseline{floor}"
+    if peak <= base:
+        return "low", f"{said}; under it, but network and EBS bandwidth still burst"
+    if unlimited:
+        return "medium", f"{said}; above it, it keeps running and bills the surplus credits"
+    return "high", f"{said}; above it the credits drain, then it is held to the baseline"
+
+
+BURSTABLE_RULES = {"ec2_burstable", "rds_burstable", "cache_burstable", "search_burstable", "msk_burstable"}
+
+
 def _judge(row: dict, rule: dict, a: OutageAnswers, peak: date, days_to_peak: int, production: bool) -> dict | None:
     """The finding this row makes, or None."""
     if rule.get("prod_only") and not production:
@@ -120,7 +144,9 @@ def _judge(row: dict, rule: dict, a: OutageAnswers, peak: date, days_to_peak: in
             return None
     else:
         sev, why = rule["severity"], row.get("note", "")
-        if rule["id"] == "rds_maintenance":
+        if rule["id"] in BURSTABLE_RULES:
+            sev, why = judge_burstable(row, a)
+        elif rule["id"] == "rds_maintenance":
             ends = date.fromisoformat(row["ends"])
             if ends > peak + timedelta(days=7):
                 return None

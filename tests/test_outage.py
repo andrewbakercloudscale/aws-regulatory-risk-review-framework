@@ -17,6 +17,7 @@ from exitrisk.outage import (
     build_outage,
     catalog,
     findings_csv,
+    judge_burstable,
     judge_capacity,
     workload_rows,
 )
@@ -312,6 +313,56 @@ def test_outside_production_a_finding_is_one_level_lower():
     assert build_outage(scan)["findings"][0]["severity"] == "high"
     prod = build_outage(scan, a=OutageAnswers(production_patterns="dev"))
     assert prod["findings"][0]["severity"] == "critical"
+
+
+@pytest.mark.parametrize(
+    "kind, want",
+    [
+        ("t3.medium", ("t3", 20)),
+        ("db.t4g.large", ("t4g", 30)),
+        ("cache.t3.micro", ("t3", 10)),
+        ("t3.small.search", ("t3", 20)),
+        ("kafka.t3.small", ("t3", 20)),
+        ("t2.2xlarge", ("t2", 16.9)),
+        ("m5.large", None),
+        ("db.r6g.large", None),
+        ("", None),
+    ],
+)
+def test_burstable_sizes_and_their_baselines(kind, want):
+    assert collector.burstable(kind) == want
+
+
+@pytest.mark.parametrize(
+    "row, want",
+    [
+        ({"cpu": 15, "baseline": 20, "unlimited": False}, "high"),  # 30% at 2x load, over 20%
+        ({"cpu": 15, "baseline": 20, "unlimited": True}, "medium"),  # bills instead of slowing
+        ({"cpu": 5, "baseline": 20, "unlimited": False}, "low"),  # 10% at peak, under its baseline
+        ({"baseline": 20, "unlimited": None}, "medium"),  # nothing says how busy
+        ({"cpu": 5, "baseline": 20, "credits": 1.0, "unlimited": False}, "high"),  # already ran out
+        ({"cpu": 5, "baseline": 20, "credits": 1.0, "unlimited": True}, "low"),  # unlimited: zero is normal
+    ],
+)
+def test_a_burstable_size_is_judged_against_its_baseline_at_peak_load(row, want):
+    sev, why = judge_burstable({"type": "t3.medium", **row}, OutageAnswers(peak_multiplier=2.0))
+    assert sev == want and why.startswith("t3.medium")
+
+
+def test_burstable_findings_are_production_only_and_name_the_service():
+    rows = [
+        {"rule": "ec2_burstable", "res": "web", "region": "eu-west-1", "type": "t3.large", "baseline": 30, "cpu": 40,
+         "unlimited": False},
+        {"rule": "rds_burstable", "res": "db", "region": "eu-west-1", "type": "db.t3.medium", "baseline": 20,
+         "unlimited": True},
+    ]  # fmt: skip
+    for name, want in (("prod", 2), ("dev", 0)):
+        scan = {"accounts": [{"id": "1", "name": name, "ou_path": "Root"}], "params": {"outage": True}}
+        scan["outage"] = {"accounts": {"1": {"rows": rows, "clusters": [], "checks": {}, "regions": ["eu-west-1"]}}}
+        found = build_outage(scan)["findings"]
+        assert len(found) == want
+        if want:
+            assert {f["rule"]: f["severity"] for f in found} == {"ec2_burstable": "high", "rds_burstable": "medium"}
 
 
 def test_a_filter_narrows_the_accounts(scan, report):
