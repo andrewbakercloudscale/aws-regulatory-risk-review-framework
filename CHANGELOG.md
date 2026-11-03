@@ -14,6 +14,16 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   hold it to its baseline, medium when unlimited mode would bill instead, low when it stays under.
   Needs `ec2:DescribeInstanceCreditSpecifications` in the member role (without it the mode shows as
   not known).
+- **Outage Risk Report: network.** Each VPN tunnel against its 1.25 or 5 Gbps limit; Transit Gateway
+  attachment bandwidth; Route 53 Resolver endpoints against about 10,000 queries a second per address,
+  and endpoints in one zone; Direct Connect with no second location, connections that went down, and
+  virtual interfaces or BGP sessions down; PrivateLink endpoints in one zone or dropping packets; target
+  groups that lost every healthy target or run only one; and, where the CloudWatch agent publishes its
+  ethtool counters, instances that passed their bandwidth, packets-a-second, connection tracking or
+  DNS (1024 packets a second) allowance. Route 53 is now part reviewed. Needs
+  `ec2:DescribeVpcEndpoints`, `directconnect:DescribeVirtualInterfaces`,
+  `route53resolver:ListResolverEndpoints` and `route53resolver:ListResolverEndpointIpAddresses`: redeploy
+  the member role.
 
 ## [0.21.0] - 2026-11-03
 

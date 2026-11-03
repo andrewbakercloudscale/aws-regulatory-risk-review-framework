@@ -13,7 +13,7 @@
 #   not_seen  what a review from these calls cannot see. Shown in the review, never as a pass
 #   checks    the scan's checks for it: one unread in an account marks the service not read there
 #   options   a design that removes a class of outage. Nothing here is a price or a recommendation
-version: "2026.11.2"
+version: "2026.11.3"
 always_not_seen:
   - Infrastructure as code. Live settings are not compared with Terraform or CloudFormation, so drift is not shown.
   - The prices of other designs.
@@ -150,9 +150,9 @@ services:
     level: deep
     billed: ["Amazon Elastic Compute Cloud - Compute", "EC2 - Other"]
     quota: [ec2, ebs, autoscaling]
-    rules: [ec2_cpu, ec2_credits, ec2_burstable, asg_near_max, asg_fixed, asg_one_az, ebs_instance_mismatch, ebs_burst, ebs_exceeded, disk_full]
+    rules: [ec2_cpu, ec2_credits, ec2_burstable, ec2_net_allowance, ec2_dns_allowance, asg_near_max, asg_fixed, asg_one_az, ebs_instance_mismatch, ebs_burst, ebs_exceeded, disk_full]
     reads: ["CPU of instances outside an Auto Scaling group", "Burstable sizes: busiest hour against baseline, credit balance and credit mode", Auto Scaling groups against their maximum and zones, "Volumes against what the instance can deliver", gp2 burst and provisioned IOPS, Disk use where the CloudWatch agent is installed]
-    not_seen: ["Memory, unless the CloudWatch agent reports it", "Network and EBS burst balances of non-T sizes: AWS publishes no network credit metric", "Capacity for the instance type in the zone at the moment it is needed", "What runs on each instance"]
+    not_seen: ["Memory, unless the CloudWatch agent reports it", "Network allowances (bandwidth, packets a second, connection tracking, DNS) where the CloudWatch agent does not publish its ethtool counters", "Capacity for the instance type in the zone at the moment it is needed", "What runs on each instance"]
   - id: ecs
     label: Amazon ECS and Fargate
     checks: [fixed]
@@ -197,41 +197,41 @@ services:
     level: partial
     billed: ["Amazon Elastic Load Balancing"]
     quota: [elasticloadbalancing]
-    rules: [lb_rejected, nlb_port_errors, lb_5xx, lb_one_az]
-    reads: [Zones, Requests, Rejected connections and port errors, Errors from the load balancer itself]
-    not_seen: ["Target health over time", "How quickly it scales for a sudden surge: ask AWS about pre-warming", "Classic Load Balancers"]
+    rules: [lb_rejected, nlb_port_errors, lb_5xx, lb_one_az, lb_no_healthy, lb_single_target]
+    reads: [Zones, Requests, Rejected connections and port errors, Errors from the load balancer itself, Healthy targets per target group]
+    not_seen: ["How quickly it scales for a sudden surge: ask AWS about pre-warming", "Classic Load Balancers"]
   - id: vpc
     label: VPC and NAT
     checks: [vpc, network]
     level: partial
     billed: ["Amazon Virtual Private Cloud"]
     quota: [vpc]
-    rules: [subnet_ips, nat_port_errors, nat_drops, nat_one_az]
-    reads: [Free addresses per subnet, "NAT port errors, dropped packets and connections", NAT gateways per zone]
-    not_seen: ["DNS and connection-tracking limits per instance", "Security group and route quotas with no usage metric"]
+    rules: [subnet_ips, nat_port_errors, nat_drops, nat_one_az, vpce_one_az, vpce_drops]
+    reads: [Free addresses per subnet, "NAT port errors, dropped packets and connections", NAT gateways per zone, "Interface endpoints: zones and dropped packets"]
+    not_seen: ["Security group and route quotas with no usage metric", "Gateway endpoints: S3 or DynamoDB traffic going through NAT instead"]
   - id: transit_gateway
     label: Transit Gateway
     checks: [vpc]
     level: partial
     billed: []
-    rules: [tgw_drops]
-    reads: [Packets dropped for a blackhole or no route]
-    not_seen: ["Bandwidth per attachment"]
+    rules: [tgw_drops, tgw_bandwidth]
+    reads: [Packets dropped for a blackhole or no route, Bandwidth per attachment in the busiest hour]
+    not_seen: ["Packets a second per attachment", "Bursts inside the hour"]
   - id: vpn
     label: Site-to-Site VPN
     checks: [vpc]
     level: partial
     billed: []
-    rules: [vpn_tunnel_down]
-    reads: [Tunnel state when read, Routing type]
-    not_seen: ["Tunnel bandwidth"]
+    rules: [vpn_tunnel_down, vpn_bandwidth]
+    reads: [Tunnel state when read, Routing type, Each tunnel's bandwidth against its limit]
+    not_seen: ["Bursts inside the hour", "Whether the other end can take the load"]
   - id: directconnect
     label: AWS Direct Connect
     checks: [network]
     level: partial
     billed: ["AWS Direct Connect"]
-    rules: [dx_bandwidth]
-    reads: [Bandwidth used against each connection's speed]
+    rules: [dx_bandwidth, dx_no_redundancy, dx_down, dx_vif_down]
+    reads: [Bandwidth used against each connection's speed, Connections per location, Connection state over the window, Virtual interfaces and BGP sessions]
     not_seen: ["Whether a second connection can carry the first's traffic", "Connections owned by another account"]
   - id: cloudfront
     label: Amazon CloudFront
@@ -323,11 +323,13 @@ services:
     not_seen: ["Certificates outside ACM, such as on instances or pods"]
   - id: route53
     label: Amazon Route 53
-    level: generic
+    checks: [resolver]
+    level: partial
     billed: ["Amazon Route 53"]
-    quota: [route53]
-    reads: [Hosted zones against the limit, Quotas that publish usage]
-    not_seen: ["Health checks and failover records", "Resolver endpoint limits"]
+    quota: [route53, route53resolver]
+    rules: [resolver_load, resolver_one_az]
+    reads: [Hosted zones against the limit, Quotas that publish usage, "Resolver endpoints: queries a second against their addresses, and zones"]
+    not_seen: ["Health checks and failover records", "Resolver query logs and forwarding rules"]
   - {id: kms, label: AWS KMS, level: generic, billed: ["AWS Key Management Service"], quota: [kms], reads: [Request rate quotas that publish usage], not_seen: ["Which callers drive the rate"]}
   - {id: secrets, label: AWS Secrets Manager, level: generic, billed: ["AWS Secrets Manager"], quota: [secretsmanager], reads: [Quotas that publish usage], not_seen: ["Callers with no caching"]}
   - {id: ecr, label: Amazon ECR, level: generic, billed: ["Amazon EC2 Container Registry (ECR)"], quota: [ecr], reads: [Quotas that publish usage], not_seen: ["Pull rate during a scale-out"]}

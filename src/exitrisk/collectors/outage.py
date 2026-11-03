@@ -70,6 +70,7 @@ QUOTA_SERVICES = {
     "kms": None,
     "cloudformation": None,
     "route53": None,
+    "route53resolver": "Amazon Route 53",
     "logs": None,
     "rds": "Amazon Relational Database Service",
     "dynamodb": "Amazon DynamoDB",
@@ -130,6 +131,21 @@ BURST_BASELINE = {
 }
 BURST_TYPE = re.compile(r"^(?:db\.|cache\.|kafka\.)?(t2|t3a?|t4g)\.(\w+?)(?:\.search|\.elasticsearch)?$")
 CREDITS_LOW = 5  # a balance this low means the credits ran out in the window
+# ENA driver counters of packets queued or dropped for passing an instance allowance. They only rise
+# (until a reboot), so a rise from the window's lowest value to its latest means the allowance was passed.
+ETHTOOL = {
+    "net_bw_in": "ethtool_bw_in_allowance_exceeded",
+    "net_bw_out": "ethtool_bw_out_allowance_exceeded",
+    "net_pps": "ethtool_pps_allowance_exceeded",
+    "net_conntrack": "ethtool_conntrack_allowance_exceeded",
+    "net_linklocal": "ethtool_linklocal_allowance_exceeded",
+}
+ETHTOOL_WHAT = {
+    "net_bw_in": "inbound bandwidth",
+    "net_bw_out": "outbound bandwidth",
+    "net_pps": "packets a second",
+    "net_conntrack": "connection tracking",
+}
 # Amazon Connect objects counted per instance: (a phrase in the quota's name, the call, its result key, arguments).
 CONNECT_COUNTS = (
     ("users per instance", "list_users", "UserSummaryList", {}),
@@ -443,8 +459,20 @@ def _read_metrics(ctx: OutageCtx, region: str) -> dict[str, dict[str, Series]]:
                 "ReturnData": True,
             }
         )
+        # The ENA allowance counters, where the CloudWatch agent publishes them (ethtool plugin).
+        for key, metric in ETHTOOL.items():
+            qid = f"q{key}"
+            ids[qid] = key
+            queries.append(
+                {
+                    "Id": qid,
+                    "Expression": f"SEARCH('Namespace=\"CWAgent\" MetricName=\"{metric}\"', 'Maximum', {PERIOD})",
+                    "Label": f"{qid}~${{PROP('Dim.InstanceId')}}|${{PROP('Dim.interface')}}",
+                    "ReturnData": True,
+                }
+            )
     # Every metric has an entry, read or not: a task shared by two services may have only one billed.
-    out: dict[str, dict[str, Series]] = {key: {} for key in (*METRICS, *ids.values())}
+    out: dict[str, dict[str, Series]] = {key: {} for key in (*METRICS, *ETHTOOL, *ids.values())}
     cw = ctx.client("cloudwatch", region)
     end = ctx.now
     start = end - timedelta(days=LOOKBACK_DAYS)
@@ -828,6 +856,38 @@ def _credit_modes(ec2, ids: list[str]) -> dict[str, bool]:
     return modes
 
 
+def _net_allowances(ctx: OutageCtx, m: dict, instances: dict, label, region: str) -> None:
+    """Instances whose network interfaces passed an allowance in the window, by the agent's counters."""
+    passed: dict[str, dict[str, float]] = {}
+    for key in ETHTOOL:
+        for res, s in m.get(key, {}).items():
+            iid = res.split("|")[0]
+            if iid in instances and s.n >= 2 and s.last > s.low:  # rose since its lowest: a reboot resets it
+                got = passed.setdefault(iid, {})
+                got[key] = got.get(key, 0.0) + s.last - s.low
+    for iid, got in passed.items():
+        kind = instances[iid]["type"]
+        if "net_linklocal" in got:
+            ctx.add(
+                "ec2_dns_allowance",
+                label(iid),
+                region,
+                used=round(got["net_linklocal"]),
+                unit="packets over the 1024 a second to DNS, metadata and time",
+                note=kind,
+            )
+        over = {k: v for k, v in got.items() if k in ETHTOOL_WHAT}
+        if over:
+            ctx.add(
+                "ec2_net_allowance",
+                label(iid),
+                region,
+                used=round(sum(over.values())),
+                unit="packets queued or dropped",
+                note=f"{kind}: " + ", ".join(ETHTOOL_WHAT[k] for k in over),
+            )
+
+
 def task_ec2(ctx: OutageCtx, region: str) -> None:
     ec2 = ctx.client("ec2", region)
     instances = {}
@@ -859,6 +919,7 @@ def task_ec2(ctx: OutageCtx, region: str) -> None:
                 unit="credits at the lowest",
                 note=instances[iid]["type"],
             )
+    _net_allowances(ctx, m, instances, label, region)
     bursting = [iid for iid, i in instances.items() if burstable(i["type"]) and iid not in out_of_credits]
     modes = _credit_modes(ec2, bursting) if bursting else {}
     for iid in bursting:
@@ -1309,8 +1370,34 @@ _BANDWIDTH = re.compile(r"([\d.]+)\s*(M|G)bps", re.I)
 
 
 def task_dx(ctx: OutageCtx, region: str) -> None:
-    conns = ctx.client("directconnect", region).describe_connections().get("connections") or []
+    dx = ctx.client("directconnect", region)
+    conns = dx.describe_connections().get("connections") or []
     m = ctx.metrics(region)
+    live = [c for c in conns if c.get("connectionState") == "available"]
+    for c in live:
+        state = m["dx_state"].get(c["connectionId"])
+        if state and state.n and state.low < 1:
+            ctx.add("dx_down", c.get("connectionName") or c["connectionId"], region, note=c.get("location", ""))
+    places = {c.get("location") for c in live}
+    if len(live) == 1 or (live and len(places) == 1):
+        ctx.add(
+            "dx_no_redundancy",
+            f"Direct Connect in {region}",
+            region,
+            note=f"{len(live)} connection(s), all at {next(iter(places))}",
+        )
+    for v in dx.describe_virtual_interfaces().get("virtualInterfaces") or []:
+        if v.get("virtualInterfaceState") in ("deleting", "deleted", "rejected", "confirming", "pending", "verifying"):
+            continue
+        down = [p for p in v.get("bgpPeers") or [] if p.get("bgpStatus") == "down"]
+        if v.get("virtualInterfaceState") == "down" or down:
+            ctx.add(
+                "dx_vif_down",
+                v.get("virtualInterfaceName") or v.get("virtualInterfaceId", ""),
+                region,
+                note=f"{v.get('virtualInterfaceType', '')} interface {v.get('virtualInterfaceState')}, "
+                f"{len(down)} of {len(v.get('bgpPeers') or [])} BGP sessions down",
+            )
     for c in conns:
         got = _BANDWIDTH.match(c.get("bandwidth") or "")
         if not got or c.get("connectionState") != "available":

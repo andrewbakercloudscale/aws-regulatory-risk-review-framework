@@ -97,6 +97,10 @@ Resources:
                   - ec2:DescribeVolumes
                   - ec2:DescribeInstanceTypes
                   - ec2:DescribeInstanceCreditSpecifications
+                  - ec2:DescribeVpcEndpoints
+                  - directconnect:DescribeVirtualInterfaces
+                  - route53resolver:ListResolverEndpoints
+                  - route53resolver:ListResolverEndpointIpAddresses
                   - ec2:DescribeSubnets
                   - route53:GetAccountLimit
                   - rds:DescribeDBInstances

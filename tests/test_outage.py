@@ -250,6 +250,44 @@ def test_msk_disk_filling_imbalance_and_no_autoscaling_are_found():
     assert "msk_imbalance" in rules and "msk_no_autoscale" in rules
 
 
+def _series(*values):
+    s, now = collector.Series(), datetime(2026, 10, 1, tzinfo=timezone.utc)
+    for i, v in enumerate(values):
+        s.add(now + timedelta(hours=i), v)
+    return s
+
+
+def test_target_groups_that_lost_every_target_or_run_one_are_found():
+    from exitrisk.collectors import outage_services as svc
+
+    ctx = _ctx({})
+    lb = "app/shop/abc"
+    ctx._metrics["eu-west-1"] = {k: {} for k in collector.METRICS} | {
+        "alb_healthy": {f"targetgroup/web/1|{lb}": _series(0, 3), f"targetgroup/api/2|{lb}": _series(1, 1),
+                        f"targetgroup/idle/3|{lb}": _series(0, 0), "targetgroup/x/4|app/other/z": _series(0, 2)},
+        "alb_healthy_max": {f"targetgroup/web/1|{lb}": _series(3, 3), f"targetgroup/api/2|{lb}": _series(1, 1),
+                            f"targetgroup/idle/3|{lb}": _series(0, 0), "targetgroup/x/4|app/other/z": _series(2, 2)},
+    }  # fmt: skip
+    ctx.session = _Session({"elbv2": _Paged(describe_load_balancers={"LoadBalancers": [{
+        "LoadBalancerName": "shop", "Type": "application", "LoadBalancerArn": f"arn:aws:x:1:loadbalancer/{lb}",
+        "AvailabilityZones": [{"ZoneName": "a"}, {"ZoneName": "b"}]}]})})  # fmt: skip
+    svc.task_lb_review(ctx, "eu-west-1")
+    got = {(r["rule"], r["res"]) for r in ctx.rows}
+    assert got == {("lb_no_healthy", "shop: web"), ("lb_single_target", "shop: api")}
+
+
+def test_each_vpn_tunnel_is_judged_against_its_own_limit():
+    from exitrisk.collectors import outage_services as svc
+
+    ctx = _ctx({})
+    gbit_hour = 1e9 / 8 * collector.PERIOD  # bytes in an hour at 1 Gbps
+    m = {k: {} for k in collector.METRICS} | {
+        "vpn_in": {"vpn-1|1.1.1.1": _series(gbit_hour), "vpn-1|2.2.2.2": _series(1)}
+    }
+    svc._vpn_bandwidth(ctx, m, "vpn-1", svc.VPN_TUNNEL_BPS["standard"], "eu-west-1")
+    assert [(r["res"], r["pct"], r["limit"]) for r in ctx.rows] == [("vpn-1 tunnel 1.1.1.1", 80.0, 1250)]
+
+
 def test_a_refused_read_is_recorded_as_not_measured_and_is_not_a_pass():
     ctx = _ctx({"kafka": _Paged()})
     collector._run(ctx, ("msk", ("msk",), collector.task_msk, None), "eu-west-1")

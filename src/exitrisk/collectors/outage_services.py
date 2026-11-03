@@ -44,6 +44,10 @@ MAX_ALARMS = 5000
 CACHE_MAX_CLIENTS = 65000  # maxclients on Redis OSS and Valkey, not modifiable
 SEARCH_SHARDS_PER_NODE = 1000
 KINESIS_MB_PER_SHARD = 1.0  # write, per second
+VPN_TUNNEL_BPS = {"standard": 1.25e9, "large": 5e9}  # per tunnel, by the connection's TunnelBandwidth
+TGW_ATTACHMENT_BPS = 100e9  # per VPC attachment in each zone: the total is compared, so it errs early
+RESOLVER_QPS_PER_IP = 10000  # queries a second each endpoint address answers
+VPCE_DIMS = ("Endpoint Type", "Service Name", "VPC Endpoint Id", "VPC Id")
 GLOBAL_METRIC_REGION = "us-east-1"  # CloudFront publishes here, whichever regions are scanned
 
 RDS = "Amazon Relational Database Service"
@@ -99,6 +103,18 @@ METRICS.update(
         "nat_conn": ("AWS/NATGateway", ("NatGatewayId",), "ActiveConnectionCount", "Maximum", None),
         "tgw_hole": ("AWS/TransitGateway", ("TransitGateway",), "PacketDropCountBlackhole", "Sum", None),
         "tgw_route": ("AWS/TransitGateway", ("TransitGateway",), "PacketDropCountNoRoute", "Sum", None),
+        "tgw_att_in": ("AWS/TransitGateway", ("TransitGateway", "TransitGatewayAttachment"), "BytesIn", "Sum", None),
+        "tgw_att_out": ("AWS/TransitGateway", ("TransitGateway", "TransitGatewayAttachment"), "BytesOut", "Sum", None),
+        "vpn_in": ("AWS/VPN", ("VpnId", "TunnelIpAddress"), "TunnelDataIn", "Sum", None),
+        "vpn_out": ("AWS/VPN", ("VpnId", "TunnelIpAddress"), "TunnelDataOut", "Sum", None),
+        "resolver_in": ("AWS/Route53Resolver", ("EndpointId",), "InboundQueryVolume", "Sum", None),
+        "resolver_out": ("AWS/Route53Resolver", ("EndpointId",), "OutboundQueryVolume", "Sum", None),
+        "vpce_drop": ("AWS/PrivateLinkEndpoints", VPCE_DIMS, "PacketsDropped", "Sum", None),
+        "alb_healthy": ("AWS/ApplicationELB", ("TargetGroup", "LoadBalancer"), "HealthyHostCount", "Minimum", None),
+        "alb_healthy_max": ("AWS/ApplicationELB", ("TargetGroup", "LoadBalancer"), "HealthyHostCount", "Maximum", None),
+        "nlb_healthy": ("AWS/NetworkELB", ("TargetGroup", "LoadBalancer"), "HealthyHostCount", "Minimum", None),
+        "nlb_healthy_max": ("AWS/NetworkELB", ("TargetGroup", "LoadBalancer"), "HealthyHostCount", "Maximum", None),
+        "dx_state": ("AWS/DX", ("ConnectionId",), "ConnectionState", "Minimum", "AWS Direct Connect"),
         "mq_cpu": ("AWS/AmazonMQ", ("Broker",), "CpuUtilization", "Average", MQ),
         "mq_heap": ("AWS/AmazonMQ", ("Broker",), "HeapUsage", "Maximum", MQ),
         "mq_store": ("AWS/AmazonMQ", ("Broker",), "StorePercentUsage", "Maximum", MQ),
@@ -834,6 +850,17 @@ def task_lb_review(ctx: OutageCtx, region: str) -> None:
         err, req = m["alb_5xx"].get(key), m["alb_req"].get(key)
         if err and err.total > 0:
             ctx.add("lb_5xx", name, region, used=round(err.total), unit="errors from the load balancer itself")
+        kind = "nlb" if lb.get("Type") == "network" else "alb"
+        for res, low in m[f"{kind}_healthy"].items():
+            group, _, owner = res.partition("|")
+            high = m[f"{kind}_healthy_max"].get(res)
+            if owner != key or not low.n or not high or not high.n or high.high <= 0:
+                continue  # an empty target group serves nothing, so it is not an outage
+            target = f"{name}: {group.split('/')[1] if group.count('/') >= 2 else group}"
+            if low.low <= 0:
+                ctx.add("lb_no_healthy", target, region, note=f"up to {high.high:.0f} healthy at other times")
+            elif high.high <= 1:
+                ctx.add("lb_single_target", target, region, note="one healthy target at most")
         stats = [stat(req, "Requests", "a second", per=PERIOD), stat(err, "Own 5xx errors", "an hour")]
         profile(
             ctx, "elb", name, region, {"Type": lb.get("Type"), "Scheme": lb.get("Scheme"), "Zones": len(zones)}, stats
@@ -869,6 +896,8 @@ def task_vpc_review(ctx: OutageCtx, region: str) -> None:
                 region,
                 note=f"NAT only in {next(iter(zones))}; subnets in {len(zones_in[vpc])} zones",
             )
+    _endpoints(ctx, ec2, subnets, zones_in, m, region)
+    _tgw_attachments(ctx, m, region)
     for t in _pages(ec2, "describe_transit_gateways", "TransitGateways", cap=MAX_ITEMS):
         tid = t["TransitGatewayId"]
         drops = sum(s.total for key in ("tgw_hole", "tgw_route") if (s := m[key].get(tid)) and s.n)
@@ -892,6 +921,8 @@ def task_vpc_review(ctx: OutageCtx, region: str) -> None:
         up = sum(t.get("Status") == "UP" for t in tunnels)
         if tunnels and up < len(tunnels):
             ctx.add("vpn_tunnel_down", v["VpnConnectionId"], region, note=f"{up} of {len(tunnels)} tunnels up")
+        size = ((v.get("Options") or {}).get("TunnelBandwidth") or "standard").lower()
+        _vpn_bandwidth(ctx, m, v["VpnConnectionId"], VPN_TUNNEL_BPS.get(size, VPN_TUNNEL_BPS["standard"]), region)
         profile(
             ctx,
             "vpn",
@@ -903,6 +934,115 @@ def task_vpc_review(ctx: OutageCtx, region: str) -> None:
             },
         )
     ctx.r.ok("vpc")
+
+
+def _bps(series: Series | None) -> float | None:
+    """Bits a second in the busiest hour of a byte count summed per hour."""
+    return series.high * 8 / PERIOD if series and series.n else None
+
+
+def _vpn_bandwidth(ctx: OutageCtx, m: dict, vpn: str, limit: float, region: str) -> None:
+    """Each tunnel against its own limit: one flow stays on one tunnel, so tunnels do not add up."""
+    for res in {r for key in ("vpn_in", "vpn_out") for r in m[key] if r.split("|")[0] == vpn}:
+        high = max((b for key in ("vpn_in", "vpn_out") if (b := _bps(m[key].get(res))) is not None), default=None)
+        if high is None:
+            continue
+        ctx.add(
+            "vpn_bandwidth",
+            f"{vpn} tunnel {res.split('|')[-1]}",
+            region,
+            pct=100.0 * high / limit,
+            used=round(high / 1e6),
+            limit=round(limit / 1e6),
+            unit="Mbps",
+            load=True,
+        )
+
+
+def _tgw_attachments(ctx: OutageCtx, m: dict, region: str) -> None:
+    for res in {r for key in ("tgw_att_in", "tgw_att_out") for r in m[key]}:
+        high = max(
+            (b for key in ("tgw_att_in", "tgw_att_out") if (b := _bps(m[key].get(res))) is not None), default=None
+        )
+        if high is None:
+            continue
+        ctx.add(
+            "tgw_bandwidth",
+            res.split("|")[-1],
+            region,
+            pct=100.0 * high / TGW_ATTACHMENT_BPS,
+            used=round(high / 1e9, 2),
+            limit=round(TGW_ATTACHMENT_BPS / 1e9),
+            unit="Gbps",
+            load=True,
+        )
+
+
+def _endpoints(ctx: OutageCtx, ec2, subnets: dict, zones_in: dict, m: dict, region: str) -> None:
+    """Interface endpoints (PrivateLink) in one zone, and packets they dropped."""
+    for e in _pages(ec2, "describe_vpc_endpoints", "VpcEndpoints", cap=MAX_ITEMS):
+        if e.get("VpcEndpointType") != "Interface" or e.get("State", "").lower() != "available":
+            continue
+        name = f"{e['VpcEndpointId']} ({e.get('ServiceName', '').rsplit('.', 1)[-1]})"
+        zones = {(subnets.get(s) or {}).get("AvailabilityZone") for s in e.get("SubnetIds") or []} - {None}
+        if len(zones) == 1 and len(zones_in.get(e.get("VpcId", ""), ())) > 1:
+            ctx.add("vpce_one_az", name, region, note=f"only in {next(iter(zones))}")
+        drop = next((s for res, s in m["vpce_drop"].items() if e["VpcEndpointId"] in res.split("|") and s.n), None)
+        if drop and drop.total > 0:
+            ctx.add("vpce_drops", name, region, used=round(drop.total), unit="packets dropped")
+
+
+# ------------------------------------------------------------------------------------------- Resolver
+def task_resolver_review(ctx: OutageCtx, region: str) -> None:
+    """Route 53 Resolver endpoints: the DNS path between AWS and the data centre."""
+    client = ctx.client("route53resolver", region)
+    endpoints = _pages(client, "list_resolver_endpoints", "ResolverEndpoints", cap=MAX_ITEMS)
+    if not endpoints:
+        ctx.r.ok("resolver")
+        return
+    zone_of = {
+        s["SubnetId"]: s.get("AvailabilityZone")
+        for s in _pages(ctx.client("ec2", region), "describe_subnets", "Subnets", cap=MAX_ITEMS)
+    }
+    m = ctx.metrics(region)
+    for e in endpoints:
+        if e.get("Status") not in ("OPERATIONAL", "ACTION_NEEDED", "AUTO_RECOVERING"):
+            continue
+        eid, way = e["Id"], (e.get("Direction") or "").lower()
+        label = e.get("Name") or eid
+        label = label if way in label.lower() else f"{label} ({way})"
+        ips = _pages(client, "list_resolver_endpoint_ip_addresses", "IpAddresses", ResolverEndpointId=eid)
+        zones = {zone_of.get(ip.get("SubnetId")) for ip in ips} - {None}
+        if len(zones) == 1:
+            ctx.add("resolver_one_az", label, region, note=f"{len(ips)} addresses, all in {next(iter(zones))}")
+        count = e.get("IpAddressCount") or len(ips)
+        series = m["resolver_in" if e.get("Direction") == "INBOUND" else "resolver_out"].get(eid)
+        if series and series.n and count:
+            qps, limit = series.high / PERIOD, RESOLVER_QPS_PER_IP * count
+            ctx.add(
+                "resolver_load",
+                label,
+                region,
+                pct=100.0 * qps / limit,
+                used=round(qps),
+                limit=limit,
+                unit="queries a second",
+                load=True,
+            )
+        profile(
+            ctx,
+            "route53",
+            label,
+            region,
+            {
+                "Direction": e.get("Direction"),
+                "Addresses": count,
+                "Zones": len(zones) or None,
+                "VPC": e.get("HostVPCId"),
+            },
+            [stat(series, "Queries", "a second", per=PERIOD, limit=RESOLVER_QPS_PER_IP * count if count else None)],
+        )
+    ctx.r.ok("resolver")
 
 
 def task_small_services(ctx: OutageCtx, region: str) -> None:
@@ -1103,6 +1243,7 @@ REGION_TASKS.extend(
         ("api gateway review", ("apigateway",), task_apigw_review, (APIGW,)),
         ("load balancer review", ("elb",), task_lb_review, None),
         ("vpc review", ("vpc",), task_vpc_review, None),
+        ("route 53 resolver review", ("resolver",), task_resolver_review, None),
         ("redshift review", ("redshift",), task_redshift_review, ("Amazon Redshift",)),
         ("file systems review", ("files",), task_files_review, ("Amazon FSx", "Amazon Elastic File System")),
         ("s3 review", ("s3_review",), task_s3_profile, None),

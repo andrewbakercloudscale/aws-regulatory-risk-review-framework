@@ -129,6 +129,18 @@ ANSWERS = {
             ]
         },
         "describe_transit_gateways": {"TransitGateways": [{"TransitGatewayId": "res1", "State": "available"}]},
+        "describe_vpc_endpoints": {
+            "VpcEndpoints": [
+                {
+                    "VpcEndpointId": "res1",
+                    "VpcEndpointType": "Interface",
+                    "VpcId": "v1",
+                    "ServiceName": "com.amazonaws.eu-west-1.sts",
+                    "State": "available",
+                    "SubnetIds": ["s1"],
+                }
+            ]
+        },
         "describe_vpn_connections": {
             "VpnConnections": [
                 {
@@ -328,6 +340,47 @@ ANSWERS = {
             }
         }
     },
+    "directconnect": {
+        "describe_connections": {
+            "connections": [
+                {
+                    "connectionId": "res1",
+                    "connectionName": "dc1",
+                    "connectionState": "available",
+                    "location": "LD5",
+                    "bandwidth": "10Gbps",
+                }
+            ]
+        },
+        "describe_virtual_interfaces": {
+            "virtualInterfaces": [
+                {
+                    "virtualInterfaceId": "vif1",
+                    "virtualInterfaceName": "transit",
+                    "virtualInterfaceType": "transit",
+                    "virtualInterfaceState": "available",
+                    "bgpPeers": [{"bgpPeerId": "p1", "bgpStatus": "down"}],
+                }
+            ]
+        },
+    },
+    "route53resolver": {
+        "list_resolver_endpoints": {
+            "ResolverEndpoints": [
+                {
+                    "Id": "res1",
+                    "Name": "inbound",
+                    "Direction": "INBOUND",
+                    "IpAddressCount": 2,
+                    "HostVPCId": "v1",
+                    "Status": "OPERATIONAL",
+                }
+            ]
+        },
+        "list_resolver_endpoint_ip_addresses": {
+            "IpAddresses": [{"IpId": "a", "SubnetId": "s1"}, {"IpId": "b", "SubnetId": "s1"}]
+        },
+    },
     "s3": {"list_buckets": {"Buckets": [{"Name": "res1", "CreationDate": NOW}]}},
 }
 
@@ -470,6 +523,7 @@ def test_the_reviews_reach_every_service(read):
         "fsx",
         "efs",
         "cloudfront",
+        "route53",
     }
     assert want <= have, want - have
 
@@ -491,7 +545,8 @@ def test_the_rules_for_what_the_answers_hold_fire(read):
         "msk_unclean_leader", "msk_low_replication", "rds_connections", "rds_maintenance", "aurora_no_reader",
         "cache_no_failover", "cache_no_multi_az", "lambda_timeout", "search_no_zone", "search_no_master", "sqs_no_dlq",
         "mq_single", "lb_one_az", "nat_one_az", "vpn_tunnel_down", "redshift_single_node", "fsx_single_az",
-        "cf_no_failover", "no_alarm", "ec2_burstable", "cache_burstable", "search_burstable",
+        "cf_no_failover", "no_alarm", "ec2_burstable", "cache_burstable", "search_burstable", "resolver_one_az",
+        "dx_no_redundancy", "dx_vif_down", "vpce_one_az", "vpce_drops", "ec2_net_allowance", "ec2_dns_allowance",
     }  # fmt: skip
     assert want <= rules, want - rules
     assert rules <= {r["id"] for r in catalog()["rules"]}
