@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-03
+
 ### Added
 - **Outage Risk Report: burstable sizes.** Every T-family EC2 instance (including Auto Scaling and EKS
   nodes), RDS class, ElastiCache node, OpenSearch data or master node and MSK broker in production is
