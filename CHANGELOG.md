@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-03
+
 ### Added
 - **Outage Risk Report**, a fourth report. A new optional scan step reads every account's Service
   Quotas and usage, account and product limits (IAM, Route 53, RDS, load balancers, Lambda, S3,
