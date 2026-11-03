@@ -111,3 +111,29 @@ def test_an_account_on_the_map_opens_its_findings(page):
     name = page.locator("#orExposure [data-or-acct]").first.inner_text()
     page.locator("#orExposure [data-or-acct]").first.click()
     assert page.locator("#orSearch").input_value() == name
+
+
+def test_a_scan_without_the_checks_opens_the_newest_one_with_them(browser, console):
+    """Unless the scan was named in the link: then it stays, with a button to the one that has them."""
+    from exitrisk import store
+    from exitrisk.demo import build_demo_scan
+
+    base, _, query = console.partition("?")
+    demo = dict(p.split("=") for p in query.split("&"))["scan"]
+    bare = build_demo_scan(3)
+    bare["id"] = "29991231-235959-ffff"  # newer than every other scan
+    bare.pop("outage", None)
+    store.save_scan(bare)
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    try:
+        pg = ctx.new_page()
+        pg.goto(f"{base}?view=outage")
+        pg.wait_for_selector("#orContent:not([hidden])")
+        assert pg.locator("#scanSelect").input_value() == demo
+        pg.goto(f"{base}?scan={bare['id']}&view=outage")
+        pg.wait_for_selector("#orEmpty:not([hidden])")
+        assert pg.locator("#btnOrOpen").is_visible()
+        assert pg.locator("#scanSelect").input_value() == bare["id"]
+    finally:
+        ctx.close()
+        store.delete_scan(bare["id"])

@@ -356,6 +356,18 @@
     return scans;
   }
 
+  /** A report with no checks in the scan shown opens the newest scan that has them, unless someone chose
+   * this scan (the picker, or a link naming it) or a PDF is being drawn. Once per scan, so it cannot loop. */
+  function autoOpen(scan, report) {
+    if (PRINT || state.scanPicked || state.autoOpened?.has(state.scanId)) return false;
+    (state.autoOpened ||= new Set()).add(state.scanId);
+    $("#scanSelect").value = scan.id;
+    state.scanId = scan.id;
+    toast(`Opened the scan of ${fmtDate(scan.created_at)}: the newest with the ${report} checks`);
+    loadReport();
+    return true;
+  }
+
   /** Load and render the report; true when it worked (the error is already shown when it did not). */
   async function loadReport() {
     if (!state.scanId) return false;
@@ -1962,6 +1974,7 @@
         $("#btnAsOpen").dataset.scan = withChecks.id;
       }
       $("#btnAsScan").classList.toggle("primary", !withChecks);
+      if (show && withChecks && autoOpen(withChecks, "Cloud Assurance")) return;
       if (show && PRINT) document.body.dataset.ready = "1";
       return;
     }
@@ -2385,6 +2398,7 @@
         $("#btnOrOpen").dataset.scan = withChecks.id;
       }
       $("#btnOrScan").classList.toggle("primary", !withChecks);
+      if (show && withChecks && autoOpen(withChecks, "Outage Risk")) return;
       if (show && PRINT) document.body.dataset.ready = "1";
       return;
     }
@@ -3958,6 +3972,7 @@
   // and still work (New scan, AWS sign-in, Log) when the console cannot load one.
   function bindControls() {
     $("#scanSelect").addEventListener("change", (e) => {
+      if (e.isTrusted) state.scanPicked = true;  // chosen by hand: keep it, even without a report's checks
       state.scanId = e.target.value;
       state.mrShowAll = false;
       // Each scan remembers the exit target chosen when it was started.
@@ -4237,6 +4252,7 @@
     let scans;
     try { scans = await refreshScans(); } catch (e) { failed(e); return; }
     state.scanId = params.get("scan") || scans.find((s) => s.status !== "failed")?.id || null;
+    state.scanPicked = Boolean(params.get("scan"));
     if (!PRINT) await loadAiCfg();
     if (state.scanId) { $("#scanSelect").value = state.scanId; await loadReport(); }
     else document.body.dataset.ready = "1";
