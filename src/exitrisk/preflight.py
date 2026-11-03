@@ -163,6 +163,12 @@ DEPENDENCY_PROBES = [
 # Cloud Assurance Framework checks in a member account: one cheap call per service they read. The
 # AWS managed policy SecurityAudit covers all of them; iam/member-account-role-policy.json lists them.
 _BUCKET = "exitrisk-access-check-{account}"
+# Made-up names in the forms the APIs expect: the call is refused for want of access, or answers
+# that the thing does not exist, which proves access. "{{account}}" is filled in per account.
+_ARN = "arn:aws:{}:" + PROBE_REGION + ":{{account}}:{}"
+_LB = _ARN.format("elasticloadbalancing", f"loadbalancer/app/{_NO_SUCH}/0000000000000000")
+_DETECTOR = "0" * 32
+_KEY = "00000000-0000-0000-0000-000000000000"
 ASSURANCE_PROBES = [
     ("iam:GetAccountSummary", "iam", "get_account_summary", {}),
     ("iam:GenerateCredentialReport", "iam", "generate_credential_report", {}),
@@ -201,6 +207,55 @@ ASSURANCE_PROBES = [
     ("resiliencehub:ListApps", "resiliencehub", "list_apps", {"maxResults": 1}),
     ("fis:ListExperiments", "fis", "list_experiments", {"maxResults": 1}),
     ("dynamodb:DescribeContinuousBackups", "dynamodb", "describe_continuous_backups", {"TableName": _NO_SUCH}),
+    ("access-analyzer:ListFindings", "accessanalyzer", "list_findings", {"analyzerArn": _ARN.format(
+        "access-analyzer", "analyzer/" + _NO_SUCH), "maxResults": 1}),
+    ("autoscaling:DescribeAutoScalingGroups", "autoscaling", "describe_auto_scaling_groups", {"MaxRecords": 1}),
+    ("backup:GetBackupPlan", "backup", "get_backup_plan", {"BackupPlanId": _NO_SUCH}),
+    ("backup:ListBackupVaults", "backup", "list_backup_vaults", {"MaxResults": 1}),
+    ("backup:ListProtectedResources", "backup", "list_protected_resources", {"MaxResults": 1}),
+    ("backup:ListRestoreJobs", "backup", "list_restore_jobs", {"MaxResults": 1}),
+    ("bedrock:GetModelInvocationLoggingConfiguration", "bedrock", "get_model_invocation_logging_configuration", {}),
+    ("bedrock:ListGuardrails", "bedrock", "list_guardrails", {"maxResults": 1}),
+    ("cloudtrail:GetTrailStatus", "cloudtrail", "get_trail_status", {"Name": _NO_SUCH}),
+    ("config:DescribeConfigurationRecorders", "config", "describe_configuration_recorders", {}),
+    ("config:DescribeConfigRules", "config", "describe_config_rules", {}),
+    ("config:DescribeComplianceByConfigRule", "config", "describe_compliance_by_config_rule", {}),
+    ("directconnect:DescribeConnections", "directconnect", "describe_connections", {}),
+    ("ec2:DescribeImages", "ec2", "describe_images", {"Owners": ["self"], "MaxResults": 5}),
+    ("ec2:DescribeInternetGateways", "ec2", "describe_internet_gateways", {"MaxResults": 5}),
+    ("ec2:DescribeVpcs", "ec2", "describe_vpcs", {"MaxResults": 5}),
+    ("ec2:DescribeVolumes", "ec2", "describe_volumes", {"MaxResults": 5}),
+    ("ecs:DescribeServices", "ecs", "describe_services", {"cluster": _NO_SUCH, "services": [_NO_SUCH]}),
+    ("eks:DescribeCluster", "eks", "describe_cluster", {"name": _NO_SUCH}),
+    ("elasticache:DescribeCacheClusters", "elasticache", "describe_cache_clusters", {"MaxRecords": 20}),
+    ("elasticloadbalancing:DescribeListeners", "elbv2", "describe_listeners", {"LoadBalancerArn": _LB}),
+    ("elasticloadbalancing:DescribeLoadBalancerAttributes", "elbv2", "describe_load_balancer_attributes",
+     {"LoadBalancerArn": _LB}),
+    ("es:ListDomainNames", "opensearch", "list_domain_names", {}),
+    ("es:DescribeDomains", "opensearch", "describe_domains", {"DomainNames": [_NO_SUCH]}),
+    ("guardduty:GetDetector", "guardduty", "get_detector", {"DetectorId": _DETECTOR}),
+    ("guardduty:ListFindings", "guardduty", "list_findings", {"DetectorId": _DETECTOR, "MaxResults": 1}),
+    ("iam:GetCredentialReport", "iam", "get_credential_report", {}),
+    ("inspector2:ListFindings", "inspector2", "list_findings", {"maxResults": 1}),
+    ("kms:DescribeKey", "kms", "describe_key", {"KeyId": _KEY}),
+    ("kms:GetKeyRotationStatus", "kms", "get_key_rotation_status", {"KeyId": _KEY}),
+    ("rds:DescribeDBClusters", "rds", "describe_db_clusters", {"MaxRecords": 20}),
+    ("s3:GetEncryptionConfiguration", "s3", "get_bucket_encryption", {"Bucket": _BUCKET}),
+    ("s3:GetBucketOwnershipControls", "s3", "get_bucket_ownership_controls", {"Bucket": _BUCKET}),
+    ("s3:GetBucketPolicy", "s3", "get_bucket_policy", {"Bucket": _BUCKET}),
+    ("s3:GetBucketPolicyStatus", "s3", "get_bucket_policy_status", {"Bucket": _BUCKET}),
+    ("s3:GetReplicationConfiguration", "s3", "get_bucket_replication", {"Bucket": _BUCKET}),
+    ("s3:GetBucketTagging", "s3", "get_bucket_tagging", {"Bucket": _BUCKET}),
+    ("s3:GetBucketObjectLockConfiguration", "s3", "get_object_lock_configuration", {"Bucket": _BUCKET}),
+    ("s3:GetBucketPublicAccessBlock", "s3", "get_public_access_block", {"Bucket": _BUCKET}),
+    ("sagemaker:ListNotebookInstances", "sagemaker", "list_notebook_instances", {"MaxResults": 1}),
+    ("sagemaker:DescribeNotebookInstance", "sagemaker", "describe_notebook_instance",
+     {"NotebookInstanceName": _NO_SUCH}),
+    ("securityhub:GetEnabledStandards", "securityhub", "get_enabled_standards", {"MaxResults": 1}),
+    ("securityhub:GetFindings", "securityhub", "get_findings", {"MaxResults": 1}),
+    ("ssm:ListResourceComplianceSummaries", "ssm", "list_resource_compliance_summaries", {"MaxResults": 1}),
+    ("wafv2:ListResourcesForWebACL", "wafv2", "list_resources_for_web_acl", {"WebACLArn": _ARN.format(
+        "wafv2", f"regional/webacl/{_NO_SUCH}/00000000-0000-0000-0000-000000000000")}),
 ]  # fmt: skip
 # Outage risk checks in a member account: the reads SecurityAudit does not cover are named first.
 OUTAGE_PROBES = [
@@ -247,6 +302,27 @@ OUTAGE_PROBES = [
     ("ec2:DescribeTransitGateways", "ec2", "describe_transit_gateways", {"MaxResults": 5}),
     ("ec2:DescribeVpnConnections", "ec2", "describe_vpn_connections", {}),
     ("cloudfront:ListDistributions", "cloudfront", "list_distributions", {"MaxItems": "1"}),
+    ("autoscaling:DescribeAutoScalingGroups", "autoscaling", "describe_auto_scaling_groups", {"MaxRecords": 1}),
+    ("directconnect:DescribeConnections", "directconnect", "describe_connections", {}),
+    ("ec2:DescribeVolumes", "ec2", "describe_volumes", {"MaxResults": 5}),
+    ("ecs:DescribeServices", "ecs", "describe_services", {"cluster": _NO_SUCH, "services": [_NO_SUCH]}),
+    ("eks:DescribeCluster", "eks", "describe_cluster", {"name": _NO_SUCH}),
+    ("eks:DescribeNodegroup", "eks", "describe_nodegroup", {"clusterName": _NO_SUCH, "nodegroupName": _NO_SUCH}),
+    ("elasticloadbalancing:DescribeTargetGroups", "elbv2", "describe_target_groups", {"PageSize": 1}),
+    ("es:ListDomainNames", "opensearch", "list_domain_names", {}),
+    ("es:DescribeDomains", "opensearch", "describe_domains", {"DomainNames": [_NO_SUCH]}),
+    ("route53resolver:ListResolverEndpointIpAddresses", "route53resolver", "list_resolver_endpoint_ip_addresses",
+     {"ResolverEndpointId": _NO_SUCH}),
+    ("sqs:GetQueueAttributes", "sqs", "get_queue_attributes",
+     {"QueueUrl": f"https://sqs.{PROBE_REGION}.amazonaws.com/{{account}}/{_NO_SUCH}", "AttributeNames": ["All"]}),
+    ("kafka:DescribeConfigurationRevision", "kafka", "describe_configuration_revision",
+     {"Arn": _ARN.format("kafka", f"configuration/{_NO_SUCH}/{_KEY}-1"), "Revision": 1}),
+    ("connect:ListUsers", "connect", "list_users", {"InstanceId": _KEY, "MaxResults": 1}),
+    ("connect:ListQueues", "connect", "list_queues", {"InstanceId": _KEY, "MaxResults": 1}),
+    ("connect:ListPhoneNumbers", "connect", "list_phone_numbers", {"InstanceId": _KEY, "MaxResults": 1}),
+    ("connect:ListRoutingProfiles", "connect", "list_routing_profiles", {"InstanceId": _KEY, "MaxResults": 1}),
+    ("connect:ListContactFlows", "connect", "list_contact_flows", {"InstanceId": _KEY, "MaxResults": 1}),
+    ("lambda:ListEventSourceMappings", "lambda", "list_event_source_mappings", {"MaxItems": 1}),
 ]  # fmt: skip
 # The organisation-level assurance reads, in the management account.
 ASSURANCE_ORG_PROBES = [
@@ -269,9 +345,20 @@ def probe_actions(session, account_id: str, probes: list) -> tuple[list[str], li
     return [a for kind, a in results if kind == "denied"], [a for kind, a in results if kind == "other"]
 
 
+def fill(value, account_id: str):
+    """``value`` with "{account}" filled in, in lists and nested arguments as well."""
+    if isinstance(value, str):
+        return value.format(account=account_id)
+    if isinstance(value, list):
+        return [fill(v, account_id) for v in value]
+    if isinstance(value, dict):
+        return {k: fill(v, account_id) for k, v in value.items()}
+    return value
+
+
 def _probe(session, account_id: str, action: str, client_name: str, method: str, kwargs: dict) -> tuple[str, str]:
     """("ok" | "denied" | "other", text) for one call."""
-    kwargs = {k: v.format(account=account_id) if isinstance(v, str) else v for k, v in kwargs.items()}
+    kwargs = fill(kwargs, account_id)
     try:
         getattr(session.client(client_name, region_name=PROBE_REGION, config=BOTO_CONFIG), method)(**kwargs)
     except ClientError as exc:

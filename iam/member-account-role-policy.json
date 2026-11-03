@@ -129,7 +129,7 @@
         "inspector2:BatchGetAccountStatus",
         "inspector2:ListFindings",
         "access-analyzer:ListAnalyzers",
-        "access-analyzer:ListFindingsV2",
+        "access-analyzer:ListFindings",
         "cloudformation:ListStacks",
         "ssm:DescribeInstanceInformation",
         "ssm:ListResourceComplianceSummaries",

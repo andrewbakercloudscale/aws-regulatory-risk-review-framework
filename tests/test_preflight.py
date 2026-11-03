@@ -360,3 +360,105 @@ def test_the_member_checks_are_reported_before_the_slow_count_of_every_account(m
         "outage_reads",
     }
     assert ctx["count_assignments"] is True and not counted.done()
+
+
+MEMBER_SETS = (
+    preflight.INVENTORY_PROBES,
+    preflight.DEPENDENCY_PROBES,
+    preflight.ASSURANCE_PROBES,
+    preflight.OUTAGE_PROBES,
+)
+# Calls a scan makes that no probe makes, and why.
+NOT_PROBED = {
+    ("apigateway", "get_stages"): "apigateway:GET, probed",
+    ("apigateway", "get_resources"): "apigateway:GET, probed",
+    ("apigatewayv2", "get_integrations"): "apigateway:GET, probed",
+    ("elb", "describe_load_balancers"): "the same elasticloadbalancing action as the probed elbv2 call",
+    ("elb", "describe_load_balancer_attributes"): "the same elasticloadbalancing action as the probed elbv2 call",
+    ("macie2", "get_macie_session"): "refused when Macie is off, so a probe cannot tell",
+    ("trustedadvisor", "list_recommendations"): "refused without Business support, so a probe cannot tell",
+}
+
+
+def _api_calls(path):
+    """(client, method) for every AWS call in a collector: client.method(...), get_paginator("method")
+    and helper(client, "method", ...), where client is ctx.client("name") or a name bound to one."""
+    import ast
+
+    def made(node):
+        if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant):
+            if isinstance(node.func, ast.Attribute) and node.func.attr in ("client", "_client"):
+                return node.args[0].value
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_client":
+            if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+                return node.args[1].value
+        return None
+
+    found = set()
+    for fn in ast.walk(ast.parse(path.read_text())):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        bound = [
+            (n.lineno, n.targets[0].id, made(n.value))
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+        ]
+
+        def client(node, line, bound=bound):
+            if isinstance(node, ast.Name):
+                last = [svc for at, name, svc in bound if name == node.id and at <= line]
+                return last[-1] if last else None
+            return made(node)
+
+        for n in ast.walk(fn):
+            if not isinstance(n, ast.Call):
+                continue
+            if isinstance(n.func, ast.Attribute) and (svc := client(n.func.value, n.lineno)):
+                if n.func.attr == "get_paginator" and n.args and isinstance(n.args[0], ast.Constant):
+                    found.add((svc, n.args[0].value))
+                elif n.func.attr != "get_paginator" and not n.func.attr.startswith("_"):
+                    found.add((svc, n.func.attr))
+            if len(n.args) > 1 and isinstance(n.args[1], ast.Constant) and isinstance(n.args[1].value, str):
+                op = n.args[1].value
+                if "_" in op and op.replace("_", "").isalpha() and (svc := client(n.args[0], n.lineno)):
+                    found.add((svc, op))
+    return found
+
+
+def test_the_access_check_makes_every_call_a_scan_makes_in_a_member_account():
+    src = ROOT / "src/exitrisk/collectors"
+    names = ("inventory", "dependencies", "baseline", "assurance", "outage", "outage_services")
+    made = set().union(*(_api_calls(src / f"{n}.py") for n in names))
+    probed = {(c, m) for probes in MEMBER_SETS for _, c, m, _ in probes}
+    assert len(made) > 120  # the walk found the calls
+    assert made - probed - set(NOT_PROBED) == set()
+
+
+def test_every_probe_is_a_valid_call():
+    from botocore.validate import validate_parameters
+
+    for probes in (*MEMBER_SETS, preflight.ASSURANCE_ORG_PROBES):
+        for action, name, method, kwargs in probes:
+            c = boto3.client(name, region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
+            op = c.meta.service_model.operation_model(c.meta.method_to_api_mapping[method])
+            args = preflight.fill(kwargs, "111111111111")
+            if op.input_shape is None:
+                assert args == {}, action
+            else:
+                validate_parameters(args, op.input_shape)  # raises on a misspelt or ill-formed argument
+            assert action.split(":")[0] and ":" in action
+
+
+def test_the_member_role_grants_every_probed_action():
+    class Loader(yaml.SafeLoader):
+        pass
+
+    Loader.add_multi_constructor("!", lambda loader, suffix, node: None)
+    policy = json.loads((ROOT / "iam/member-account-role-policy.json").read_text())
+    granted = {a for s in policy["Statement"] for a in s["Action"]}
+    cfn = yaml.load((ROOT / "iam/cloudformation/member-role-stackset.yaml").read_text(), Loader=Loader)
+    role = next(r for r in cfn["Resources"].values() if r.get("Type") == "AWS::IAM::Role")
+    stack = {a for p in role["Properties"]["Policies"] for s in p["PolicyDocument"]["Statement"] for a in s["Action"]}
+    wanted = {action.split(" ")[0] for probes in MEMBER_SETS for action, *_ in probes}
+    assert wanted - granted == set()
+    assert wanted - stack == set()

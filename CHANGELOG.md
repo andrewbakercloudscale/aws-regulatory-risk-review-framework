@@ -11,7 +11,7 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   ceiling); the shared pool against what reservations leave of the account limit; provisioned concurrency
   near full or spilling over; stream consumers more than five minutes behind; asynchronous events dropped
   or waiting more than five minutes; functions failing at least 5% of the time; deprecated runtimes, which
-  AWS blocks from updates. Needs `lambda:GetFunctionConcurrency`: redeploy the member role.
+  AWS blocks from updates. Reads `lambda:GetFunctionConcurrency`, which the access check now tests.
 - A report with no checks in the scan shown opens the newest scan that has them, unless the scan was
   chosen by hand or named in the link.
 - **Outage Risk Report: what to do, everywhere.** A cell of the account-by-service table opens its risks,
@@ -19,6 +19,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   critical one, then the worst to 50. "Most exposure" is now "Most risk".
 
 ### Fixed
+- **The access check now tests every call a scan makes in a member account.** It missed about 60 of them,
+  so "all green" could still leave checks not measured. A test now fails when a scan reads something
+  the check does not try. The Inspector probe sent the account number unfilled and so proved nothing;
+  the member role granted `access-analyzer:ListFindingsV2` where the scan calls `ListFindings`.
 - **Outage Risk false positives.** A quota read far past its limit (SNS "Messages Published per Second" at
   20,000%) is not a finding: AWS enforces the limit, so the usage figure is not that quota's. A daily quota
   is read over a day, not five minutes scaled up. Not findings either: dead-letter queues and queues that
