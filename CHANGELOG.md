@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-03
+
 ### Added
 
 - A scan pauses when the network goes (a laptop shut, Wi-Fi dropped) and carries on by itself once it is back, however long that takes. Accounts read across the gap are read again, so nothing is recorded as failed for the time offline; the time paused is left out of the ETA, and Stop still works. The organisation, Cost Explorer and optional spend queries wait the same way, as do the AI review and insights. The scan progress shows "paused: no network".
