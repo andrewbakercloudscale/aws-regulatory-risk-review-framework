@@ -5,7 +5,7 @@ from datetime import date
 import boto3
 import pytest
 from botocore.exceptions import ClientError
-from botocore.stub import ANY, Stubber
+from botocore.stub import Stubber
 
 from exitrisk.collectors import cost, organizations
 from exitrisk.issues import describe_exception, is_fatal_auth_error
@@ -21,39 +21,29 @@ def test_month_window():
 
 
 def test_fetch_costs_paginates_and_keeps_marketplace_products(monkeypatch):
-    client = boto3.client("ce", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
-    stub = Stubber(client)
+    """The main and Marketplace queries run in parallel, so each is answered by what it asks for, not by order."""
 
     def group(acct, svc, amt):
         return {"Keys": [acct, svc], "Metrics": {"AmortizedCost": {"Amount": str(amt), "Unit": "USD"}}}
 
     period = {"TimePeriod": {"Start": "2026-09-01", "End": "2026-10-01"}, "Estimated": False}
-    stub.add_response(
-        "get_cost_and_usage",
-        {"ResultsByTime": [{**period, "Groups": [group("1", "AWS Lambda", 10)]}], "NextPageToken": "t"},
-        {**{k: ANY for k in ("TimePeriod", "Granularity", "Metrics", "GroupBy", "Filter")}},
-    )
-    stub.add_response(
-        "get_cost_and_usage",
-        {"ResultsByTime": [{**period, "Groups": [group("1", "AWS Lambda", 5)]}]},
-        {k: ANY for k in ("TimePeriod", "Granularity", "Metrics", "GroupBy", "Filter", "NextPageToken")},
-    )
-    stub.add_response(
-        "get_cost_and_usage",
-        {
-            "ResultsByTime": [
-                {
-                    **period,
-                    "Groups": [group("1", "Some SaaS", 7), group("1", "Claude Opus 4.6 (Amazon Bedrock Edition)", 3)],
-                }
-            ]
-        },
-        {k: ANY for k in ("TimePeriod", "Granularity", "Metrics", "GroupBy", "Filter")},
-    )
+
+    class CE:
+        calls = []
+
+        def get_cost_and_usage(self, **kw):
+            self.calls.append(kw)
+            if "AWS Marketplace" in repr(kw.get("Filter")):
+                groups = [group("1", "Some SaaS", 7), group("1", "Claude Opus 4.6 (Amazon Bedrock Edition)", 3)]
+                return {"ResultsByTime": [{**period, "Groups": groups}]}
+            if kw.get("NextPageToken") == "t":
+                return {"ResultsByTime": [{**period, "Groups": [group("1", "AWS Lambda", 5)]}]}
+            return {"ResultsByTime": [{**period, "Groups": [group("1", "AWS Lambda", 10)]}], "NextPageToken": "t"}
+
+    client = CE()
     session = _session()
     monkeypatch.setattr(session, "client", lambda *a, **k: client)
-    with stub:
-        rows, period_out = cost.fetch_costs(session, ["1"], 1)
+    rows, period_out = cost.fetch_costs(session, ["1"], 1)
     by_svc = {(r["service"], r.get("product")): r["amount"] for r in rows}
     assert by_svc == {
         ("AWS Lambda", None): 15.0,
@@ -62,6 +52,7 @@ def test_fetch_costs_paginates_and_keeps_marketplace_products(monkeypatch):
         (cost.BEDROCK_SERVICE, "Claude Opus 4.6 (Amazon Bedrock Edition)"): 3.0,
     }
     assert period_out["months"] == 1
+    assert len(client.calls) == 3
 
 
 def test_list_accounts_recurses_ou_tree(monkeypatch):
