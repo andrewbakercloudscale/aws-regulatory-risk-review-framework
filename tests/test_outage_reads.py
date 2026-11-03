@@ -189,9 +189,21 @@ ANSWERS = {
         },
     },
     "lambda": {
+        "get_function_concurrency": {"ReservedConcurrentExecutions": 10},
+        "get_account_settings": {
+            "AccountLimit": {
+                "ConcurrentExecutions": 1000,
+                "UnreservedConcurrentExecutions": 900,
+                "TotalCodeSize": 80 * GIB,
+            },
+            "AccountUsage": {"TotalCodeSize": GIB},
+        },
         "list_functions": {
-            "Functions": [{"FunctionName": "res1", "Timeout": 3, "MemorySize": 512, "Runtime": "python3.12"}]
-        }
+            "Functions": [
+                {"FunctionName": "res1", "Timeout": 3, "MemorySize": 512, "Runtime": "python3.12"},
+                {"FunctionName": "old", "Timeout": 3, "MemorySize": 128, "Runtime": "nodejs16.x"},
+            ]
+        },
     },
     "dynamodb": {
         "list_tables": {"TableNames": ["res1"]},
@@ -560,6 +572,7 @@ def test_the_rules_for_what_the_answers_hold_fire(read):
         "mq_single", "lb_one_az", "nat_one_az", "vpn_tunnel_down", "redshift_single_node", "fsx_single_az",
         "cf_no_failover", "no_alarm", "ec2_burstable", "cache_burstable", "search_burstable", "resolver_one_az",
         "dx_no_redundancy", "dx_vif_down", "vpce_one_az", "vpce_drops", "ec2_net_allowance", "ec2_dns_allowance",
+        "lambda_runtime", "lambda_reserved",
     }  # fmt: skip
     assert want <= rules, want - rules
     assert rules <= {r["id"] for r in catalog()["rules"]}

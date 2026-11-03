@@ -115,6 +115,7 @@ Resources:
                   - es:ListDomainNames
                   - es:DescribeDomains
                   - lambda:GetAccountSettings
+                  - lambda:GetFunctionConcurrency
                   - directconnect:DescribeConnections
                   - acm:ListCertificates
                   - iam:GetAccountSummary

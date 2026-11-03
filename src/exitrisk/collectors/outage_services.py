@@ -44,6 +44,17 @@ MAX_ALARMS = 5000
 CACHE_MAX_CLIENTS = 65000  # maxclients on Redis OSS and Valkey, not modifiable
 SEARCH_SHARDS_PER_NODE = 1000
 KINESIS_MB_PER_SHARD = 1.0  # write, per second
+LAMBDA_CONCURRENCY_READS = 200  # busiest functions whose reserved concurrency is read, per region
+LAMBDA_BEHIND_MS = 300_000  # a stream consumer or async queue this far behind is not keeping up
+LAMBDA_ERROR_SHARE = 0.05
+# Runtimes AWS has deprecated: past the block-update date a function on one cannot be changed, so a fix
+# cannot be deployed during an incident. From AWS's Lambda runtimes page.
+LAMBDA_DEPRECATED = {
+    "python2.7", "python3.6", "python3.7", "python3.8", "nodejs", "nodejs4.3", "nodejs6.10", "nodejs8.10",
+    "nodejs10.x", "nodejs12.x", "nodejs14.x", "nodejs16.x", "java8", "go1.x", "dotnetcore1.0", "dotnetcore2.0",
+    "dotnetcore2.1", "dotnetcore3.1", "dotnet5.0", "dotnet6", "ruby2.5", "ruby2.7", "provided",
+    "python3.9", "nodejs18.x", "ruby3.2",
+}  # fmt: skip
 VPN_TUNNEL_BPS = {"standard": 1.25e9, "large": 5e9}  # per tunnel, by the connection's TunnelBandwidth
 TGW_ATTACHMENT_BPS = 100e9  # per VPC attachment in each zone: the total is compared, so it errs early
 RESOLVER_QPS_PER_IP = 10000  # queries a second each endpoint address answers
@@ -91,6 +102,25 @@ METRICS.update(
         "lambda_dur": ("AWS/Lambda", ("FunctionName",), "Duration", "Maximum", LAMBDA),
         "lambda_inv": ("AWS/Lambda", ("FunctionName",), "Invocations", "Sum", LAMBDA),
         "lambda_err": ("AWS/Lambda", ("FunctionName",), "Errors", "Sum", LAMBDA),
+        "lambda_fconc": ("AWS/Lambda", ("FunctionName",), "ConcurrentExecutions", "Maximum", LAMBDA),
+        "lambda_unres": ("AWS/Lambda", (), "UnreservedConcurrentExecutions", "Maximum", LAMBDA),
+        "lambda_pc_util": (
+            "AWS/Lambda",
+            ("FunctionName", "Resource"),
+            "ProvisionedConcurrencyUtilization",
+            "Maximum",
+            LAMBDA,
+        ),
+        "lambda_spill": (
+            "AWS/Lambda",
+            ("FunctionName", "Resource"),
+            "ProvisionedConcurrencySpilloverInvocations",
+            "Sum",
+            LAMBDA,
+        ),
+        "lambda_iter": ("AWS/Lambda", ("FunctionName",), "IteratorAge", "Maximum", LAMBDA),
+        "lambda_async_drop": ("AWS/Lambda", ("FunctionName",), "AsyncEventsDropped", "Sum", LAMBDA),
+        "lambda_async_age": ("AWS/Lambda", ("FunctionName",), "AsyncEventAge", "Maximum", LAMBDA),
         "apigw_count": ("AWS/ApiGateway", ("ApiName",), "Count", "Sum", APIGW),
         "apigw_5xx": ("AWS/ApiGateway", ("ApiName",), "5XXError", "Sum", APIGW),
         "apigw2_count": ("AWS/ApiGateway", ("ApiId",), "Count", "Sum", APIGW),
@@ -538,9 +568,12 @@ def task_lambda_review(ctx: OutageCtx, region: str) -> None:
                 load=True,
                 note=f"{f.get('MemorySize')} MB",
             )
+        if f.get("Runtime") in LAMBDA_DEPRECATED:
+            ctx.add("lambda_runtime", name, region, note=f"{f['Runtime']}: AWS no longer supports it")
         inv = m["lambda_inv"].get(name)
         if not inv or not inv.n:
             continue
+        _lambda_events(ctx, m, name, inv, region)
         stats = [
             stat(inv, "Invocations", "a second", per=PERIOD),
             stat(dur, "Longest run", "s", 1 / 1000, limit=timeout),
@@ -554,8 +587,81 @@ def task_lambda_review(ctx: OutageCtx, region: str) -> None:
             "Architecture": ", ".join(f.get("Architectures") or []),
         }
         profile(ctx, "lambda", name, region, facts, stats)
+    _lambda_concurrency(ctx, client, m, functions, region)
     ctx.r.fact("lambda_functions", len(functions), region)
     ctx.r.ok("lambda")
+
+
+def _lambda_events(ctx: OutageCtx, m: dict, name: str, inv: Series, region: str) -> None:
+    """What already went wrong for one function: errors, a stream falling behind, async events lost or late,
+    provisioned concurrency spilling over or full."""
+    err = m["lambda_err"].get(name)
+    if err and err.n and inv.total and err.total >= 100 and err.total / inv.total >= LAMBDA_ERROR_SHARE:
+        ctx.add(
+            "lambda_errors",
+            name,
+            region,
+            used=round(100 * err.total / inv.total, 1),
+            unit="% of invocations failed",
+            note=f"{err.total:,.0f} errors",
+        )
+    behind = m["lambda_iter"].get(name)
+    if behind and behind.n and behind.high >= LAMBDA_BEHIND_MS:
+        ctx.add("lambda_iterator_age", name, region, used=round(behind.high / 60000, 1), unit="minutes behind")
+    dropped = m["lambda_async_drop"].get(name)
+    if dropped and dropped.n and dropped.total > 0:
+        ctx.add("lambda_async_dropped", name, region, used=round(dropped.total), unit="events dropped")
+    late = m["lambda_async_age"].get(name)
+    if late and late.n and late.high >= LAMBDA_BEHIND_MS:
+        ctx.add("lambda_async_backlog", name, region, used=round(late.high / 60000, 1), unit="minutes old")
+    for res, spill in m["lambda_spill"].items():
+        if res.split("|")[0] == name and spill.n and spill.total > 0:
+            ctx.add("lambda_pc_spill", name, region, used=round(spill.total), unit="invocations past provisioned")
+            break
+    util = _busiest(m["lambda_pc_util"], name)
+    if util:
+        ctx.add("lambda_pc_util", name, region, pct=min(100.0 * util.high, 100.0), load=True)
+
+
+def _lambda_concurrency(ctx: OutageCtx, client, m: dict, functions: list[dict], region: str) -> None:
+    """The busiest functions against their reserved concurrency, which is also their ceiling; and the
+    pool every other function shares against what is left of the account's limit."""
+    busy = sorted(
+        (f["FunctionName"] for f in functions if (s := m["lambda_fconc"].get(f["FunctionName"])) and s.n),
+        key=lambda n: -m["lambda_fconc"][n].high,
+    )[:LAMBDA_CONCURRENCY_READS]
+    for name in busy:
+        try:
+            reserved = client.get_function_concurrency(FunctionName=name).get("ReservedConcurrentExecutions")
+        except ClientError as exc:
+            log.info("concurrency of %s not read: %s", name, _code(exc))
+            break
+        peak = m["lambda_fconc"][name].high
+        if reserved:  # 0 means the function is switched off on purpose
+            ctx.add(
+                "lambda_reserved",
+                name,
+                region,
+                pct=100.0 * peak / reserved,
+                used=round(peak),
+                limit=reserved,
+                load=True,
+            )
+    try:
+        limit = (client.get_account_settings().get("AccountLimit") or {}).get("UnreservedConcurrentExecutions")
+    except ClientError:
+        return
+    pool = m["lambda_unres"].get("all")
+    if limit and pool and pool.n:
+        ctx.add(
+            "lambda_unreserved",
+            "Lambda unreserved concurrency",
+            region,
+            pct=100.0 * pool.high / limit,
+            used=round(pool.high),
+            limit=limit,
+            load=True,
+        )
 
 
 # ---------------------------------------------------------------------------------------------- DynamoDB

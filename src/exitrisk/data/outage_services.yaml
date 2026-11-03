@@ -13,7 +13,7 @@
 #   not_seen  what a review from these calls cannot see. Shown in the review, never as a pass
 #   checks    the scan's checks for it: one unread in an account marks the service not read there
 #   options   a design that removes a class of outage. Nothing here is a price or a recommendation
-version: "2026.11.4"
+version: "2026.11.5"
 always_not_seen:
   - Infrastructure as code. Live settings are not compared with Terraform or CloudFormation, so drift is not shown.
   - The prices of other designs.
@@ -95,9 +95,9 @@ services:
     level: deep
     billed: ["AWS Lambda"]
     quota: [lambda]
-    rules: [lambda_throttles, lambda_timeout]
-    reads: [Account concurrency and code storage, "Memory, timeout and runtime", "Invocations, longest run against the timeout, errors and throttles"]
-    not_seen: ["Reserved concurrency per function", "Downstream limits it runs into", "Functions with no invocations in the lookback window"]
+    rules: [lambda_throttles, lambda_timeout, lambda_reserved, lambda_unreserved, lambda_pc_util, lambda_pc_spill, lambda_iterator_age, lambda_async_dropped, lambda_async_backlog, lambda_errors, lambda_runtime]
+    reads: [Account concurrency and code storage, "Memory, timeout and runtime", "Invocations, longest run against the timeout, errors and throttles", "Busiest functions against their reserved concurrency; shared concurrency against what is left", "Provisioned concurrency use and spillover", "Stream consumers behind, asynchronous events dropped or late", Deprecated runtimes]
+    not_seen: ["Memory used per invocation: needs Lambda Insights", "Scaling rate in a sudden surge (1,000 instances every 10 seconds per function)", "Downstream limits it runs into", "Functions with no invocations in the lookback window"]
     docs:
       - {label: Lambda quotas, url: "https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html"}
   - id: opensearch

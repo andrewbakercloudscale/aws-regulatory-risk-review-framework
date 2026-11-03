@@ -225,6 +225,7 @@ OUTAGE_PROBES = [
     ("rds:DescribeAccountAttributes", "rds", "describe_account_attributes", {}),
     ("elasticloadbalancing:DescribeAccountLimits", "elbv2", "describe_account_limits", {"PageSize": 1}),
     ("lambda:GetAccountSettings", "lambda", "get_account_settings", {}),
+    ("lambda:GetFunctionConcurrency", "lambda", "get_function_concurrency", {"FunctionName": _NO_SUCH}),
     # The per-service reviews.
     ("cloudwatch:DescribeAlarms", "cloudwatch", "describe_alarms", {"MaxRecords": 1}),
     ("rds:DescribeDBParameters", "rds", "describe_db_parameters", {"DBParameterGroupName": _NO_SUCH}),

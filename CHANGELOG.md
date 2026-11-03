@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- **Outage Risk Report: Lambda.** The busiest functions against their reserved concurrency (also their
+  ceiling); the shared pool against what reservations leave of the account limit; provisioned concurrency
+  near full or spilling over; stream consumers more than five minutes behind; asynchronous events dropped
+  or waiting more than five minutes; functions failing at least 5% of the time; deprecated runtimes, which
+  AWS blocks from updates. Needs `lambda:GetFunctionConcurrency`: redeploy the member role.
+- A report with no checks in the scan shown opens the newest scan that has them, unless the scan was
+  chosen by hand or named in the link.
+
 ## [0.22.0] - 2026-11-03
 
 ### Added

@@ -306,6 +306,45 @@ def test_a_volume_is_judged_against_its_provisioned_iops_and_throughput():
     assert all(r["load"] for r in ctx.rows)
 
 
+def test_lambda_concurrency_is_judged_against_reservations_and_the_shared_pool():
+    from exitrisk.collectors import outage_services as svc
+
+    class Lambda:
+        def get_function_concurrency(self, FunctionName):
+            return {"ReservedConcurrentExecutions": {"pay": 100, "off": 0}.get(FunctionName)}
+
+        def get_account_settings(self):
+            return {"AccountLimit": {"UnreservedConcurrentExecutions": 900}}
+
+    ctx = _ctx({})
+    m = {k: {} for k in collector.METRICS} | {
+        "lambda_fconc": {"pay": _series(90), "off": _series(5), "free": _series(40)},
+        "lambda_unres": {"all": _series(450)},
+    }
+    fns = [{"FunctionName": n} for n in ("pay", "off", "free", "idle")]
+    svc._lambda_concurrency(ctx, Lambda(), m, fns, "eu-west-1")
+    got = {r["rule"]: (r["res"], r["pct"]) for r in ctx.rows}
+    assert got == {"lambda_reserved": ("pay", 90.0), "lambda_unreserved": ("Lambda unreserved concurrency", 50.0)}
+
+
+def test_lambda_events_need_enough_failures_to_count():
+    from exitrisk.collectors import outage_services as svc
+
+    ctx = _ctx({})
+    m = {k: {} for k in collector.METRICS} | {
+        "lambda_err": {"a": _series(60, 60), "b": _series(5)},
+        "lambda_iter": {"a": _series(10, 400_000)},
+        "lambda_async_drop": {"b": _series(0, 3)},
+    }
+    svc._lambda_events(ctx, m, "a", _series(1000, 1000), "eu-west-1")
+    svc._lambda_events(ctx, m, "b", _series(10), "eu-west-1")  # 50% of 10: too few to judge
+    assert {(r["rule"], r["res"]) for r in ctx.rows} == {
+        ("lambda_errors", "a"),
+        ("lambda_iterator_age", "a"),
+        ("lambda_async_dropped", "b"),
+    }
+
+
 def test_a_refused_read_is_recorded_as_not_measured_and_is_not_a_pass():
     ctx = _ctx({"kafka": _Paged()})
     collector._run(ctx, ("msk", ("msk",), collector.task_msk, None), "eu-west-1")
