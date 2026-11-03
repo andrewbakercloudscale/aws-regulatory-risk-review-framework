@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-03
+
 ### Added
 - **Outage Risk Report: Lambda.** The busiest functions against their reserved concurrency (also their
   ceiling); the shared pool against what reservations leave of the account limit; provisioned concurrency
