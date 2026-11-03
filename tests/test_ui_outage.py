@@ -151,3 +151,19 @@ def test_a_heat_cell_lists_its_risks_and_what_to_do(page):
     assert page.locator("#orTopTitle").inner_text().startswith("Top")
     assert "Do:" in page.locator("#orTable").inner_text()
     assert not page.errors
+
+
+def test_new_scan_ticks_only_the_report_on_screen(page):
+    """A remembered AI tick for another report never adds that report to the scan."""
+    import json
+
+    settings = {"configured": True, "settings": {"provider": "bedrock", "model": "m", "mask_names": True, "keys": {}},
+                "providers": [{"key": "bedrock", "label": "Bedrock", "recommended": [{"id": "m", "label": "M"}]}]}
+    page.route("**/api/ai/settings", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(settings)))
+    page.evaluate("localStorage.setItem('exitrisk.aiWithScan.as', '1'); localStorage.setItem('exitrisk.aiWithScan.mr', '1')")
+    page.locator("#btnNewScan").click()
+    page.wait_for_selector("#scanDialog[open]")
+    ticked = {i: page.locator(i).is_checked() for i in ("#sRepExit", "#sRepMr", "#sAssurance", "#sOutage", "#sAiAs", "#sAiMr", "#sAiOr")}
+    assert ticked == {"#sRepExit": False, "#sRepMr": False, "#sAssurance": False, "#sOutage": True,
+                      "#sAiAs": False, "#sAiMr": False, "#sAiOr": True}
+    assert not page.errors

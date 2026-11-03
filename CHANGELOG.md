@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Fixed
+
+- New scan ticks only the report on screen. An AI insights tick remembered from an earlier scan no longer adds its report (opening New scan from Outage Risk had also ticked Cloud Assurance, which adds about a minute per 8 accounts).
+
 ## [0.24.0] - 2026-11-03
 
 ### Changed

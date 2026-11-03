@@ -1659,11 +1659,14 @@
     const own = { multiregion: "#sAiMr", assurance: "#sAiAs", outage: "#sAiOr" }[document.body.dataset.view];
     if (ready && own) $(own).checked = true;
     if (document.body.dataset.view === "assurance") $("#sAssurance").checked = true;
+    if (document.body.dataset.view === "outage") $("#sOutage").checked = true;
+    // A remembered AI tick never adds its report: the scan is for the report on screen. An AI tick
+    // whose report is not chosen is dropped (syncScanForm hides and clears it).
+    for (const el of document.querySelectorAll("#scanForm [data-for]")) {
+      if (!$(el.dataset.for).checked) el.querySelector("input").checked = false;
+    }
     // A review of billing alone sees spend, not resources or integrations: it comes with a dependency scan.
     if ($("#sAi").checked) needDeepScan();
-    if ($("#sAiAs").checked) $("#sAssurance").checked = true;
-    if (document.body.dataset.view === "outage") $("#sOutage").checked = true;
-    if ($("#sAiOr").checked) $("#sOutage").checked = true;
     $("#sAiInfo").textContent = ready ? `With ${ready}. Tick the reports that should get an AI read; each is written for that report's readers.`
       : "Not set up yet: choose the AI model under AI configuration first.";
   }
