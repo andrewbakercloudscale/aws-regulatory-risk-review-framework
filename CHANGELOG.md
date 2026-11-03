@@ -14,6 +14,19 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   AWS blocks from updates. Needs `lambda:GetFunctionConcurrency`: redeploy the member role.
 - A report with no checks in the scan shown opens the newest scan that has them, unless the scan was
   chosen by hand or named in the link.
+- **Outage Risk Report: what to do, everywhere.** A cell of the account-by-service table opens its risks,
+  the worst resource, why, and what to do; every finding in the list says what to do. Top risks lists every
+  critical one, then the worst to 50. "Most exposure" is now "Most risk".
+
+### Fixed
+- **Outage Risk false positives.** A quota read far past its limit (SNS "Messages Published per Second" at
+  20,000%) is not a finding: AWS enforces the limit, so the usage figure is not that quota's. A daily quota
+  is read over a day, not five minutes scaled up. Not findings either: dead-letter queues and queues that
+  keep messages under an hour; EFS burst credits of empty or non-bursting file systems; freeable memory on
+  Oracle, SQL Server and Db2; IOPS readings past what is provisioned. Lowered: read-API rate limits, Lambda
+  timeouts with no errors, and a stream reader that started from the oldest record once and caught up.
+  Resources named dev, qa, uat, sit, test, poc or sandbox are judged as non-production. A node group fixed
+  at its size (minimum equals maximum) is medium, not critical.
 
 ## [0.22.0] - 2026-11-03
 

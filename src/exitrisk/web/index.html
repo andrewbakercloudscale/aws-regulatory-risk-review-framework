@@ -707,8 +707,8 @@
       </div>
       <div class="grid-2 or-map-grid">
         <div class="card">
-          <h3>Most exposure</h3>
-          <p class="muted small">The 20 accounts with the most spend at risk.</p>
+          <h3>Most risk</h3>
+          <p class="muted small">The 20 accounts with the most outage risk, weighted by what each spends a month.</p>
           <div id="orExposure" class="or-bars"></div>
         </div>
         <div class="card">
@@ -725,6 +725,7 @@
         <h3>Account by service</h3>
         <p id="orHeatNote" class="muted small"></p>
         <div class="table-wrap"><table class="or-heat" id="orHeat"></table></div>
+        <div id="orHeatDetail" class="or-heat-detail" hidden></div>
       </div>
       <div class="card">
         <h3>What reaches its limit first</h3>
@@ -734,7 +735,7 @@
     </section>
 
     <section class="section" id="or-top">
-      <h2><span class="num">3</span>Top 50 risks</h2>
+      <h2><span class="num">3</span><span id="orTopTitle">Top risks</span></h2>
       <div class="card">
         <p class="muted small">One line per finding per account, with its other copies counted. Production first, then severity, then the account's spend, then how far past its limit. Lead times are our judgement.</p>
         <div class="table-wrap"><table class="data compact" id="orTop"></table></div>

@@ -142,6 +142,8 @@ def _judge(row: dict, rule: dict, a: OutageAnswers, peak: date, days_to_peak: in
         sev, at_peak, why = judge_capacity(row, a, days_to_peak)
         if not sev:
             return None
+        if rule["id"] == "eks_nodegroup_max" and row.get("min") is not None and row.get("min") == row.get("limit"):
+            sev, why = "medium", f"fixed at {row['limit']} node(s): minimum and maximum are the same"
     else:
         sev, why = rule["severity"], row.get("note", "")
         if rule["id"] in BURSTABLE_RULES:
@@ -285,6 +287,72 @@ def _one_per_quota(rows: list[dict]) -> list[dict]:
     ]
 
 
+# A resource named for a non-production stage, in a production account: judged as non-production.
+NONPROD_RESOURCE = re.compile(r"(?<![a-z0-9])(dev|qa|uat|sit|test|poc|sandbox|sbx)(?![a-z0-9])", re.I)
+QUOTA_RULES = {"limit_product", "limit_account", "limit_connect"}
+QUOTA_OVER = 110.0  # AWS enforces a quota: usage well past it means the figure is not that quota's usage
+DLQ = re.compile(r"dlq|dead[-_ ]?letter|(?<![a-z0-9])dl(?![a-z0-9])", re.I)
+SHORT_RETENTION = re.compile(
+    r"deleted after 0 hours"
+)  # a queue that keeps messages under an hour drops them on purpose
+READ_API = re.compile(r"\b(Describe|List|Get|Search)[A-Z]\w*|describe .* information rate", re.I)
+NO_FREEABLE = ("oracle", "sqlserver", "db2")  # these engines allocate their memory up front
+
+
+def _stat(profile: dict | None, key: str) -> dict:
+    return next((s for s in (profile or {}).get("stats") or [] if s.get("k") == key), {})
+
+
+def _false_positive(row: dict, profiles: dict) -> bool:
+    """A reading that cannot be what it claims. profiles: {(svc, res): the resource's review}."""
+    facts = {k: p.get("facts") or {} for k, p in profiles.items()}
+    rule, pct = row["rule"], row.get("pct") or 0.0
+    if rule in QUOTA_RULES and pct > QUOTA_OVER:
+        return True  # an enforced limit exceeded: a raised quota the API does not show, or a mismatched metric
+    if rule in ("ebs_iops_use", "rds_iops") and pct > QUOTA_OVER:
+        return True  # past what is provisioned: the busiest read and write hours do not add up
+    if rule == "sqs_backlog" and (DLQ.search(row["res"]) or SHORT_RETENTION.search(row.get("note", ""))):
+        return True  # a dead-letter queue holds messages on purpose; a short retention drops stale ones by design
+    if rule == "efs_burst":
+        f = facts.get(("efs", row["res"])) or {}
+        if f.get("Throughput") not in (None, "bursting") or str(f.get("Size", "")).startswith("0.0 "):
+            return True  # credits only matter in bursting mode, and an empty file system never earns any
+    if rule == "rds_memory":
+        engine = str((facts.get(("rds", row["res"])) or {}).get("Engine") or row.get("engine") or "")
+        if engine.startswith(NO_FREEABLE):
+            return True
+    return False
+
+
+def _temper(f: dict, row: dict, profiles: dict) -> None:
+    """Lower a finding the evidence beside it does not bear out, and say why."""
+    if f["severity"] not in ("critical", "high"):
+        return
+    rule = row["rule"]
+    if rule in QUOTA_RULES and READ_API.search(row["res"]) and row.get("load"):
+        f["severity"] = "medium"
+        f["why"] += "; a read API, usually called by tooling that retries, not by customers"
+    elif rule == "lambda_timeout":
+        errors = _stat(profiles.get(("lambda", row["res"])), "Errors").get("peak") or 0
+        if (row.get("pct") or 0) > 101 and not errors:
+            f["severity"] = "medium"
+            f["why"] = (
+                "its longest run is longer than today's timeout, so the timeout was lowered in the window; "
+                "no errors since"
+            )
+        elif not errors:
+            f["severity"] = "high"
+            f["why"] += "; no errors recorded, so no run was cut off yet"
+    elif rule == "kinesis_iterator":
+        behind = _stat(profiles.get(("kinesis", row["res"])), "Reader behind")
+        if behind.get("peak") and (behind.get("avg") or 0) < 0.1 * behind["peak"]:
+            f["severity"] = "medium"
+            f["why"] = (
+                f"a reader started from the oldest record once (a restart or a new consumer) and caught up: "
+                f"{behind['avg'] / 60:,.0f} minutes behind on average"
+            )
+
+
 def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak) -> tuple[list[dict], list[dict]]:
     points = catalog()["points"]
     prod_p = _patterns(a.production_patterns)
@@ -299,19 +367,22 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
         rows += _region_mismatch(rows, raw.get("quota_values") or {})
         for c in raw.get("clusters") or []:
             rows += workload_rows(c, a)
+        profiles = {(p["svc"], p["res"]): p for p in raw.get("profiles") or []}
         found = []
         for row in rows:
             rule = rules.get(row["rule"])
-            if not rule:
+            if not rule or _false_positive(row, profiles):
                 continue
-            f = _judge(row, rule, a, peak, days_to_peak, production)
+            live = production and not NONPROD_RESOURCE.search(row["res"])
+            f = _judge(row, rule, a, peak, days_to_peak, live)
             if f:
+                _temper(f, row, profiles)
                 found.append(
                     {
                         **f,
                         "account": acct["name"],
                         "account_id": acct["id"],
-                        "production": production,
+                        "production": live,
                         "area": rule["area"],
                         "title": rule["title"],
                     }

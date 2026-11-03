@@ -137,3 +137,14 @@ def test_a_scan_without_the_checks_opens_the_newest_one_with_them(browser, conso
     finally:
         ctx.close()
         store.delete_scan(bare["id"])
+
+
+def test_a_heat_cell_lists_its_risks_and_what_to_do(page):
+    page.locator("#orHeat .or-heat-btn").first.click()
+    box = page.locator("#orHeatDetail")
+    box.wait_for(state="visible")
+    assert "What to do" in box.inner_text()
+    assert box.locator("tbody tr").count() >= 1
+    assert page.locator("#orTopTitle").inner_text().startswith("Top")
+    assert "Do:" in page.locator("#orTable").inner_text()
+    assert not page.errors

@@ -571,7 +571,7 @@ def _quota_usage(ctx: OutageCtx, region: str, found: list[tuple[str, dict]]) -> 
                                 {"Name": k, "Value": v} for k, v in (m.get("MetricDimensions") or {}).items()
                             ],
                         },
-                        "Period": RATE_PERIOD if rate else PERIOD,
+                        "Period": _rate_period(q) if rate else PERIOD,
                         "Stat": stat,
                     },
                 }
@@ -597,6 +597,18 @@ def _quota_usage(ctx: OutageCtx, region: str, found: list[tuple[str, dict]]) -> 
 _PERIOD_SECONDS = {"MICROSECOND": 1e-6, "MILLISECOND": 1e-3, "SECOND": 1, "MINUTE": 60, "HOUR": 3600, "DAY": 86400}
 
 
+def _quota_seconds(q: dict) -> float:
+    per = q.get("Period") or {}
+    return per.get("PeriodValue", 1) * _PERIOD_SECONDS.get(per.get("PeriodUnit"), 1)
+
+
+def _rate_period(q: dict) -> int:
+    """Seconds summed per datapoint: RATE_PERIOD for a quota per second or minute, the quota's own period
+    for a longer one (up to a day). Scaling five busy minutes up to a day read a daily email quota 8 times over."""
+    seconds = _quota_seconds(q)
+    return RATE_PERIOD if seconds <= RATE_PERIOD else int(min(seconds, 86400) // 60 * 60)
+
+
 def _is_rate(q: dict) -> bool:
     """A count of calls in a period. A count of resources has a Period too (an hour for RDS's), but it is a level:
     reading it as a rate reported 7 subnets as 84."""
@@ -605,9 +617,8 @@ def _is_rate(q: dict) -> bool:
 
 def _quota_row(ctx: OutageCtx, region: str, code: str, q: dict, high: float) -> None:
     per = (q.get("Period") or {}) if _is_rate(q) else {}
-    if per:  # a rate: the sum over RATE_PERIOD, as a figure for the quota's own period
-        seconds = per.get("PeriodValue", 1) * _PERIOD_SECONDS.get(per.get("PeriodUnit"), 1)
-        high = high / RATE_PERIOD * seconds
+    if per:  # a rate: the sum over the period read, as a figure for the quota's own period
+        high = high / _rate_period(q) * _quota_seconds(q)
     limit = q["Value"]
     rule = {"s3": "limit_s3", "connect": "limit_connect"}.get(code) or (
         "limit_account" if code in ACCOUNT_QUOTAS else "limit_product"
@@ -968,6 +979,17 @@ def task_ec2(ctx: OutageCtx, region: str) -> None:
     ctx.r.ok("fixed")
 
 
+def _io_peak(parts, limit, exceeded: Series | None) -> float:
+    """A second's worth of the busiest read hour plus the busiest write hour. They need not be the same
+    hour, so past the limit with no exceeded check the larger one alone is the honest figure."""
+    highs = [s.high for s in parts if s and s.n]
+    total = sum(highs)
+    hit = exceeded is not None and exceeded.n and exceeded.high > 0
+    if limit and total / PERIOD > limit and not hit:
+        total = max(highs, default=0.0)
+    return total / PERIOD
+
+
 def _volume_headroom(ctx: OutageCtx, volumes: list[dict], region: str) -> None:
     """IOPS and throughput used against what each gp3, io1 or io2 volume is provisioned for (gp2 is
     judged by its burst balance). The busiest read hour is added to the busiest write hour, so it errs high."""
@@ -977,7 +999,7 @@ def _volume_headroom(ctx: OutageCtx, volumes: list[dict], region: str) -> None:
         if kind not in ("gp3", "io1", "io2"):
             continue
         rops, wops = m["ebs_rops"].get(vid), m["ebs_wops"].get(vid)
-        ops = sum(s.high for s in (rops, wops) if s and s.n) / PERIOD
+        ops = _io_peak((rops, wops), v.get("Iops"), m["ebs_iops"].get(vid))
         if v.get("Iops") and (rops or wops):
             ctx.add(
                 "ebs_iops_use",
@@ -991,7 +1013,8 @@ def _volume_headroom(ctx: OutageCtx, volumes: list[dict], region: str) -> None:
                 note=f"{kind}, {v.get('Size')} GiB",
             )
         rb, wb = m["ebs_rbytes"].get(vid), m["ebs_wbytes"].get(vid)
-        mbps = sum(s.high for s in (rb, wb) if s and s.n) / PERIOD / 1024**2
+        mib = 1024**2
+        mbps = _io_peak((rb, wb), (v.get("Throughput") or 0) * mib, m["ebs_tput"].get(vid)) / 1024**2
         if kind == "gp3" and v.get("Throughput") and (rb or wb):
             ctx.add(
                 "ebs_iops_use",
@@ -1703,6 +1726,7 @@ def task_eks(ctx: OutageCtx, region: str) -> None:
                     used=sc.get("desiredSize", 0),
                     limit=sc["maxSize"],
                     load=True,
+                    min=sc.get("minSize"),
                 )
         row["nodegroups"] = len(groups)
         try:

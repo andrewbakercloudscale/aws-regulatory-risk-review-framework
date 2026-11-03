@@ -16,7 +16,8 @@ import yaml
 
 SEVERITIES = ("critical", "high", "medium", "low")
 SEV_ORDER = {s: i for i, s in enumerate(SEVERITIES)}
-TOP_RISKS = 50
+TOP_RISKS = 50  # and every critical one beyond it
+CELL_RISKS = 6  # distinct risks listed for one account and service
 HEAT_ACCOUNTS = 40
 HEAT_SERVICES = 16
 REVIEW_RESOURCES = 50  # sent per service, worst first; the counts cover every resource
@@ -294,7 +295,29 @@ def _heatmap(table: list[dict]) -> dict:
     return {"bands": bands, "rows": rows}
 
 
-def _account_service(table: list[dict], findings: list[dict], labels: dict[str, str]) -> dict:
+def _cell_risks(mine: list[dict], rules: dict) -> list[dict]:
+    """The distinct risks in one account and service, worst first, each with what to do about it."""
+    by: dict[str, list[dict]] = defaultdict(list)
+    for f in mine:
+        by[f["rule"]].append(f)
+    out = []
+    for rid, fs in by.items():
+        worst = min(fs, key=lambda f: (SEV_ORDER[f["severity"]], -(f["at_peak"] or f["pct"] or 0)))
+        out.append(
+            {
+                "title": rules[rid]["title"],
+                "severity": worst["severity"],
+                "count": len(fs),
+                "res": worst["res"],
+                "why": worst["why"],
+                "fix": rules[rid]["fix"],
+            }
+        )
+    out.sort(key=lambda r: (SEV_ORDER[r["severity"]], -r["count"]))
+    return out[:CELL_RISKS]
+
+
+def _account_service(table: list[dict], findings: list[dict], labels: dict[str, str], rules: dict) -> dict:
     """Severity by account and service, for the accounts with the most at stake. An account with no known
     spend has no exposure, so its critical ones are added rather than left out."""
     top = sorted(table, key=lambda r: (-r["exposure"], -r["score"]))[:HEAT_ACCOUNTS]
@@ -302,11 +325,13 @@ def _account_service(table: list[dict], findings: list[dict], labels: dict[str, 
     top += [r for r in table if r["rating"] == "Critical" and r["id"] not in shown and not r["monthly_spend"]][:10]
     shown = {r["id"] for r in top}
     grid: dict[tuple[str, str], Counter] = defaultdict(Counter)
+    held: dict[tuple[str, str], list[dict]] = defaultdict(list)
     weight: Counter = Counter()
     points = {"critical": 100, "high": 10, "medium": 1, "low": 0}
     for f in findings:
         if f["account_id"] in shown and f["service"]:
             grid[(f["account_id"], f["service"])][f["severity"]] += 1
+            held[(f["account_id"], f["service"])].append(f)
             weight[f["service"]] += points[f["severity"]]
     columns = [s for s, _ in weight.most_common(HEAT_SERVICES)]
     rows = []
@@ -315,7 +340,10 @@ def _account_service(table: list[dict], findings: list[dict], labels: dict[str, 
         for s in columns:
             c = grid.get((r["id"], s))
             worst = next((k for k in SEVERITIES if c and c[k]), "")
-            cells.append({"severity": worst, "count": sum(c.values()) if c else 0})
+            cell = {"severity": worst, "count": sum(c.values()) if c else 0}
+            if c:
+                cell["risks"] = _cell_risks(held[(r["id"], s)], rules)
+            cells.append(cell)
         rows.append(
             {
                 "id": r["id"],
@@ -380,7 +408,8 @@ def _top_risks(
             }
         )
     rows.sort(key=lambda r: r["_key"])
-    return [{k: v for k, v in r.items() if k != "_key"} for r in rows[:TOP_RISKS]]
+    keep = [r for i, r in enumerate(rows) if i < TOP_RISKS or r["severity"] == "critical"]
+    return [{k: v for k, v in r.items() if k != "_key"} for r in keep]
 
 
 def _runway(findings: list[dict], peak: date, today: date) -> dict:
@@ -419,7 +448,7 @@ def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date
         "coverage": _coverage(billed, svc_cat, by_billed),
         "services": _reviews(accounts, checked, findings, rules, svc_cat, by_billed, billed),
         "heatmap": _heatmap(table),
-        "account_service": _account_service(table, findings, labels),
+        "account_service": _account_service(table, findings, labels, rules),
         "top_risks": _top_risks(findings, table, rules, cat, freeze, peak, today),
         "runway": _runway(findings, peak, today),
         "spend": {

@@ -527,3 +527,84 @@ def test_every_call_is_valid_for_its_api(monkeypatch, caplog, status):
     assert not unexpected
     if status == 403:
         assert not out["rows"]
+
+
+def _one(rows, profiles=(), name="prod"):
+    scan = {"accounts": [{"id": "1", "name": name, "ou_path": "Root"}], "params": {"outage": True}}
+    scan["outage"] = {"accounts": {"1": {"rows": rows, "clusters": [], "checks": {}, "regions": ["r"],
+                                         "profiles": list(profiles)}}}  # fmt: skip
+    return build_outage(scan)["findings"]
+
+
+def test_readings_that_cannot_be_true_are_not_findings():
+    rows = [
+        {"rule": "limit_product", "res": "sns: Messages Published per Second", "region": "r", "pct": 20003.0,
+         "used": 60010.0, "limit": 300.0, "load": True},  # an enforced quota cannot be passed 200 times over
+        {"rule": "sqs_backlog", "res": "orders-dlq", "region": "r", "pct": 100.0},
+        {"rule": "sqs_backlog", "res": "replies", "region": "r", "pct": 100.0,
+         "note": "oldest message 2 minutes old; deleted after 0 hours"},
+        {"rule": "efs_burst", "res": "fs-1", "region": "r", "pct": 100.0},
+        {"rule": "rds_memory", "res": "ora", "region": "r", "pct": 99.0},
+    ]  # fmt: skip
+    profiles = [
+        {
+            "svc": "efs",
+            "res": "fs-1",
+            "region": "r",
+            "facts": {"Throughput": "bursting", "Size": "0.0 GiB"},
+            "stats": [],
+        },
+        {"svc": "rds", "res": "ora", "region": "r", "facts": {"Engine": "oracle-ee 19"}, "stats": []},
+    ]
+    assert _one(rows, profiles) == []
+
+
+def test_a_resource_named_for_a_test_stage_is_not_production():
+    rows = [{"rule": "rds_single_az", "res": "billing-qa-db", "region": "r"}]  # production only
+    assert _one(rows) == []
+
+
+def test_evidence_beside_a_finding_lowers_it():
+    rows = [
+        {"rule": "lambda_timeout", "res": "f", "region": "r", "pct": 133.0, "load": True},
+        {"rule": "kinesis_iterator", "res": "s", "region": "r", "pct": 100.0},
+        {"rule": "limit_connect", "res": "connect: Rate of DescribeUser API requests", "region": "r", "pct": 99.0,
+         "load": True},
+    ]  # fmt: skip
+    profiles = [
+        {
+            "svc": "lambda",
+            "res": "f",
+            "region": "r",
+            "facts": {},
+            "stats": [{"k": "Longest run", "peak": 40, "avg": 3}],
+        },
+        {
+            "svc": "kinesis",
+            "res": "s",
+            "region": "r",
+            "facts": {},
+            "stats": [{"k": "Reader behind", "peak": 259200.0, "avg": 1276.0}],
+        },
+    ]
+    assert {f["rule"]: f["severity"] for f in _one(rows, profiles)} == {
+        "lambda_timeout": "medium",
+        "kinesis_iterator": "medium",
+        "limit_connect": "medium",
+    }
+
+
+def test_a_daily_quota_is_read_over_a_day_and_a_per_second_one_finely():
+    daily = {"Period": {"PeriodValue": 1, "PeriodUnit": "DAY"}, "UsageMetric": {"MetricName": "CallCount"}}
+    second = {"Period": {"PeriodValue": 1, "PeriodUnit": "SECOND"}, "UsageMetric": {"MetricName": "CallCount"}}
+    assert collector._rate_period(daily) == 86400 and collector._rate_period(second) == collector.RATE_PERIOD
+
+
+def test_every_critical_risk_is_listed_beyond_fifty():
+    rows = [{"rule": "msk_offline", "res": f"k{i}", "region": "r", "used": 1, "unit": "x"} for i in range(3)]
+    scan = {"accounts": [{"id": str(i), "name": f"prod{i}", "ou_path": "Root"} for i in range(60)],
+            "params": {"outage": True}}  # fmt: skip
+    scan["outage"] = {"accounts": {str(i): {"rows": rows, "clusters": [], "checks": {}, "regions": ["r"]}
+                                   for i in range(60)}}  # fmt: skip
+    top = build_outage(scan)["top_risks"]
+    assert len(top) == 60 and all(f["severity"] == "critical" for f in top)

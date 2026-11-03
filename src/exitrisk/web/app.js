@@ -2510,6 +2510,21 @@
     $("#orMatrixList").hidden = true;
   }
 
+  /** One account and service from the heat table: each risk, where, why, and what to do. */
+  function showOrHeat(key) {
+    const h = state.orHeat;
+    const [ri, ci] = key.split("|").map(Number);
+    const row = h?.rows[ri], col = h?.columns[ci], cell = row?.cells[ci];
+    if (!cell?.risks) return;
+    const box = $("#orHeatDetail");
+    box.hidden = false;
+    const listed = cell.risks.reduce((n, k) => n + k.count, 0);
+    box.innerHTML = `<h4>${esc(col.label)} in <button type="button" class="link-btn" data-or-acct="${esc(row.name)}">${esc(row.name)}</button> <span class="muted small">${row.monthly ? `${money(row.monthly)} a month` : "spend unknown"}</span></h4>
+      <table class="data compact"><thead><tr><th>Severity</th><th>Risk</th><th>What to do</th></tr></thead><tbody>${cell.risks.map((k) => `<tr><td>${orSev(k.severity)}</td><td><strong>${esc(k.title)}</strong>${k.count > 1 ? ` <span class="muted small">× ${num(k.count)}</span>` : ""}<div class="small mono">${esc(k.res)}${k.count > 1 ? ' <span class="muted">(the worst)</span>' : ""}</div>${k.why ? `<div class="muted small">${esc(k.why)}</div>` : ""}</td><td class="small">${esc(k.fix)}</td></tr>`).join("")}</tbody></table>
+      ${cell.count > listed ? `<p class="muted small">${num(cell.count - listed)} more of lesser kinds: click the account for all its findings.</p>` : ""}`;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
   function showOrCell(key) {
     const c = state.orCells?.[key];
     if (!c) return;
@@ -2610,9 +2625,11 @@
 
   function renderOrHeat(r) {
     const h = r.account_service;
-    $("#orHeatNote").textContent = `The worst finding by account and service, with how many, for the ${num(h.rows.length)} accounts with the most exposure of ${num(h.total_accounts)}.`;
+    $("#orHeatNote").textContent = `The worst finding by account and service, with how many, for the ${num(h.rows.length)} accounts with the most risk of ${num(h.total_accounts)}. Click a cell for the risks and what to do.`;
+    state.orHeat = h;
+    $("#orHeatDetail").hidden = true;
     if (!h.columns.length) { $("#orHeat").innerHTML = ""; return; }
-    $("#orHeat").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Exposure</th>${h.columns.map((c) => `<th class="or-heat-col"><button type="button" class="link-btn" data-or-service="${esc(c.id)}"><span>${esc(c.label)}</span></button></th>`).join("")}</tr></thead><tbody>${h.rows.map((a) => `<tr><th scope="row"><button type="button" class="link-btn" data-or-acct="${esc(a.name)}">${esc(a.name)}</button></th><td class="num-cell small">${a.monthly ? money(a.exposure) : "no spend"}</td>${a.cells.map((c) => (c.severity ? `<td class="or-heat-cell" style="background:${OR_SEV_COLOR[c.severity]};color:${c.severity === "critical" ? "#fff" : "#111"}" title="${esc(c.severity)}">${num(c.count)}</td>` : '<td class="or-heat-cell"></td>')).join("")}</tr>`).join("")}</tbody>`;
+    $("#orHeat").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Exposure</th>${h.columns.map((c) => `<th class="or-heat-col"><button type="button" class="link-btn" data-or-service="${esc(c.id)}"><span>${esc(c.label)}</span></button></th>`).join("")}</tr></thead><tbody>${h.rows.map((a, ri) => `<tr><th scope="row"><button type="button" class="link-btn" data-or-acct="${esc(a.name)}">${esc(a.name)}</button></th><td class="num-cell small">${a.monthly ? money(a.exposure) : "no spend"}</td>${a.cells.map((c, ci) => (c.severity ? `<td class="or-heat-cell" style="background:${OR_SEV_COLOR[c.severity]};color:${c.severity === "critical" ? "#fff" : "#111"}"><button type="button" class="or-heat-btn" data-or-heat="${ri}|${ci}" title="${esc(`${c.severity}: ${(c.risks || [])[0]?.title || ""}. Click for what to do.`)}">${num(c.count)}</button></td>` : '<td class="or-heat-cell"></td>')).join("")}</tr>`).join("")}</tbody>`;
   }
 
   function renderOrRunway(r) {
@@ -2623,6 +2640,8 @@
   }
 
   function renderOrTop(r) {
+    const crit = r.top_risks.filter((f) => f.severity === "critical").length;
+    $("#orTopTitle").textContent = crit > 50 ? `Top risks: all ${num(crit)} critical, then the worst to 50` : `Top ${num(r.top_risks.length)} risks`;
     $("#orTop").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Severity</th><th>Risk</th><th>Account</th><th class="num-cell">Now → peak</th><th>What to do</th><th>Start by</th></tr></thead><tbody>${r.top_risks.map((f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${orSev(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small mono">${esc(f.res)}${f.more ? ` <span class="muted">and ${num(f.more)} more</span>` : ""}</div><div class="muted small">${esc(f.service || "")}${f.why ? `${f.service ? " · " : ""}${esc(f.why)}` : ""}</div></td><td><button type="button" class="link-btn" data-or-acct="${esc(f.account)}">${esc(f.account)}</button>${f.production ? "" : ' <span class="muted small">non-prod</span>'}<div class="muted small">${f.monthly ? `${money(f.monthly)}/month` : "spend unknown"}</div></td><td class="num-cell">${f.pct != null ? `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}` : EMPTY}</td><td class="small">${esc(f.fix)}</td><td class="small">${esc(orDate(f.start_by))}${f.late ? '<div class="warn-text">already late</div>' : ""}</td></tr>`).join("")}</tbody>`;
   }
 
@@ -2708,8 +2727,9 @@
       if (f.pct == null) return EMPTY;
       return `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}`;
     };
+    const fixes = Object.fromEntries((state.or.rules || []).map((x) => [x.id, x.fix]));
     const usage = (f) => (f.used != null && f.limit != null ? `${num(f.used, f.used % 1 ? 1 : 0)} of ${num(f.limit, f.limit % 1 ? 1 : 0)}${f.unit ? ` ${esc(f.unit)}` : ""}${f.hard ? " · hard limit" : ""}` : "");
-    $("#orTable").innerHTML = `<thead><tr><th>Severity</th><th>Finding</th><th>Account</th><th>Resource</th><th class="num-cell">Now → peak</th><th>Detail</th></tr></thead><tbody>${rows.slice(0, n).map((f) => `<tr><td>${orSev(f.severity)}</td><td>${esc(f.title)}</td><td class="small">${esc(f.account)}${f.production ? "" : ' <span class="muted">non-prod</span>'}</td><td class="small mono or-res">${esc(f.res)}<div class="muted">${esc(f.region)}</div></td><td class="num-cell nowrap">${value(f)}</td><td class="small">${esc(f.why)}${usage(f) ? `<div class="muted">${usage(f)}</div>` : ""}${f.note && f.note !== f.why ? `<div class="muted">${esc(f.note)}</div>` : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">Nothing matches.</td></tr>`}</tbody>`;
+    $("#orTable").innerHTML = `<thead><tr><th>Severity</th><th>Finding</th><th>Account</th><th>Resource</th><th class="num-cell">Now → peak</th><th>Detail</th></tr></thead><tbody>${rows.slice(0, n).map((f) => `<tr><td>${orSev(f.severity)}</td><td>${esc(f.title)}</td><td class="small">${esc(f.account)}${f.production ? "" : ' <span class="muted">non-prod</span>'}</td><td class="small mono or-res">${esc(f.res)}<div class="muted">${esc(f.region)}</div></td><td class="num-cell nowrap">${value(f)}</td><td class="small">${esc(f.why)}${usage(f) ? `<div class="muted">${usage(f)}</div>` : ""}${f.note && f.note !== f.why ? `<div class="muted">${esc(f.note)}</div>` : ""}${fixes[f.rule] ? `<div class="or-fix"><strong>Do:</strong> ${esc(fixes[f.rule])}</div>` : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">Nothing matches.</td></tr>`}</tbody>`;
     const cut = state.or.findings_total > state.or.findings.length;
     $("#orFindCount").textContent = `${num(rows.length)} shown of ${num(state.or.findings_total)} findings${cut ? `; the worst ${num(state.or.findings.length)} are listed here and in the CSV` : ""}.`;
     $("#orMoreNote").textContent = n < rows.length ? `Showing ${num(n)} of ${num(rows.length)}` : "";
@@ -2795,6 +2815,8 @@
       }
       const c = e.target.closest("[data-or-cell]");
       if (c) showOrCell(c.dataset.orCell);
+      const hc = e.target.closest("[data-or-heat]");
+      if (hc) { showOrHeat(hc.dataset.orHeat); return; }
       const s = e.target.closest("[data-or-service]");
       if (s) {
         const box = document.getElementById(`orReview-${s.dataset.orService}`);

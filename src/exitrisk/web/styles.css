@@ -904,3 +904,8 @@ body[data-view="outage"] #btnJumpAi { display: none; }
   .or-review, .or-matrix, .or-heat { break-inside: auto; }
   .or-cell, .or-heat-cell, .or-bar-track i, .or-covbar i { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+.or-heat-btn { all: unset; display: block; width: 100%; height: 100%; text-align: center; cursor: pointer; }
+.or-heat-btn:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: -2px; }
+.or-heat-detail { margin-top: 12px; padding: 12px; border: 1px solid var(--border, #ddd); border-radius: 8px; }
+.or-heat-detail h4 { margin: 0 0 8px; }
+.or-fix { margin-top: 4px; }
