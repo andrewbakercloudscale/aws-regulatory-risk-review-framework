@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-03
+
 ### Changed
 - **Outage Risk Report ranks by outage risk, not spend.** New in section 1: the services most at risk of an
   outage, ranked by how likely one is (production findings, a critical counting ten highs) and how far it would
