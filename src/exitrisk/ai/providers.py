@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 import truststore
 
-from .. import __version__
+from .. import __version__, network
 from ..config import settings
 from ..logging_config import get_logger
 
@@ -312,15 +312,37 @@ class Client:
                 raise AIError("Enter the gateway's API key, or the headers it authenticates with.")
         elif s.provider != "bedrock" and not s.api_key():
             raise AIError(f"No API key for {PROVIDERS[s.provider].label}. Enter one in Settings, AI configuration.")
+        # Set by the run: its Stop, and where to say it is paused while offline.
+        self.stop = None
+        self.on_offline = None
+
+    def _wait_online(self) -> bool:
+        """True once back online after a pause; False if it was online all along (a real failure)."""
+        try:
+            return network.wait_until_online(self.on_offline, stop=self.stop) > 0
+        except network.Cancelled:
+            return False
+        finally:
+            if self.on_offline:
+                self.on_offline(None)
 
     def complete(self, system: str, user: str, max_tokens: int = 16000, effort: str = "high") -> Reply:
         """``effort`` is how hard the model reasons: "high", or "medium" for a quicker check."""
+        offline_waits = 0
         while True:
             try:
                 return self._call(system, user, max_tokens, effort)
-            except AIError as exc:
-                if not self.modes or not re.search(
-                    r"think|reason|budget|effort|output_config|unsupported|not support|extra", str(exc), re.I
+            except Exception as exc:
+                # The network went away (a laptop shut): wait for it, then ask again, rather than fail the run.
+                if network.is_network_error(exc) and offline_waits < 6 and self._wait_online():
+                    offline_waits += 1
+                    continue
+                if (
+                    not isinstance(exc, AIError)
+                    or not self.modes
+                    or not re.search(
+                        r"think|reason|budget|effort|output_config|unsupported|not support|extra", str(exc), re.I
+                    )
                 ):
                     raise
                 log.info("model %s refused reasoning form %r: %s", self.model, self.modes[0], exc)

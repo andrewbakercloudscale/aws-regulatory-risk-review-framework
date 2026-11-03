@@ -10,6 +10,14 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _online(monkeypatch):
+    """Tests never probe the real network: online unless a test says otherwise."""
+    from exitrisk import network
+
+    monkeypatch.setattr(network, "online", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_ou_tree_cache():
     """The OU tree cache lives for the process; one test's fake organisation must not leak into the next."""
     from exitrisk.collectors import organizations

@@ -20,6 +20,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import network
 from ..config import settings
 from ..logging_config import get_logger
 from .providers import PROVIDERS, AIError, AISettings, Client
@@ -391,6 +392,18 @@ class Run:
         with self._lock:
             self.state.update(fields, usage=dict(self.usage))
 
+    def _offline(self, seconds: float | None) -> None:
+        """Say the run is paused for the network; ``None`` once it is back, to put the message back."""
+        with self._lock:
+            before = getattr(self, "_before_pause", None)
+            if seconds is None:
+                if before is not None:
+                    self.state["message"], self._before_pause = before, None
+                return
+            if before is None:
+                self._before_pause = self.state["message"]
+            self.state["message"] = network.paused_message(seconds)
+
     def run(self) -> dict:
         started = time.perf_counter()
         mask = Masker(self.s.mask_names)
@@ -399,6 +412,8 @@ class Run:
         ids = {mask.code(a["id"], "A") for a in accounts}
         prompt = mask.mask(_prompt(self.kind, facts, accounts))
         client = Client(self.s)
+        client.stop = self.cancel.is_set
+        client.on_offline = self._offline
         system = f"{AUDIENCE[self.kind]}\n\n{RULES}"
         notes: list[str] = []
         view, last, extra, max_tokens = None, "", "", MAX_TOKENS

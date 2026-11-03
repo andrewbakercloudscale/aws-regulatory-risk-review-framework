@@ -3529,6 +3529,12 @@
         $("#scanRunPct").textContent = `${s.pct}%`;
         $("#btnScanRunning").style.setProperty("--pct", `${s.pct}%`);
         showEta(s);
+        // Offline (a laptop shut, Wi-Fi gone): the scan is paused and carries on by itself once back.
+        if (s.paused) {
+          $("#etaLeft").textContent = "paused: no network";
+          $("#etaAt").textContent = "when you are back online";
+          $("#btnScanRunning").title = "Paused: no network. The scan carries on by itself when you are back online.";
+        }
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         state.runningScan = null;
         showScanRunning();

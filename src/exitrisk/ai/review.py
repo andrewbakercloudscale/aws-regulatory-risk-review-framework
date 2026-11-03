@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import network
 from ..catalog import Catalog, load_catalog
 from ..config import settings
 from ..logging_config import get_logger
@@ -532,12 +533,26 @@ class Run:
                 extra = "\n\nYour previous reply was not one valid JSON object. Reply with JSON only."
         raise AIError(f"{what}: {last}. Nothing was saved; try again, or a model with a longer output limit.")
 
+    def _offline(self, seconds: float | None) -> None:
+        """Say the run is paused for the network; ``None`` once it is back, to put the message back."""
+        with self._lock:
+            before = getattr(self, "_before_pause", None)
+            if seconds is None:
+                if before is not None:
+                    self.state["message"], self._before_pause = before, None
+                return
+            if before is None:
+                self._before_pause = self.state["message"]
+            self.state["message"] = network.paused_message(seconds)
+
     def run(self) -> dict:
         started = time.perf_counter()
         mask = Masker(self.s.mask_names)
         facts, rows = build_context(self.report, mask)
         ids = {r["id"] for r in rows}
         client = Client(self.s)
+        client.stop = self.cancel.is_set
+        client.on_offline = self._offline
         asked_reasoning = client.reasoning
         batches = [rows[i : i + BATCH_ACCOUNTS] for i in range(0, len(rows), BATCH_ACCOUNTS)]
         total = len(batches) + 2

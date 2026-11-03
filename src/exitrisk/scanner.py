@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from . import procs, sso, store
+from . import network, procs, sso, store
 from .aws_session import ClientCache, caller_identity, make_session, member_session
 from .collectors import assurance, assurance_org, cost, inventory, organizations
 from .collectors import outage as outage_checks
@@ -140,6 +140,8 @@ class ScanParams:
 # How long a deep scan waits for the user to sign in again when the sign-in ends part-way.
 SIGN_IN_WAIT_SECONDS = 15 * 60
 SIGN_IN_POLL_SECONDS = 3
+# How often one account, or one organisation-wide call, is read again after a lost network.
+NETWORK_RETRIES = 6
 
 
 class ScanFailed(RuntimeError):
@@ -174,6 +176,12 @@ class ScanJob:
     # "seconds_left" (None until a few accounts are done), "then" (a step still to come, or None),
     # "parallel" (accounts read at once)}.
     eta: dict | None = None
+    # Lost network: paused until it is back. ``net_epoch`` counts the pauses, so an account read across
+    # one is read again; ``paused_seconds`` is left out of the pace behind the ETA.
+    paused: bool = False
+    net_epoch: int = 0
+    paused_seconds: float = 0.0
+    _net_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def cancel(self) -> None:
         """Ask the scan to stop: it does within seconds, and keeps what it has read."""
@@ -231,7 +239,46 @@ class ScanJob:
                 "needs_sign_in": self.needs_sign_in,
                 "elapsed_seconds": round((self.finished_at or time.monotonic()) - self.started_at),
                 "eta": self.eta,
+                "paused": self.paused,
             }
+
+    def wait_for_network(self) -> bool:
+        """Offline: pause until the connection is back, however long (a laptop shut overnight). Stop still
+        works. True if it paused. Threads that find it offline together wait as one."""
+        if network.online():
+            return False
+        with self._net_lock:
+            if network.online():
+                return True  # another thread waited it out
+            with self._lock:
+                phase, pct, message, eta = self.phase, self.pct, self.message, self.eta
+                self.paused = True
+                self.net_epoch += 1
+            try:
+                waited = network.wait_until_online(
+                    lambda s: self.update(phase, pct, network.paused_message(s), eta),
+                    stop=self._cancel.is_set,
+                )
+            except network.Cancelled:
+                raise ScanCancelled from None
+            finally:
+                with self._lock:
+                    self.paused = False
+            with self._lock:
+                self.paused_seconds += waited
+            self.update(phase, pct, message, eta)
+            return True
+
+    def retry_offline(self, fn, *args):
+        """``fn(*args)``, called again after a pause for each time it fails because the network is gone."""
+        for attempt in range(NETWORK_RETRIES):
+            try:
+                return fn(*args)
+            except Exception as exc:
+                if attempt == NETWORK_RETRIES - 1 or not network.is_network_error(exc) or not self.wait_for_network():
+                    raise
+                log.info("retrying after the network came back")
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def wait_for_sign_in(self, session_name: str, rejected=None) -> bool:
         """The sign-in ended mid-scan and could not be renewed: wait for the user to sign in again,
@@ -250,6 +297,14 @@ class ScanJob:
             deadline = time.monotonic() + SIGN_IN_WAIT_SECONDS
             try:
                 while time.monotonic() < deadline:
+                    if not network.online():  # a token cannot be renewed offline: wait for the network first
+                        t_off = time.monotonic()
+                        self.wait_for_network()
+                        deadline += time.monotonic() - t_off
+                        token = sso.load_token(session_name)
+                        if token and token != rejected:
+                            self.update(phase, pct, message)
+                            return True
                     left = max(1, round((deadline - time.monotonic()) / 60))
                     self.update(
                         phase,
@@ -389,7 +444,7 @@ def _optional(job: ScanJob, data: dict, key: str, what: str, advice: str, fetch,
     data["unavailable"] so the report says why the section is empty rather than "run a new scan". An
     expired sign-in is an error, so a scan that lost its credentials part-way is saved as partial."""
     try:
-        data[key] = fetch()
+        data[key] = job.retry_offline(fetch)
         return True
     except Exception as exc:
         if not isinstance(exc, (ClientError, BotoCoreError)):
@@ -430,7 +485,7 @@ def run_scan(job: ScanJob) -> dict:
     known: dict = {}  # OU id -> its accounts, for the whole organisation
     tree = None
     try:
-        data["identity"] = caller_identity(session)
+        data["identity"] = job.retry_offline(caller_identity, session)
     except Exception as exc:
         code, msg, hint = describe_exception(exc)
         job.add_issue(Issue("critical", "auth", f"could not authenticate: {msg}", hint, error_code=code))
@@ -442,8 +497,9 @@ def run_scan(job: ScanJob) -> dict:
     try:
         # Always read fresh: a scan is evidence, so an OU moved minutes ago must count. The picker's
         # cached copy is refreshed with what the scan saw.
-        data["org"] = organizations.describe_org(session)
-        tree = organizations.list_ou_tree(
+        data["org"] = job.retry_offline(organizations.describe_org, session)
+        tree = job.retry_offline(
+            organizations.list_ou_tree,
             session,
             known,
             lambda n_ous, n_accts: job.update(
@@ -460,7 +516,7 @@ def run_scan(job: ScanJob) -> dict:
         # Nested picks (an OU and one of its children) overlap: keep each account once.
         seen: dict[str, organizations.Account] = {}
         for ou in ous:
-            for a in organizations.list_accounts_under(session, ou, known):
+            for a in job.retry_offline(organizations.list_accounts_under, session, ou, known):
                 seen.setdefault(a.id, a)
         accounts = list(seen.values())
         if data["identity"]["account_id"] != data["org"]["management_account_id"]:
@@ -529,7 +585,8 @@ def run_scan(job: ScanJob) -> dict:
     # 3. Spend per account per service. Without this there is no score, so a failure is fatal.
     job.update("cost", 30, f"Querying Cost Explorer for the last {p.months} complete month(s)")
     try:
-        data["costs"], data["period"] = cost.fetch_costs(
+        data["costs"], data["period"] = job.retry_offline(
+            cost.fetch_costs,
             session,
             [a.id for a in accounts],
             p.months,
@@ -869,7 +926,21 @@ def _each_account(
         )
 
     def one(account):
-        job.check_cancelled()  # an account still queued when the scan is stopped is not started
+        """One account, read again if the network went away part-way: a laptop shut mid-scan picks up
+        where it was, with nothing recorded as failed for the time it was offline."""
+        for attempt in range(NETWORK_RETRIES):
+            job.check_cancelled()  # an account still queued when the scan is stopped is not started
+            epoch = job.net_epoch
+            account_, out, issues, exc = read_one(account)
+            offline = network.is_network_error(exc) or any(i.error_code in network.NETWORK_CODES for i in issues)
+            if offline and attempt < NETWORK_RETRIES - 1 and (job.wait_for_network() or job.net_epoch != epoch):
+                log.info("%s of %s: reading it again now the network is back", what, account.id)
+                continue
+            return account_, out, issues
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def read_one(account):
+        """(account, result, issues, the exception that stopped it or None)."""
         try:
             try:
                 sess = (
@@ -908,11 +979,12 @@ def _each_account(
                         error_code=code,
                     )
                 ],
+                exc,
             )
         try:
             out, issues = read(workers, sess, account)
         except procs.Stopped:
-            return account, None, []
+            return account, None, [], None
         except Exception as exc:  # one account's odd answer must not lose the other accounts
             if not isinstance(exc, (ClientError, BotoCoreError)):
                 log.exception("%s of %s failed with an unexpected error", what, account.id)
@@ -926,8 +998,8 @@ def _each_account(
                 account_id=account.id,
                 error_code=code,
             )
-            return account, None, [issue]
-        return account, out, issues
+            return account, None, [issue], exc
+        return account, out, issues, None
 
     workers = (
         InventoryPool(min(settings.processes, len(active))) if settings.processes > 1 and len(active) > 1 else None
@@ -935,7 +1007,7 @@ def _each_account(
     pool = ThreadPoolExecutor(max_workers=settings.max_workers)
     label = STEP_LABELS.get(what)
     step = label or "Deep scan"
-    t0 = time.monotonic()
+    t0, paused0 = time.monotonic(), job.paused_seconds
     with workers or nullcontext():
         try:
             # Each account's thread runs in a copy of this context, so its log lines keep the scan's run id.
@@ -945,7 +1017,7 @@ def _each_account(
                 finished, _ = wait(waiting, timeout=WAIT_POLL_SECONDS, return_when=FIRST_COMPLETED)
                 job.check_cancelled()  # Stop works even while every account in hand is slow
                 now = time.monotonic()
-                if not finished and now - max(last_done, warned_at) > STALL_WARN_SECONDS:
+                if not finished and not job.paused and now - max(last_done, warned_at) > STALL_WARN_SECONDS:
                     warned_at = now
                     slow = [a.name for f, a in waiting.items() if f.running()]
                     minutes = (now - last_done) / 60
@@ -960,7 +1032,8 @@ def _each_account(
                         results[account.id] = out
                     done += 1
                     text = f"{done} of {len(active)} accounts {verb}: {account.name}"
-                    left = eta_seconds(time.monotonic() - t0, done, len(active), settings.max_workers)
+                    left = eta_seconds(time.monotonic() - t0 - (job.paused_seconds - paused0), done, len(active),
+                                       settings.max_workers)  # fmt: skip
                     eta = {"step": step, "done": done, "total": len(active), "then": then, "seconds_left": left,
                            "parallel": settings.max_workers}  # fmt: skip
                     job.update(what, span[0] + int((span[1] - span[0]) * done / max(len(active), 1)),
