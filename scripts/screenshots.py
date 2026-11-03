@@ -262,6 +262,7 @@ def main() -> int:
         page.wait_for_selector("#scanDialog[open]")
         page.wait_for_selector("#sOu input[value='ou-demo-prod']")
         page.check("#sOu input[value='ou-demo-prod']")
+        page.check("#sRepExit")  # the depth is an Exit Risk option, shown only when that report is chosen
         page.select_option("#sDepth", "dependency")
         page.fill("input[name=role_name]", "ExitRiskReadOnly")
         # Tall enough to show the whole dialog, from the top.

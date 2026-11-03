@@ -136,10 +136,11 @@ def test_fetch_storage_keeps_gb_months_and_classifies(monkeypatch):
         rows = cost.fetch_storage(
             session, ["111111111111"], {"Amazon Simple Storage Service", "EC2 - Other", "AWS Lambda"}
         )
-    assert [(r["usage_type"], r["kind"], r["gb"]) for r in rows] == [
+    # The two services are read at once, so which answers first varies.
+    assert sorted((r["usage_type"], r["kind"], r["gb"]) for r in rows) == [
+        ("EUW2-EBS:SnapshotUsage", "copy", 300.0),
         ("EUW2-TimedStorage-ByteHrs", "live", 2048.0),
         ("EUW2-TimedStorage-GlacierByteHrs", "archive", 1024.0),
-        ("EUW2-EBS:SnapshotUsage", "copy", 300.0),
     ]
 
 
