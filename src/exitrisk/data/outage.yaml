@@ -12,7 +12,7 @@
 #   severity  for event and config rules. Lowered one level outside production.
 #   prod_only reported only in production accounts
 #   fix       what to do about it
-version: "2026.11.4"
+version: "2026.11.5"
 points: {critical: 40, high: 15, medium: 5, low: 1}
 
 areas:
@@ -88,6 +88,10 @@ rules:
   - {id: rds_replica_mismatch, area: storage, kind: config, severity: medium, title: Read replica smaller than its source, why: "A replica with a smaller class or less storage than its source lags under load, and cannot take over at the same capacity.", fix: "Match the replica's class and storage to the source."}
   - {id: rds_single_az, area: storage, kind: config, severity: high, prod_only: true, title: Production database in one availability zone, why: "The loss of one zone takes it down, with recovery from backup.", fix: "Turn on Multi-AZ."}
   - {id: ebs_instance_mismatch, area: storage, kind: config, severity: medium, title: Volumes provisioned beyond what the instance can deliver, why: "An instance has a ceiling on EBS IOPS and throughput. Volumes above it pay for performance the instance cannot use, and the server hits its limit before the disks do.", fix: "Move to an instance type with a higher EBS limit, or reduce the provisioned figures."}
+  - {id: ebs_iops_use, area: storage, kind: capacity, title: Volume near its provisioned IOPS or throughput, why: "A gp3, io1 or io2 volume delivers what it is provisioned for and no more. Past it, I/O queues and latency climbs for everything on the disk. The busiest read hour is added to the busiest write hour, so it errs high; bursts inside the hour go higher.", fix: "Raise the volume's IOPS or throughput (gp3 and io2 change online, once every six hours), or spread the data over more volumes."}
+  - {id: ec2_ebs_burst, area: storage, kind: capacity, title: Instance running out of EBS burst, why: "Sizes below about 4xlarge burst to their maximum EBS IOPS and throughput on credits and fall back to a much lower baseline. At zero every volume on the instance slows, whatever it is provisioned for.", fix: "Move to a size whose baseline EBS performance covers the peak."}
+  - {id: rds_iops, area: storage, kind: capacity, title: Database near its provisioned IOPS, why: "Read and write IOPS against the storage's provisioned IOPS. Past it, queries wait on disk. The busiest read and write hours are added, so it errs high.", fix: "Raise provisioned IOPS (gp3, io1 or io2), or move reads to replicas; check the instance class can drive the new figure."}
+  - {id: search_io_throttled, area: storage, kind: event, severity: high, title: OpenSearch EBS throttled, why: "The domain's EBS volumes hit their IOPS or throughput limit in the lookback window, so indexing and searches slowed.", fix: "Move to gp3 and raise IOPS and throughput, or add data nodes."}
   - {id: ebs_burst, area: storage, kind: capacity, title: gp2 volume running out of burst credits, why: "At zero burst balance a gp2 volume falls to its baseline IOPS.", fix: "Move to gp3 and set the IOPS needed."}
   - {id: ebs_exceeded, area: storage, kind: event, severity: high, title: Volume asked for more than it was provisioned, why: "The application asked for more IOPS or throughput than the volume supplies, so I/O queued.", fix: "Raise the IOPS and throughput on the volume."}
   - {id: disk_full, area: storage, kind: capacity, title: Server disk filling, why: "From the CloudWatch agent where it is installed. A full disk stops most software.", fix: "Grow the volume, and clean up logs."}

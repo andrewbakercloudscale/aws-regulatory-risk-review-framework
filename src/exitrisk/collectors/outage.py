@@ -210,6 +210,12 @@ METRICS = {
     "ebs_burst": ("AWS/EBS", ("VolumeId",), "BurstBalance", "Minimum", None),
     "ebs_iops": ("AWS/EBS", ("VolumeId",), "VolumeIOPSExceededCheck", "Maximum", None),
     "ebs_tput": ("AWS/EBS", ("VolumeId",), "VolumeThroughputExceededCheck", "Maximum", None),
+    "ebs_rops": ("AWS/EBS", ("VolumeId",), "VolumeReadOps", "Sum", None),
+    "ebs_wops": ("AWS/EBS", ("VolumeId",), "VolumeWriteOps", "Sum", None),
+    "ebs_rbytes": ("AWS/EBS", ("VolumeId",), "VolumeReadBytes", "Sum", None),
+    "ebs_wbytes": ("AWS/EBS", ("VolumeId",), "VolumeWriteBytes", "Sum", None),
+    "ec2_ebsio": ("AWS/EC2", ("InstanceId",), "EBSIOBalance%", "Minimum", None),
+    "ec2_ebsbyte": ("AWS/EC2", ("InstanceId",), "EBSByteBalance%", "Minimum", None),
     "rds_cpu": (
         "AWS/RDS",
         ("DBInstanceIdentifier",),
@@ -252,6 +258,8 @@ METRICS = {
         "Minimum",
         "Amazon Relational Database Service",
     ),
+    "rds_riops": ("AWS/RDS", ("DBInstanceIdentifier",), "ReadIOPS", "Average", "Amazon Relational Database Service"),
+    "rds_wiops": ("AWS/RDS", ("DBInstanceIdentifier",), "WriteIOPS", "Average", "Amazon Relational Database Service"),
     "rds_acu": (
         "AWS/RDS",
         ("DBInstanceIdentifier",),
@@ -941,6 +949,16 @@ def task_ec2(ctx: OutageCtx, region: str) -> None:
     for vol, s in m["ebs_burst"].items():
         if s.n:
             ctx.add("ebs_burst", vol, region, pct=100.0 - s.low, note=f"lowest burst balance {s.low:.0f}%")
+    for key, what in (("ec2_ebsio", "EBS IO"), ("ec2_ebsbyte", "EBS byte")):
+        for iid, s in m[key].items():
+            if iid in instances and s.n:
+                ctx.add(
+                    "ec2_ebs_burst",
+                    label(iid),
+                    region,
+                    pct=100.0 - s.low,
+                    note=f"{instances[iid]['type']}; lowest {what} balance {s.low:.0f}%",
+                )
     for res, s in m.get("disk_used", {}).items():
         iid, _, path = res.partition("|")
         if s.n and iid in instances:
@@ -950,11 +968,50 @@ def task_ec2(ctx: OutageCtx, region: str) -> None:
     ctx.r.ok("fixed")
 
 
+def _volume_headroom(ctx: OutageCtx, volumes: list[dict], region: str) -> None:
+    """IOPS and throughput used against what each gp3, io1 or io2 volume is provisioned for (gp2 is
+    judged by its burst balance). The busiest read hour is added to the busiest write hour, so it errs high."""
+    m = ctx.metrics(region)
+    for v in volumes:
+        vid, kind = v.get("VolumeId", ""), v.get("VolumeType", "")
+        if kind not in ("gp3", "io1", "io2"):
+            continue
+        rops, wops = m["ebs_rops"].get(vid), m["ebs_wops"].get(vid)
+        ops = sum(s.high for s in (rops, wops) if s and s.n) / PERIOD
+        if v.get("Iops") and (rops or wops):
+            ctx.add(
+                "ebs_iops_use",
+                vid,
+                region,
+                pct=100.0 * ops / v["Iops"],
+                used=round(ops),
+                limit=v["Iops"],
+                unit="IOPS",
+                load=True,
+                note=f"{kind}, {v.get('Size')} GiB",
+            )
+        rb, wb = m["ebs_rbytes"].get(vid), m["ebs_wbytes"].get(vid)
+        mbps = sum(s.high for s in (rb, wb) if s and s.n) / PERIOD / 1024**2
+        if kind == "gp3" and v.get("Throughput") and (rb or wb):
+            ctx.add(
+                "ebs_iops_use",
+                f"{vid} throughput",
+                region,
+                pct=100.0 * mbps / v["Throughput"],
+                used=round(mbps),
+                limit=v["Throughput"],
+                unit="MiB/s",
+                load=True,
+                note=f"{kind}, {v.get('Size')} GiB",
+            )
+
+
 def _ebs_mismatch(ctx: OutageCtx, ec2, instances: dict, region: str) -> None:
     """The volumes on one instance, added up, against what the instance type can drive."""
     volumes = _pages(
         ec2, "describe_volumes", "Volumes", cap=MAX_ITEMS, Filters=[{"Name": "status", "Values": ["in-use"]}]
     )
+    _volume_headroom(ctx, volumes, region)
     per: dict[str, dict] = {}
     for v in volumes:
         for a in v.get("Attachments") or []:
@@ -1018,6 +1075,20 @@ def task_rds(ctx: OutageCtx, region: str) -> None:
             s = m[key].get(name)
             if s and s.n:
                 ctx.add("rds_burst", name, region, pct=100.0 - s.low, note=f"lowest {what} balance {s.low:.0f}%")
+        reads, writes = m["rds_riops"].get(name), m["rds_wiops"].get(name)
+        if d.get("Iops") and not shared and (reads or writes):
+            iops = sum(s.high for s in (reads, writes) if s and s.n)
+            ctx.add(
+                "rds_iops",
+                name,
+                region,
+                pct=100.0 * iops / d["Iops"],
+                used=round(iops),
+                limit=d["Iops"],
+                unit="IOPS",
+                load=True,
+                note=f"{cls}, {d.get('StorageType', '')}; busiest read and write hours added",
+            )
         if shared:  # the cluster volume grows by itself
             continue
         _rds_storage(ctx, d, m["rds_free"].get(name), region)

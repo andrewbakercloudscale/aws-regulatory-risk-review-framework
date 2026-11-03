@@ -72,6 +72,7 @@ ANSWERS = {
                     "MultiAZ": False,
                     "AllocatedStorage": 100,
                     "StorageType": "gp3",
+                    "Iops": 3000,
                     "BackupRetentionPeriod": 7,
                     "DBParameterGroups": [{"DBParameterGroupName": "pg"}],
                 },
@@ -100,6 +101,18 @@ ANSWERS = {
     "ec2": {
         "describe_instances": {
             "Reservations": [{"Instances": [{"InstanceId": "res1", "InstanceType": "t3.medium", "Tags": []}]}]
+        },
+        "describe_volumes": {
+            "Volumes": [
+                {
+                    "VolumeId": "res1",
+                    "VolumeType": "gp3",
+                    "Iops": 3000,
+                    "Throughput": 125,
+                    "Size": 100,
+                    "Attachments": [{"InstanceId": "res1"}],
+                }
+            ]
         },
         "describe_instance_credit_specifications": {
             "InstanceCreditSpecifications": [{"InstanceId": "res1", "CpuCredits": "standard"}]

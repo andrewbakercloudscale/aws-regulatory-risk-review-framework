@@ -84,6 +84,8 @@ METRICS.update(
         "search_shards": ("AWS/ES", ("ClientId", "DomainName"), "Shards.active", "Maximum", SEARCH),
         "search_nodes": ("AWS/ES", ("ClientId", "DomainName"), "Nodes", "Minimum", SEARCH),
         "search_rejected": ("AWS/ES", ("ClientId", "DomainName"), "ThreadpoolWriteRejected", "Sum", SEARCH),
+        "search_iops_throttle": ("AWS/ES", ("ClientId", "DomainName"), "IopsThrottle", "Maximum", SEARCH),
+        "search_tput_throttle": ("AWS/ES", ("ClientId", "DomainName"), "ThroughputThrottle", "Maximum", SEARCH),
         "kin_in": ("AWS/Kinesis", ("StreamName",), "IncomingBytes", "Sum", KINESIS),
         "kin_age": ("AWS/Kinesis", ("StreamName",), "GetRecords.IteratorAgeMilliseconds", "Maximum", KINESIS),
         "lambda_dur": ("AWS/Lambda", ("FunctionName",), "Duration", "Maximum", LAMBDA),
@@ -625,6 +627,10 @@ def task_search_review(ctx: OutageCtx, region: str) -> None:
             rejected = _busiest(m["search_rejected"], name, -1)
             if rejected and rejected.total > 0:
                 ctx.add("search_rejected", name, region, used=round(rejected.total), unit="writes rejected")
+            throttled = [w for key, w in (("search_iops_throttle", "IOPS"), ("search_tput_throttle", "throughput"))
+                         if (s := _busiest(m[key], name, -1)) and s.high > 0]  # fmt: skip
+            if throttled:
+                ctx.add("search_io_throttled", name, region, note=f"EBS {' and '.join(throttled)} throttled")
             shards = _busiest(m["search_shards"], name, -1)
             limit = SEARCH_SHARDS_PER_NODE * count
             if shards and limit:

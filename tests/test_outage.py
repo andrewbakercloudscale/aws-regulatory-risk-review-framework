@@ -288,6 +288,24 @@ def test_each_vpn_tunnel_is_judged_against_its_own_limit():
     assert [(r["res"], r["pct"], r["limit"]) for r in ctx.rows] == [("vpn-1 tunnel 1.1.1.1", 80.0, 1250)]
 
 
+def test_a_volume_is_judged_against_its_provisioned_iops_and_throughput():
+    ctx = _ctx({})
+    hour = collector.PERIOD
+    ctx._metrics["eu-west-1"] = {k: {} for k in collector.METRICS} | {
+        "ebs_rops": {"vol-1": _series(1500 * hour)},
+        "ebs_wops": {"vol-1": _series(1200 * hour)},
+        "ebs_wbytes": {"vol-1": _series(100 * 1024**2 * hour)},
+    }
+    vols = [
+        {"VolumeId": "vol-1", "VolumeType": "gp3", "Iops": 3000, "Throughput": 125, "Size": 500},
+        {"VolumeId": "vol-2", "VolumeType": "gp2", "Iops": 1500, "Size": 500},  # judged by burst balance
+    ]
+    collector._volume_headroom(ctx, vols, "eu-west-1")
+    got = {r["res"]: (r["pct"], r["used"], r["limit"]) for r in ctx.rows}
+    assert got == {"vol-1": (90.0, 2700, 3000), "vol-1 throughput": (80.0, 100, 125)}
+    assert all(r["load"] for r in ctx.rows)
+
+
 def test_a_refused_read_is_recorded_as_not_measured_and_is_not_a_pass():
     ctx = _ctx({"kafka": _Paged()})
     collector._run(ctx, ("msk", ("msk",), collector.task_msk, None), "eu-west-1")

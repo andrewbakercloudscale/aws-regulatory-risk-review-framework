@@ -24,6 +24,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
   `ec2:DescribeVpcEndpoints`, `directconnect:DescribeVirtualInterfaces`,
   `route53resolver:ListResolverEndpoints` and `route53resolver:ListResolverEndpointIpAddresses`: redeploy
   the member role.
+- **Outage Risk Report: IOPS.** gp3, io1 and io2 volumes against their provisioned IOPS and gp3 throughput,
+  judged at peak load; instances running out of their EBS burst (sizes below about 4xlarge); RDS IOPS
+  against provisioned IOPS; OpenSearch domains whose EBS was throttled. No new permissions.
 
 ## [0.21.0] - 2026-11-03
 
