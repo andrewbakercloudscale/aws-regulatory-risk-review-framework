@@ -40,14 +40,26 @@ Each review says what it read and what it cannot see. Even a Reviewed service do
 Terraform or CloudFormation, Kafka topic detail (which needs Kafka admin access), or the price of another
 design.
 
+## Services most at risk
+
+Section 1 lists the services most likely to cause an outage, ranked by how likely one is and how far it would
+spread. Spend plays no part: it is only a proxy for importance.
+
+- **Likely**: production findings, one per risk per account, a critical counting ten highs and a high ten mediums.
+- **Spread**: each service has an impact in `data/outage_services.yaml`, our judgement. **Shared** (network, DNS,
+  certificates, sign-in, load balancers, CloudFront, API Gateway, EKS, MSK, Connect) stops many workloads at once
+  and counts three times. **Data** (databases, caches, queues, streams, storage) stops the workloads that use it
+  and counts twice. **One workload** (EC2, ECS, Lambda, Step Functions, Bedrock) counts once.
+
+Each row names the worst risk, where it is, and what to do.
+
 ## Risk map
 
-Exposure is the risk score as a share, times monthly spend. Spend stands in for importance: a cheap account
-that takes payments can matter more than a large data platform, so use it to choose where to look first, not
-to dismiss an account. The map shows accounts by spend and risk, every account as a treemap, the most exposed
-accounts, severity by account and service, and what reaches a limit first. An account with no known spend is
-shown apart. An account that could not be read at all is rated Not measured, listed first, and left out of the
-score.
+Accounts are ranked by what was found in them: 100 points per critical, 10 per high, 1 per medium, one per risk
+however many copies, and a non-production finding a tenth. The map shows accounts by rating in production and
+non-production, every account with a finding as a treemap sized by its risk, the 20 accounts with the most
+risk, severity by account and service (each cell opens its risks and what to do), and what reaches a limit
+first. An account that could not be read at all is rated Not measured, listed first, and left out of the score.
 
 ## How severity is set
 
@@ -57,7 +69,7 @@ Measures are collected at scan time and judged when the report is built, so chan
 - **At peak** multiplies usage that rises with traffic by the expected load, default 2x. **This is an assumption**: replace it with last year's measured ratio of peak to normal. Counts of things someone creates, and storage, are not multiplied.
 - **Critical**: at or past the critical threshold (90%) now, or full before the peak. **High**: past 100% at peak, or full within 30 days after it. **Medium**: past the warning threshold (70%) at peak. Events and settings carry the severity set in the rule.
 - Outside production everything is one level lower, and some rules do not apply.
-- **Score**: 0 to 100, higher is worse, same diminishing formula as the Cloud Assurance Report. The overall score is weighted by spend.
+- **Score**: 0 to 100, higher is worse, same diminishing formula as the Cloud Assurance Report. The overall score is the average of the accounts' scores, a non-production account counting a tenth; spend plays no part.
 - **Start by** is the change freeze less a lead time per area. Those lead times are our judgement: AWS publishes none for quota increases. Ask your Technical Account Manager.
 
 ## The evidence

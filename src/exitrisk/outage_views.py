@@ -1,8 +1,9 @@
 """The Outage Risk Report's views for working through hundreds of accounts: what is covered, a review of
-each service, where spend and risk meet, and the top risks.
+each service, the services and accounts most at risk, and the top risks.
 
-Spend is a proxy for importance, so a cheap account that matters (payments, say) can rank too low: the
-views say so, and an account with no known spend is shown apart rather than ranked last in silence.
+Risk is ranked on what was found, not on spend: severity, whether it is production, how many accounts it
+is in, and how far an outage of that service spreads (data/outage_services.yaml "impact"). Spend is shown
+as context only, since a cheap account that takes payments can matter more than a large data platform.
 """
 
 from __future__ import annotations
@@ -23,9 +24,12 @@ HEAT_SERVICES = 16
 REVIEW_RESOURCES = 50  # sent per service, worst first; the counts cover every resource
 REVIEW_LIMITS = 12
 RUNWAY_ROWS = 30
-SPEND_BANDS = ((100_000.0, "US$100k+"), (10_000.0, "US$10k to 100k"), (1_000.0, "US$1k to 10k"), (0.01, "Under US$1k"))
-NO_SPEND = "Spend unknown"
 RATINGS = ("Critical", "High", "Medium", "Low", "Not measured")
+# Risk points: one critical outweighs any number of highs an account is likely to have, and so on down.
+POINTS = {"critical": 100, "high": 10, "medium": 1, "low": 0}
+NON_PROD_SHARE = 0.1  # a non-production finding counts a tenth
+SERVICES_AT_RISK = 15
+ENVIRONMENTS = ("Production", "Non-production")
 # A limit with no code to name its service.
 LIMIT_NAMES = (("IAM ", "iam"), ("Route 53", "route53"), ("Lambda", "lambda"), ("General purpose", "s3"))
 
@@ -268,31 +272,86 @@ def _reviews(accounts, checked, findings, rules, cat, by_billed, billed) -> list
     return out
 
 
-def _band(spend: float) -> str:
-    return next((label for floor, label in SPEND_BANDS if spend >= floor), NO_SPEND)
+def _risk_points(found: list[dict]) -> float:
+    """An account's risk: its findings by severity, one per rule (copies of a rule are one risk), with a
+    non-production finding counting a tenth."""
+    worst: dict[str, dict] = {}
+    for f in found:
+        w = worst.get(f["rule"])
+        if w is None or (f["production"], -SEV_ORDER[f["severity"]]) > (w["production"], -SEV_ORDER[w["severity"]]):
+            worst[f["rule"]] = f
+    return round(sum(POINTS[f["severity"]] * (1 if f["production"] else NON_PROD_SHARE) for f in worst.values()), 1)
 
 
 def _heatmap(table: list[dict]) -> dict:
-    """Accounts in a matrix of spend by rating, with what is at stake in each cell."""
-    bands = [label for _, label in SPEND_BANDS] + [NO_SPEND]
+    """Accounts in a matrix of rating by environment, with their critical and high findings."""
     cells: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for r in table:
-        cells[(r["rating"], _band(r["monthly_spend"]))].append(r)
+        cells[(r["rating"], ENVIRONMENTS[0] if r["production"] else ENVIRONMENTS[1])].append(r)
     rows = []
     for rating in RATINGS:
         row = []
-        for band in bands:
-            mine = sorted(cells.get((rating, band)) or [], key=lambda r: -r["exposure"])
+        for env in ENVIRONMENTS:
+            mine = sorted(cells.get((rating, env)) or [], key=lambda r: (-r["risk"], r["name"]))
             row.append(
                 {
-                    "band": band,
+                    "band": env,
                     "accounts": len(mine),
-                    "monthly": round(sum(r["monthly_spend"] for r in mine), 2),
+                    "critical": sum(r["critical"] for r in mine),
+                    "high": sum(r["high"] for r in mine),
                     "names": [r["name"] for r in mine[:15]],
                 }
             )
         rows.append({"rating": rating, "cells": row})
-    return {"bands": bands, "rows": rows}
+    return {"bands": list(ENVIRONMENTS), "rows": rows}
+
+
+def _services_at_risk(findings: list[dict], rules: dict, cat: dict) -> list[dict]:
+    """The services most likely to cause an outage, weighted by how far one would spread: production risk
+    points (one per rule per account) times the service's impact rank. Spend plays no part."""
+    impacts = cat["impacts"]
+    meta = {s["id"]: s for s in cat["services"]}
+    by: dict[str, list[dict]] = defaultdict(list)
+    for f in findings:
+        if f["service"] in meta and f["severity"] in ("critical", "high", "medium"):
+            by[f["service"]].append(f)
+    out = []
+    for sid, mine in by.items():
+        prod = [f for f in mine if f["production"]]
+        pairs: dict[tuple[str, str], dict] = {}
+        for f in prod:
+            k = (f["rule"], f["account_id"])
+            if k not in pairs or SEV_ORDER[f["severity"]] < SEV_ORDER[pairs[k]["severity"]]:
+                pairs[k] = f
+        likelihood = sum(POINTS[f["severity"]] for f in pairs.values())
+        if not likelihood:
+            continue
+        impact = impacts[meta[sid].get("impact", "workload")]
+        worst = min(prod, key=lambda f: (SEV_ORDER[f["severity"]], -(f["at_peak"] or f["pct"] or 0)))
+        counts = Counter(f["severity"] for f in pairs.values())
+        out.append(
+            {
+                "id": sid,
+                "label": meta[sid]["label"],
+                "impact": meta[sid].get("impact", "workload"),
+                "impact_label": impact["label"],
+                "impact_about": impact["about"],
+                "priority": likelihood * impact["rank"],
+                "severity": worst["severity"],
+                **{k: counts[k] for k in ("critical", "high", "medium")},
+                "accounts": len({f["account_id"] for f in prod}),
+                "resources": len({(f["account_id"], f["res"]) for f in prod}),
+                "worst": {
+                    "title": worst["title"],
+                    "res": worst["res"],
+                    "account": worst["account"],
+                    "why": worst["why"],
+                    "fix": rules[worst["rule"]]["fix"],
+                },
+            }
+        )
+    out.sort(key=lambda s: (-s["priority"], SEV_ORDER[s["severity"]], -s["accounts"], s["label"]))
+    return out[:SERVICES_AT_RISK]
 
 
 def _cell_risks(mine: list[dict], rules: dict) -> list[dict]:
@@ -318,11 +377,8 @@ def _cell_risks(mine: list[dict], rules: dict) -> list[dict]:
 
 
 def _account_service(table: list[dict], findings: list[dict], labels: dict[str, str], rules: dict) -> dict:
-    """Severity by account and service, for the accounts with the most at stake. An account with no known
-    spend has no exposure, so its critical ones are added rather than left out."""
-    top = sorted(table, key=lambda r: (-r["exposure"], -r["score"]))[:HEAT_ACCOUNTS]
-    shown = {r["id"] for r in top}
-    top += [r for r in table if r["rating"] == "Critical" and r["id"] not in shown and not r["monthly_spend"]][:10]
+    """Severity by account and service, for the accounts with the most risk."""
+    top = [r for r in sorted(table, key=lambda r: (-r["risk"], -r["score"], r["name"])) if r["risk"]][:HEAT_ACCOUNTS]
     shown = {r["id"] for r in top}
     grid: dict[tuple[str, str], Counter] = defaultdict(Counter)
     held: dict[tuple[str, str], list[dict]] = defaultdict(list)
@@ -350,8 +406,10 @@ def _account_service(table: list[dict], findings: list[dict], labels: dict[str, 
                 "name": r["name"],
                 "score": r["score"],
                 "rating": r["rating"],
-                "monthly": r["monthly_spend"],
-                "exposure": r["exposure"],
+                "production": r["production"],
+                "risk": r["risk"],
+                "critical": r["critical"],
+                "high": r["high"],
                 "cells": cells,
             }
         )
@@ -366,9 +424,10 @@ def _top_risks(
     findings: list[dict], table: list[dict], rules: dict, cat: dict, freeze: date, peak: date, today: date
 ) -> list[dict]:
     """One line per rule per account, with the rest of that account's copies counted. Production first, then
-    severity, then the account's spend band, then how far past its limit."""
+    severity, then how far an outage of the service spreads, then how far past its limit."""
     spend = {r["id"]: r["monthly_spend"] for r in table}
-    band_rank = {label: i for i, (_, label) in enumerate(SPEND_BANDS)}
+    svc = services_catalog()
+    reach = {s["id"]: svc["impacts"][s.get("impact", "workload")]["rank"] for s in svc["services"]}
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for f in findings:
         grouped[(f["rule"], f["account_id"])].append(f)
@@ -401,7 +460,8 @@ def _top_risks(
                 "_key": (
                     not f["production"],
                     SEV_ORDER[f["severity"]],
-                    band_rank.get(_band(acct), len(SPEND_BANDS)),
+                    -reach.get(f["service"], 1),
+                    -len(mine),
                     -(f["at_peak"] or f["pct"] or 0),
                     f["account"],
                 ),
@@ -434,26 +494,29 @@ def _runway(findings: list[dict], peak: date, today: date) -> dict:
 
 def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date, freeze: date, today: date) -> dict:
     """Add to the report what it needs to rank 300 accounts. Marks each finding with its service, and each
-    account with its exposure: risk score as a share, times monthly spend."""
+    account with its risk points (see _risk_points)."""
     svc_cat = services_catalog()
     by_rule, by_quota, by_billed = _service_maps(svc_cat)
     labels = {s["id"]: s["label"] for s in svc_cat["services"]}
     for f in findings:
         f["service"] = service_of(f["rule"], f["res"], by_rule, by_quota)
         f["service_label"] = labels.get(f["service"], "")
+    mine: dict[str, list[dict]] = defaultdict(list)
+    for f in findings:
+        mine[f["account_id"]].append(f)
     for r in table:
-        r["exposure"] = round(r["score"] / 100.0 * r["monthly_spend"], 2)
+        r["risk"] = _risk_points(mine.get(r["id"]) or [])
     billed = _monthly_by_service(scan, {a["id"] for a in table})
     return {
         "coverage": _coverage(billed, svc_cat, by_billed),
         "services": _reviews(accounts, checked, findings, rules, svc_cat, by_billed, billed),
         "heatmap": _heatmap(table),
+        "services_at_risk": _services_at_risk(findings, rules, svc_cat),
         "account_service": _account_service(table, findings, labels, rules),
         "top_risks": _top_risks(findings, table, rules, cat, freeze, peak, today),
         "runway": _runway(findings, peak, today),
         "spend": {
             "total": round(sum(r["monthly_spend"] for r in table), 2),
-            "exposure": round(sum(r["exposure"] for r in table), 2),
             "unknown": sum(1 for r in table if not r["monthly_spend"]),
         },
     }

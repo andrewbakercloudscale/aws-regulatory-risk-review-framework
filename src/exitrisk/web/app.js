@@ -2465,7 +2465,7 @@
     acts.push(...r.focus.filter((x) => x.critical || x.high).slice(0, 4).map((x) => `<li><strong>${esc(x.label)}, by ${esc(orDate(x.start_by))}${x.late ? " (already late)" : ""}.</strong> ${esc(x.action)}</li>`));
     $("#orActions").innerHTML = acts.join("");
     $("#orTiles").innerHTML = [
-      tile("Outage risk score", `${num(s.score)}/100`, `${s.rating} · higher is worse · weighted by spend`).replace(/<\/div>$/, `${riskBar(s.score)}</div>`),
+      tile("Outage risk score", `${num(s.score)}/100`, `${s.rating} · higher is worse · production accounts weigh most`).replace(/<\/div>$/, `${riskBar(s.score)}</div>`),
       tile("Days to the peak", num(s.days_to_peak), `${orDate(s.peak_date)}; freeze ${orDate(s.freeze_date)}`),
       tile("Critical findings", num(s.critical), `${num(s.high)} high, ${num(s.medium)} medium, production only`),
       tile("Past a limit at peak", num(s.breach_at_peak), `Measures above 100% at ${s.multiplier}x load`),
@@ -2475,10 +2475,17 @@
       tile("EKS fixed replicas", num(s.eks_fixed), `${num(s.eks_single)} on one replica; ${num(s.clusters_read)} of ${num(s.clusters)} clusters read`),
       tile("Accounts high or critical", num(s.high_accounts + s.critical_accounts), `of ${num(s.accounts)} read, ${num(s.production_accounts)} production`),
     ].join("");
+    renderOrSvcRisk(r);
     $("#orFocus").innerHTML = `<thead><tr><th>Area</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th class="num-cell">Accounts</th><th>Most common</th><th>Start by</th></tr></thead><tbody>${r.focus.map((x) => `<tr><td><button type="button" class="link-btn" data-or-area="${esc(x.area)}"><strong>${esc(x.label)}</strong></button></td><td class="num-cell">${num(x.critical)}</td><td class="num-cell">${num(x.high)}</td><td class="num-cell">${num(x.medium)}</td><td class="num-cell">${num(x.accounts)}</td><td class="small">${esc(x.top.map((t) => `${t.title} (${num(t.count)})`).join(", ") || EMPTY)}</td><td class="nowrap${x.late && (x.critical || x.high) ? " warn-text" : ""}">${esc(orDate(x.start_by))}</td></tr>`).join("")}</tbody>`;
   }
 
-  // ---- Risk map: spend against risk
+  /** The services most likely to cause an outage, and how far one would spread. */
+  function renderOrSvcRisk(r) {
+    const rows = r.services_at_risk || [];
+    $("#orSvcRisk").innerHTML = rows.length ? `<thead><tr><th class="num-cell">#</th><th>Service</th><th>If it fails</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th class="num-cell">Accounts</th><th>Worst risk</th><th>What to do</th></tr></thead><tbody>${rows.map((s, i) => `<tr><td class="num-cell">${i + 1}</td><td><button type="button" class="link-btn" data-or-service="${esc(s.id)}"><strong>${esc(s.label)}</strong></button></td><td class="small"><span title="${esc(s.impact_about)}">${pill(null, s.impact_label, s.impact === "shared" ? "var(--sev-critical)" : s.impact === "data" ? "var(--sev-error)" : "var(--sev-warning)")}</span></td><td class="num-cell">${num(s.critical)}</td><td class="num-cell">${num(s.high)}</td><td class="num-cell">${num(s.medium)}</td><td class="num-cell">${num(s.accounts)}</td><td>${orSev(s.severity)} <strong>${esc(s.worst.title)}</strong><div class="small mono">${esc(s.worst.res)}</div><div class="muted small">${esc(s.worst.account)}</div></td><td class="small">${esc(s.worst.fix)}</td></tr>`).join("")}</tbody>` : '<tbody><tr><td class="muted">No production finding at medium or above.</td></tr></tbody>';
+  }
+
+  // ---- Risk map: where the outage risk is
   const OR_RATING_COLOR = { Critical: "var(--sev-critical)", High: "var(--sev-error)", Medium: "var(--sev-warning)", Low: "var(--good)", "Not measured": "var(--t3)" };
   const OR_SEV_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-error)", medium: "var(--sev-warning)", low: "var(--sev-info)" };
   const orSev = (sev) => pill(null, cap(sev), OR_SEV_COLOR[sev]);
@@ -2489,7 +2496,6 @@
     renderOrTreemap(r);
     renderOrExposure(r);
     renderOrServiceBars(r);
-    renderOrBubble(r);
     renderOrHeat(r);
     renderOrRunway(r);
   }
@@ -2498,14 +2504,15 @@
     const h = r.heatmap;
     state.orCells = {};
     const rows = h.rows.filter((row) => row.rating !== "Not measured" || row.cells.some((c) => c.accounts));
+    const found = (c) => [c.critical ? `${num(c.critical)} critical` : "", c.high ? `${num(c.high)} high` : ""].filter(Boolean).join(", ") || "no critical or high";
     $("#orMatrix").innerHTML = `<thead><tr><th>Risk</th>${h.bands.map((b) => `<th>${esc(b)}</th>`).join("")}</tr></thead><tbody>${rows.map((row, ri) => `<tr><th scope="row">${pill(null, row.rating, OR_RATING_COLOR[row.rating])}</th>${row.cells.map((c, ci) => {
       if (!c.accounts) return '<td class="or-cell is-empty"><span class="muted">·</span></td>';
       const key = `${row.rating}|${c.band}`;
       state.orCells[key] = c;
-      // Heat rises with risk and spend together; spend unknown takes the risk's colour at half strength.
-      const strength = c.band === "Spend unknown" ? 22 : Math.max(10, 58 - 12 * ri - 9 * ci);
+      // Heat rises with the rating, and is stronger in production.
+      const strength = Math.max(10, 58 - 12 * ri - 20 * ci);
       const color = OR_RATING_COLOR[row.rating];
-      return `<td class="or-cell" style="background:color-mix(in srgb, ${color} ${strength}%, var(--surface))"><button type="button" class="link-btn" data-or-cell="${esc(key)}"><strong>${num(c.accounts)}</strong><span class="small">${c.monthly ? money(c.monthly) : "no spend data"}</span></button></td>`;
+      return `<td class="or-cell" style="background:color-mix(in srgb, ${color} ${strength}%, var(--surface))"><button type="button" class="link-btn" data-or-cell="${esc(key)}"><strong>${num(c.accounts)}</strong><span class="small">${esc(found(c))}</span></button></td>`;
     }).join("")}</tr>`).join("")}</tbody>`;
     $("#orMatrixList").hidden = true;
   }
@@ -2519,7 +2526,7 @@
     const box = $("#orHeatDetail");
     box.hidden = false;
     const listed = cell.risks.reduce((n, k) => n + k.count, 0);
-    box.innerHTML = `<h4>${esc(col.label)} in <button type="button" class="link-btn" data-or-acct="${esc(row.name)}">${esc(row.name)}</button> <span class="muted small">${row.monthly ? `${money(row.monthly)} a month` : "spend unknown"}</span></h4>
+    box.innerHTML = `<h4>${esc(col.label)} in <button type="button" class="link-btn" data-or-acct="${esc(row.name)}">${esc(row.name)}</button> <span class="muted small">${row.production ? "production" : "non-production"} · ${num(row.critical)} critical, ${num(row.high)} high</span></h4>
       <table class="data compact"><thead><tr><th>Severity</th><th>Risk</th><th>What to do</th></tr></thead><tbody>${cell.risks.map((k) => `<tr><td>${orSev(k.severity)}</td><td><strong>${esc(k.title)}</strong>${k.count > 1 ? ` <span class="muted small">× ${num(k.count)}</span>` : ""}<div class="small mono">${esc(k.res)}${k.count > 1 ? ' <span class="muted">(the worst)</span>' : ""}</div>${k.why ? `<div class="muted small">${esc(k.why)}</div>` : ""}</td><td class="small">${esc(k.fix)}</td></tr>`).join("")}</tbody></table>
       ${cell.count > listed ? `<p class="muted small">${num(cell.count - listed)} more of lesser kinds: click the account for all its findings.</p>` : ""}`;
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -2568,16 +2575,19 @@
   }
 
   function renderOrTreemap(r) {
-    const spent = r.accounts.filter((a) => a.monthly_spend > 0).sort((a, b) => b.monthly_spend - a.monthly_spend);
-    const W = 1000, H = Math.min(760, 340 + spent.length * 1.4);
-    const tiles = squarify(spent.map((a) => ({ a, value: a.monthly_spend })), 0, 0, W, H);
-    $("#orTreemap").innerHTML = tiles.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Treemap of accounts: size is monthly spend, colour is outage risk">${tiles.map((t) => {
+    const risky = r.accounts.filter((a) => a.risk > 0).sort((a, b) => b.risk - a.risk);
+    const W = 1000, H = Math.min(760, 340 + risky.length * 1.4);
+    // Square root, so one account with many criticals does not crowd out the rest.
+    const tiles = squarify(risky.map((a) => ({ a, value: Math.sqrt(a.risk) })), 0, 0, W, H);
+    const counts = (a) => `${num(a.critical)} critical, ${num(a.high)} high`;
+    $("#orTreemap").innerHTML = tiles.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Treemap of accounts: size is outage risk, colour is the rating">${tiles.map((t) => {
       const a = t.a, fit = Math.floor((t.w - 8) / 6.4);
-      const label = t.w > 52 && t.h > 20 ? `<text x="${(t.x + 4).toFixed(1)}" y="${(t.y + 14).toFixed(1)}" fill="${OR_RATING_INK[a.rating]}" font-size="11">${esc(a.name.length > fit ? `${a.name.slice(0, Math.max(fit - 1, 1))}…` : a.name)}</text>${t.h > 36 ? `<text x="${(t.x + 4).toFixed(1)}" y="${(t.y + 28).toFixed(1)}" fill="${OR_RATING_INK[a.rating]}" font-size="10" opacity=".85">${esc(money(a.monthly_spend))} · ${num(a.score)}</text>` : ""}` : "";
-      return `<g data-or-acct="${esc(a.name)}" class="or-tile"><rect x="${t.x.toFixed(1)}" y="${t.y.toFixed(1)}" width="${t.w.toFixed(1)}" height="${t.h.toFixed(1)}" fill="${OR_RATING_COLOR[a.rating]}" stroke="var(--surface)" stroke-width="1.5"><title>${esc(a.name)}: ${esc(money(a.monthly_spend))} a month, score ${num(a.score)} (${esc(a.rating)})</title></rect>${label}</g>`;
-    }).join("")}</svg>` : '<p class="muted small">This scan holds no spend by account.</p>';
+      const label = t.w > 52 && t.h > 20 ? `<text x="${(t.x + 4).toFixed(1)}" y="${(t.y + 14).toFixed(1)}" fill="${OR_RATING_INK[a.rating]}" font-size="11">${esc(a.name.length > fit ? `${a.name.slice(0, Math.max(fit - 1, 1))}…` : a.name)}</text>${t.h > 36 ? `<text x="${(t.x + 4).toFixed(1)}" y="${(t.y + 28).toFixed(1)}" fill="${OR_RATING_INK[a.rating]}" font-size="10" opacity=".85">${esc(counts(a))}</text>` : ""}` : "";
+      return `<g data-or-acct="${esc(a.name)}" class="or-tile"><rect x="${t.x.toFixed(1)}" y="${t.y.toFixed(1)}" width="${t.w.toFixed(1)}" height="${t.h.toFixed(1)}" fill="${OR_RATING_COLOR[a.rating]}" stroke="var(--surface)" stroke-width="1.5"><title>${esc(a.name)}${a.production ? "" : " (non-production)"}: ${esc(counts(a))}, score ${num(a.score)} (${esc(a.rating)})</title></rect>${label}</g>`;
+    }).join("")}</svg>` : '<p class="muted small">No account has a finding.</p>';
     const legend = ["Critical", "High", "Medium", "Low"].map((k) => pill(null, k, OR_RATING_COLOR[k])).join(" ");
-    $("#orTreemapNote").innerHTML = `${legend} <span>${r.spend.unknown ? `${plural(r.spend.unknown, "account")} with no known spend ${r.spend.unknown === 1 ? "is" : "are"} not drawn; see section 8.` : ""}</span>`;
+    const clean = r.accounts.length - risky.length;
+    $("#orTreemapNote").innerHTML = `${legend} <span>${clean ? `${plural(clean, "account")} with no finding ${clean === 1 ? "is" : "are"} not drawn; see section 8.` : ""}</span>`;
   }
 
   function orBar(label, value, max, color, note, acct) {
@@ -2586,9 +2596,9 @@
   }
 
   function renderOrExposure(r) {
-    const top = [...r.accounts].filter((a) => a.exposure > 0).sort((a, b) => b.exposure - a.exposure).slice(0, 20);
-    const max = top[0]?.exposure || 0;
-    $("#orExposure").innerHTML = top.length ? top.map((a) => orBar(a.name, a.exposure, max, OR_RATING_COLOR[a.rating], `${money(a.exposure)} · score ${num(a.score)}`, a.name)).join("") : '<p class="muted small">No account has both risk and known spend.</p>';
+    const top = [...r.accounts].filter((a) => a.risk > 0).sort((a, b) => b.risk - a.risk || a.name.localeCompare(b.name)).slice(0, 20);
+    const max = top[0]?.risk || 0;
+    $("#orExposure").innerHTML = top.length ? top.map((a) => orBar(a.name, a.risk, max, OR_RATING_COLOR[a.rating], `${num(a.critical)} critical · ${num(a.high)} high${a.production ? "" : " · non-prod"}`, a.name)).join("") : '<p class="muted small">No account has a finding.</p>';
   }
 
   function renderOrServiceBars(r) {
@@ -2598,38 +2608,13 @@
     $("#orServiceBars").innerHTML = rows.length ? rows.map((s) => `<div class="or-bar"><div class="or-bar-name"><button type="button" class="link-btn" data-or-service="${esc(s.id)}">${esc(s.label)}</button></div><div class="or-bar-track is-stack">${seg(s.critical, "critical")}${seg(s.high, "high")}${seg(s.medium, "medium")}</div><div class="or-bar-note small">${num(s.critical)} / ${num(s.high)} / ${num(s.medium)}</div></div>`).join("") : '<p class="muted small">No production finding at medium or above.</p>';
   }
 
-  function renderOrBubble(r) {
-    const accts = r.accounts.filter((a) => a.monthly_spend > 0);
-    const dot = { Critical: css("--sev-critical"), High: css("--sev-error"), Medium: css("--sev-warning"), Low: css("--good"), "Not measured": css("--t3") };
-    chart("chOrBubble", {
-      type: "bubble",
-      data: { datasets: [{
-        label: "Accounts",
-        data: accts.map((a) => ({ x: a.monthly_spend, y: a.score, r: Math.min(22, 4 + 2.2 * Math.sqrt(a.critical * 4 + a.high)), a })),
-        backgroundColor: accts.map((a) => `${dot[a.rating]}bb`),
-        borderColor: css("--surface"), borderWidth: 1,
-      }] },
-      options: {
-        layout: { padding: 12 },
-        scales: {
-          x: { type: "logarithmic", title: { display: true, text: "Monthly spend (USD, log scale)" }, ticks: { maxRotation: 0, callback: (v) => ([1, 10, 100, 1e3, 1e4, 1e5, 1e6, 1e7].includes(v) ? money(v) : "") } },
-          y: { min: 0, max: 100, title: { display: true, text: "Outage risk score" }, grid: { color: css("--grid") } },
-        },
-        plugins: { legend: { display: false }, tooltip: { callbacks: {
-          title: (items) => items[0].raw.a.name,
-          label: (c) => { const a = c.raw.a; return [` Score ${a.score} (${a.rating}) · ${money(a.monthly_spend)}/month`, ` ${a.critical} critical, ${a.high} high`]; },
-        } } },
-      },
-    });
-  }
-
   function renderOrHeat(r) {
     const h = r.account_service;
     $("#orHeatNote").textContent = `The worst finding by account and service, with how many, for the ${num(h.rows.length)} accounts with the most risk of ${num(h.total_accounts)}. Click a cell for the risks and what to do.`;
     state.orHeat = h;
     $("#orHeatDetail").hidden = true;
     if (!h.columns.length) { $("#orHeat").innerHTML = ""; return; }
-    $("#orHeat").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Exposure</th>${h.columns.map((c) => `<th class="or-heat-col"><button type="button" class="link-btn" data-or-service="${esc(c.id)}"><span>${esc(c.label)}</span></button></th>`).join("")}</tr></thead><tbody>${h.rows.map((a, ri) => `<tr><th scope="row"><button type="button" class="link-btn" data-or-acct="${esc(a.name)}">${esc(a.name)}</button></th><td class="num-cell small">${a.monthly ? money(a.exposure) : "no spend"}</td>${a.cells.map((c, ci) => (c.severity ? `<td class="or-heat-cell" style="background:${OR_SEV_COLOR[c.severity]};color:${c.severity === "critical" ? "#fff" : "#111"}"><button type="button" class="or-heat-btn" data-or-heat="${ri}|${ci}" title="${esc(`${c.severity}: ${(c.risks || [])[0]?.title || ""}. Click for what to do.`)}">${num(c.count)}</button></td>` : '<td class="or-heat-cell"></td>')).join("")}</tr>`).join("")}</tbody>`;
+    $("#orHeat").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Critical · high</th>${h.columns.map((c) => `<th class="or-heat-col"><button type="button" class="link-btn" data-or-service="${esc(c.id)}"><span>${esc(c.label)}</span></button></th>`).join("")}</tr></thead><tbody>${h.rows.map((a, ri) => `<tr><th scope="row"><button type="button" class="link-btn" data-or-acct="${esc(a.name)}">${esc(a.name)}</button></th><td class="num-cell small">${num(a.critical)} · ${num(a.high)}${a.production ? "" : '<div class="muted">non-prod</div>'}</td>${a.cells.map((c, ci) => (c.severity ? `<td class="or-heat-cell" style="background:${OR_SEV_COLOR[c.severity]};color:${c.severity === "critical" ? "#fff" : "#111"}"><button type="button" class="or-heat-btn" data-or-heat="${ri}|${ci}" title="${esc(`${c.severity}: ${(c.risks || [])[0]?.title || ""}. Click for what to do.`)}">${num(c.count)}</button></td>` : '<td class="or-heat-cell"></td>')).join("")}</tr>`).join("")}</tbody>`;
   }
 
   function renderOrRunway(r) {
@@ -2642,7 +2627,7 @@
   function renderOrTop(r) {
     const crit = r.top_risks.filter((f) => f.severity === "critical").length;
     $("#orTopTitle").textContent = crit > 50 ? `Top risks: all ${num(crit)} critical, then the worst to 50` : `Top ${num(r.top_risks.length)} risks`;
-    $("#orTop").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Severity</th><th>Risk</th><th>Account</th><th class="num-cell">Now → peak</th><th>What to do</th><th>Start by</th></tr></thead><tbody>${r.top_risks.map((f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${orSev(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small mono">${esc(f.res)}${f.more ? ` <span class="muted">and ${num(f.more)} more</span>` : ""}</div><div class="muted small">${esc(f.service || "")}${f.why ? `${f.service ? " · " : ""}${esc(f.why)}` : ""}</div></td><td><button type="button" class="link-btn" data-or-acct="${esc(f.account)}">${esc(f.account)}</button>${f.production ? "" : ' <span class="muted small">non-prod</span>'}<div class="muted small">${f.monthly ? `${money(f.monthly)}/month` : "spend unknown"}</div></td><td class="num-cell">${f.pct != null ? `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}` : EMPTY}</td><td class="small">${esc(f.fix)}</td><td class="small">${esc(orDate(f.start_by))}${f.late ? '<div class="warn-text">already late</div>' : ""}</td></tr>`).join("")}</tbody>`;
+    $("#orTop").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Severity</th><th>Risk</th><th>Account</th><th class="num-cell">Now → peak</th><th>What to do</th><th>Start by</th></tr></thead><tbody>${r.top_risks.map((f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${orSev(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small mono">${esc(f.res)}${f.more ? ` <span class="muted">and ${num(f.more)} more</span>` : ""}</div><div class="muted small">${esc(f.service || "")}${f.why ? `${f.service ? " · " : ""}${esc(f.why)}` : ""}</div></td><td><button type="button" class="link-btn" data-or-acct="${esc(f.account)}">${esc(f.account)}</button>${f.production ? "" : ' <span class="muted small">non-prod</span>'}</td><td class="num-cell">${f.pct != null ? `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}` : EMPTY}</td><td class="small">${esc(f.fix)}</td><td class="small">${esc(orDate(f.start_by))}${f.late ? '<div class="warn-text">already late</div>' : ""}</td></tr>`).join("")}</tbody>`;
   }
 
   // ---- Coverage and the service reviews
@@ -2772,7 +2757,7 @@
       <li><strong>Now</strong> is the highest hourly average of the last 35 days, which holds a month-end; quota usage on API rates uses five-minute figures over 14 days. Hourly averages hide short spikes, so real headroom is lower.</li>
       <li><strong>At peak</strong> multiplies usage that rises with traffic by ${esc(a.peak_multiplier)}, an assumption you set in section 6. Counts of things someone creates, and storage, are not multiplied.</li>
       <li><strong>Critical</strong>: at ${esc(a.critical_pct)}% now, or full before the peak. <strong>High</strong>: past 100% at peak, or full within 30 days after it. <strong>Medium</strong>: past ${esc(a.warn_pct)}% at peak. Everything is one level lower outside production.</li>
-      <li><strong>Exposure</strong> is the risk score as a share, times monthly spend. It ranks by money, not by what the account does: use it to choose where to look first, not to dismiss a cheap account.</li>
+      <li><strong>Ranking</strong> uses what was found, not spend: severity, production or not, how many accounts, and how far an outage of the service spreads (shared, data, or one workload: our judgement per service). The overall score is the average of the accounts' scores, a non-production account counting a tenth. Spend is shown only as context in coverage and the service reviews.</li>
       <li><strong>Service reviews</strong> are as deep as section 4 says. Reading a resource's settings and metrics does not show drift from Terraform, topic detail in Kafka, or the price of another design.</li>
       <li><strong>Days to full</strong> is a straight line through the last 35 days, so a sudden rise in data at peak fills sooner.</li>
       <li><strong>Limits</strong> come from Service Quotas where AWS publishes a usage metric, plus the limits IAM, Route 53, RDS, load balancers, Lambda, S3 and Connect report themselves. Quotas with no usage metric are not compared.</li>

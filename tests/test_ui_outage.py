@@ -95,6 +95,9 @@ def test_the_other_tabs_hide_it(page):
 
 
 def test_the_risk_map_top_risks_coverage_and_reviews_draw(page):
+    assert page.locator("#orSvcRisk tbody tr").count() > 0
+    assert page.locator("#orSvcRisk tbody tr").first.locator("td").last.inner_text()  # what to do
+    assert "US$" not in page.locator("#or-map").inner_text()  # risk, not spend
     assert page.locator("#orMatrix .or-cell button").count() > 0
     assert page.locator("#orTreemap svg rect").count() > 5
     assert page.locator("#orExposure .or-bar").count() > 0

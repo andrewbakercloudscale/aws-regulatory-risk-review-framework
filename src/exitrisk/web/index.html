@@ -685,6 +685,11 @@
       <div class="tiles" id="orTiles"></div>
       <div class="card ai-panel" id="orAi"></div>
       <div class="card">
+        <h3>Services most at risk of an outage</h3>
+        <p class="muted small">Ranked by how likely an outage is and how far it would spread. Likely: production findings, one per risk per account, a critical counting ten highs. Spread: a shared service (network, DNS, the front door, a shared cluster) stops many workloads at once, a data store stops the workloads that use it, compute stops its own workload. Spend plays no part.</p>
+        <div class="table-wrap"><table class="data compact" id="orSvcRisk"></table></div>
+      </div>
+      <div class="card">
         <h3>Areas, worst first</h3>
         <p class="muted small">Production findings in each area. Start by is the change freeze less the time the work usually takes; those lead times are our judgement, as AWS publishes none for quota increases. Select an area to see its findings.</p>
         <div class="table-wrap"><table class="data compact" id="orFocus"></table></div>
@@ -692,23 +697,23 @@
     </section>
 
     <section class="section" id="or-map">
-      <h2><span class="num">2</span>Risk map: spend against risk</h2>
-      <p class="muted small">Exposure is the risk score as a share, times monthly spend. Spend stands in for importance, so read it with judgement: a cheap account that takes payments can matter more than a large data platform. Select an account to see its findings.</p>
+      <h2><span class="num">2</span>Risk map: where the outage risk is</h2>
+      <p class="muted small">Accounts ranked by what was found in them: one point per medium, ten per high, a hundred per critical, one per risk however many copies, a non-production finding a tenth. Select an account to see its findings.</p>
       <div class="card">
-        <h3>Accounts by spend and risk</h3>
-        <p class="muted small">Number of accounts and their monthly spend. Start at the top left. Select a cell to list its accounts.</p>
+        <h3>Accounts by rating</h3>
+        <p class="muted small">Number of accounts, and their critical and high findings. Start at the top left. Select a cell to list its accounts.</p>
         <div class="table-wrap"><table class="or-matrix" id="orMatrix"></table></div>
         <p id="orMatrixList" class="small" hidden></p>
       </div>
       <div class="card">
-        <h3>Every account, sized by spend and coloured by risk</h3>
+        <h3>Every account with a finding, sized by its outage risk</h3>
         <div id="orTreemap" class="or-treemap"></div>
         <p id="orTreemapNote" class="muted small"></p>
       </div>
       <div class="grid-2 or-map-grid">
         <div class="card">
           <h3>Most risk</h3>
-          <p class="muted small">The 20 accounts with the most outage risk, weighted by what each spends a month.</p>
+          <p class="muted small">The 20 accounts with the most outage risk: critical findings first, then high.</p>
           <div id="orExposure" class="or-bars"></div>
         </div>
         <div class="card">
@@ -716,10 +721,6 @@
           <p class="muted small">Critical, high and medium.</p>
           <div id="orServiceBars" class="or-bars"></div>
         </div>
-      </div>
-      <div class="card">
-        <h3>Risk score against spend</h3>
-        <div class="chart-box tall"><canvas id="chOrBubble" role="img" aria-label="Bubble chart of each account's outage risk score against its monthly spend"></canvas></div>
       </div>
       <div class="card">
         <h3>Account by service</h3>
@@ -737,7 +738,7 @@
     <section class="section" id="or-top">
       <h2><span class="num">3</span><span id="orTopTitle">Top risks</span></h2>
       <div class="card">
-        <p class="muted small">One line per finding per account, with its other copies counted. Production first, then severity, then the account's spend, then how far past its limit. Lead times are our judgement.</p>
+        <p class="muted small">One line per finding per account, with its other copies counted. Production first, then severity, then how far an outage would spread (shared services, then data stores, then compute), then how far past its limit. Lead times are our judgement.</p>
         <div class="table-wrap"><table class="data compact" id="orTop"></table></div>
       </div>
     </section>
@@ -746,7 +747,7 @@
       <h2><span class="num">4</span>What is covered, and what is not</h2>
       <div class="card">
         <p id="orCovHead" class="brief-headline"></p>
-        <div id="orCovBar" class="or-covbar" role="img" aria-label="Share of monthly spend by how far it is checked"></div>
+        <div id="orCovBar" class="or-covbar" role="img" aria-label="Share of the estate, by monthly spend, by how far it is checked"></div>
         <div id="orCovLevels" class="or-covlevels"></div>
         <p id="orCovGap" class="warn-text small" hidden></p>
       </div>

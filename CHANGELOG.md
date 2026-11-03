@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- **Outage Risk Report ranks by outage risk, not spend.** New in section 1: the services most at risk of an
+  outage, ranked by how likely one is (production findings, a critical counting ten highs) and how far it would
+  spread (shared services such as network, DNS and EKS three times, data stores twice, one workload's compute
+  once), each with its worst risk and what to do. The risk map sizes and ranks accounts by their findings, the
+  matrix is rating by production and non-production, the spend bubble chart is gone, and top risks break ties
+  on how far an outage would spread. The overall score weights production accounts, not spend. Spend remains
+  only as context in coverage and the service reviews.
+
 ## [0.23.0] - 2026-11-03
 
 ### Added

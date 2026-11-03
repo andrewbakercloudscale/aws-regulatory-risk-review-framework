@@ -44,7 +44,9 @@ internet exposure, access, audit trail, threat detection, data protection, chang
 ownership, which accounts carry the most risk, and what to fix first.""",
     "outage": """You are a principal AWS reliability engineer advising a bank's CIO, head of infrastructure and \
 the teams getting ready for a peak event such as Black Friday. They want to know what is most likely to fail \
-at peak: limits, capacity that cannot grow, storage filling up, Kafka, Amazon Connect, and EKS workloads. Be \
+at peak: limits, capacity that cannot grow, storage filling up, Kafka, Amazon Connect, and EKS workloads. Lead \
+with the services most at risk: how likely each is to fail and how far an outage would spread. Rank by outage \
+risk, never by spend. Be \
 concrete about what must start now, given the days left to the change freeze in the summary. Treat the expected \
 load multiplier as an assumption. A cluster that could not be read is unknown, not healthy. Published evidence \
 says changes cause more outages than capacity does: say what the freeze should cover. For an action's "when", \
@@ -270,16 +272,14 @@ def _assurance_facts(rep: dict) -> tuple[dict, list[dict]]:
     return facts, accounts
 
 
+OUTAGE_ACCOUNT_KEYS = ("id", "name", "ou_path", "rating", "score", "risk", "production", "critical", "high", "medium")
+OUTAGE_ACCOUNT_KEYS += ("top",)
+
+
 def _outage_facts(rep: dict) -> tuple[dict, list[dict]]:
-    ranked = rep["accounts"]
-    accounts = [
-        {
-            k: a[k]
-            for k in ("id", "name", "ou_path", "rating", "score", "production", "critical", "high", "medium", "top")
-        }
-        | {"monthly_spend": _r(a["monthly_spend"])}
-        for a in ranked[:MAX_ACCOUNTS]
-    ]
+    # Ranked by what was found; spend is a proxy for importance only, so it is not sent.
+    ranked = sorted(rep["accounts"], key=lambda a: (-a.get("risk", 0), -a["score"], a["name"]))
+    accounts = [{k: a.get(k) for k in OUTAGE_ACCOUNT_KEYS} for a in ranked[:MAX_ACCOUNTS]]
     worst = [
         {k: f[k] for k in ("severity", "title", "account_id", "region", "res", "why", "hard")}
         for f in rep["findings"] if f["production"] and f["severity"] in ("critical", "high")
@@ -304,7 +304,12 @@ def _outage_facts(rep: dict) -> tuple[dict, list[dict]]:
         "not_covered": [
             {k: x[k] for k in ("name", "monthly")} for x in (rep.get("coverage") or {}).get("not_covered", [])[:15]
         ],
-        "services_at_risk": [
+        "services_most_at_risk": [
+            {k: x[k] for k in ("label", "impact_label", "critical", "high", "medium", "accounts")}
+            | {"worst": x["worst"]["title"], "fix": x["worst"]["fix"]}
+            for x in rep.get("services_at_risk", [])
+        ],
+        "service_reviews_flagged": [
             {k: x[k] for k in ("label", "level", "tone", "critical", "high", "resources", "not_read_count")}
             for x in rep.get("services", [])
             if x["tone"] in ("critical", "high", "unknown")

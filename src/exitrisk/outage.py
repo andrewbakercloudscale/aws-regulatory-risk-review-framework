@@ -353,6 +353,9 @@ def _temper(f: dict, row: dict, profiles: dict) -> None:
             )
 
 
+NON_PROD_WEIGHT = 0.1  # a non-production account's weight in the overall score
+
+
 def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak) -> tuple[list[dict], list[dict]]:
     points = catalog()["points"]
     prod_p = _patterns(a.production_patterns)
@@ -421,7 +424,16 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
             }
         )
         findings += found
-    table.sort(key=lambda r: (r["rating"] != NOT_MEASURED, -r["score"], -r["monthly_spend"], r["name"].lower()))
+    table.sort(
+        key=lambda r: (
+            r["rating"] != NOT_MEASURED,
+            -r["score"],
+            not r["production"],
+            -r["critical"],
+            -r["high"],
+            r["name"].lower(),
+        )
+    )
     findings.sort(
         key=lambda f: (not f["production"], SEV_ORDER[f["severity"]], -(f["at_peak"] or f["pct"] or 0), f["account"])
     )
@@ -511,7 +523,8 @@ def _summary(table, findings, clusters, not_checked, a, peak, freeze, today) -> 
     counts = Counter(f["severity"] for f in prod)
     all_counts = Counter(f["severity"] for f in findings)
     limited = [f for f in prod if f["area"] == "limits"]
-    weights = [(r["score"], max(r["monthly_spend"], 1.0)) for r in table if r["rating"] != NOT_MEASURED]
+    # Production accounts carry the score; spend plays no part, as it is only a proxy for importance.
+    weights = [(r["score"], 1.0 if r["production"] else NON_PROD_WEIGHT) for r in table if r["rating"] != NOT_MEASURED]
     total = sum(w for _, w in weights)
     score = round(sum(s * w for s, w in weights) / total, 1) if total else 0.0
     checks = sum(r["compared"] for r in table)

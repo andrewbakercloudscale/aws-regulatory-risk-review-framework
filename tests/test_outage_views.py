@@ -12,7 +12,7 @@ from exitrisk.collectors import outage as collector
 from exitrisk.collectors import outage_services as services
 from exitrisk.demo import build_demo_scan
 from exitrisk.outage import build_outage, catalog
-from exitrisk.outage_views import HEAT_ACCOUNTS, TOP_RISKS, service_of, services_catalog
+from exitrisk.outage_views import HEAT_ACCOUNTS, POINTS, TOP_RISKS, _services_at_risk, service_of, services_catalog
 
 
 @pytest.fixture(scope="module")
@@ -142,7 +142,7 @@ def test_an_account_that_could_not_be_read_is_not_rated_low():
     assert r["accounts"][0]["name"] == "big-prod"
     assert r["accounts"][0]["rating"] == "Not measured"
     assert r["summary"]["accounts_blind"] == 1
-    assert next(x for x in r["heatmap"]["rows"] if x["rating"] == "Not measured")["cells"][2]["accounts"] == 1
+    assert next(x for x in r["heatmap"]["rows"] if x["rating"] == "Not measured")["cells"][0]["accounts"] == 1
 
 
 def test_a_check_read_in_part_counts_as_not_measured():
@@ -163,23 +163,48 @@ def test_top_risks_collapse_by_account_and_rank_production_then_severity(scan):
     assert all(x["fix"] and x["start_by"] for x in top)
 
 
-def test_top_risks_prefer_the_account_with_more_spend():
+def test_spend_does_not_rank_risks_or_accounts():
     row = {"rule": "mq_single", "res": "b", "region": "eu-west-1"}
     r = build_outage(_scan_of([("cheap-prod", 50.0, [row], {}), ("large-prod", 500000.0, [row], {})]))
-    assert r["top_risks"][0]["account"] == "large-prod"
+    assert r["top_risks"][0]["account"] == "cheap-prod"  # equal risks: by name, not by spend
+    a, b = (next(x for x in r["accounts"] if x["name"] == n) for n in ("cheap-prod", "large-prod"))
+    assert a["risk"] == b["risk"] > 0
+    assert r["summary"]["score"] == a["score"]
 
 
-def test_exposure_is_score_times_spend_and_unknown_spend_is_shown_apart():
+def test_risk_points_count_each_risk_once_and_non_production_a_tenth():
     row = {"rule": "mq_single", "res": "b", "region": "eu-west-1"}
-    r = build_outage(_scan_of([("a-prod", 2000.0, [row], {}), ("b-prod", 0, [row], {})]))
-    a = next(x for x in r["accounts"] if x["name"] == "a-prod")
-    assert a["exposure"] == pytest.approx(a["score"] / 100 * 2000, abs=0.01)
-    assert r["spend"]["unknown"] == 1
+    copy = {**row, "res": "c"}
+    r = build_outage(_scan_of([("a-prod", 2000.0, [row, copy], {}), ("b-dev", 0, [row], {})]))
+    a, b = (next(x for x in r["accounts"] if x["name"] == n) for n in ("a-prod", "b-dev"))
+    assert a["risk"] > 0
+    sev = next(f["severity"] for f in r["findings"] if f["account"] == "a-prod")
+    assert a["risk"] == POINTS[sev]  # two copies, one risk
+    assert b["risk"] < a["risk"]
     cells = {c["band"]: c["accounts"] for row in r["heatmap"]["rows"] for c in row["cells"] if c["accounts"]}
-    assert cells == {"US$1k to 10k": 1, "Spend unknown": 1}
+    assert cells == {"Production": 1, "Non-production": 1}
 
 
-def test_account_service_heat_keeps_critical_accounts_with_no_spend():
+def _f(svc, sev, acct, rule="r", prod=True):
+    return {"service": svc, "severity": sev, "account_id": acct, "account": acct, "rule": rule, "production": prod,
+            "res": "x", "at_peak": None, "pct": None, "title": "t", "why": "w"}  # fmt: skip
+
+
+def test_services_at_risk_weigh_how_far_an_outage_spreads():
+    rules = {"r": {"fix": "do it"}}
+    cat = services_catalog()
+    # One high in a shared network service against one in a single workload's compute.
+    out = _services_at_risk([_f("lambda", "high", "a"), _f("transit_gateway", "high", "b")], rules, cat)
+    assert [s["id"] for s in out] == ["transit_gateway", "lambda"]
+    assert out[0]["impact"] == "shared" and out[0]["worst"]["fix"] == "do it"
+    # Many accounts with criticals still outrank a single high, however shared.
+    many = [_f("lambda", "critical", f"a{i}") for i in range(3)]
+    assert _services_at_risk([*many, _f("vpn", "high", "b")], rules, cat)[0]["id"] == "lambda"
+    # Non-production alone puts a service on no list.
+    assert _services_at_risk([_f("rds", "critical", "a", prod=False)], rules, cat) == []
+
+
+def test_account_service_heat_ranks_by_risk_not_spend():
     row = {"rule": "msk_offline", "res": "c", "region": "eu-west-1", "used": 1, "unit": "partitions"}
     many = [
         (f"a{i}-prod", 1000.0 + i, [{"rule": "mq_single", "res": "m", "region": "eu-west-1"}], {})
