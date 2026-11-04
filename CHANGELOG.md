@@ -6,12 +6,17 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-11-04
+
 ### Added
 - The console's top bar shows the version and when it was released, and says how many commits it runs beyond that release.
 
 ### Changed
 - The AWS sign-in button is red and flashes when you are signed out; with reduce motion on, it is solid red instead.
 - CI actions moved to their Node 24 releases.
+
+### Fixed
+- Clickable names in tables stay left-aligned when they wrap onto two lines.
 
 ## [0.28.0] - 2026-11-04
 
