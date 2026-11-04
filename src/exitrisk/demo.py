@@ -657,6 +657,10 @@ def build_demo_scan(months: int = 6, seed: int = 7) -> dict:
         "inventory": inventory,
         "assurance": demo_assurance.build(accounts, seed + 4),
         "outage": demo_outage.build(accounts, seed + 5),
+        "org_accounts": {
+            **{a["id"]: {"name": a["name"], "ou_path": a.get("ou_path", "")} for a in accounts},
+            demo_outage.NETWORK_ACCOUNT: {"name": "network-hub", "ou_path": "Root / Infrastructure / Network"},
+        },
         "issues": issues,
     }
 

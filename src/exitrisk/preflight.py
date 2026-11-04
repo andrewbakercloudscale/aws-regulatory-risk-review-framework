@@ -326,6 +326,27 @@ OUTAGE_PROBES = [
     ("connect:ListRoutingProfiles", "connect", "list_routing_profiles", {"InstanceId": _KEY, "MaxResults": 1}),
     ("connect:ListContactFlows", "connect", "list_contact_flows", {"InstanceId": _KEY, "MaxResults": 1}),
     ("lambda:ListEventSourceMappings", "lambda", "list_event_source_mappings", {"MaxItems": 1}),
+    # Shared network, DNS, domains and certificates.
+    ("ec2:DescribeTransitGatewayAttachments", "ec2", "describe_transit_gateway_attachments", {"MaxResults": 5}),
+    ("ec2:DescribeTransitGatewayVpcAttachments", "ec2", "describe_transit_gateway_vpc_attachments", {"MaxResults": 5}),
+    ("ec2:DescribeTransitGatewayRouteTables", "ec2", "describe_transit_gateway_route_tables", {"MaxResults": 5}),
+    ("ec2:SearchTransitGatewayRoutes", "ec2", "search_transit_gateway_routes",
+     {"TransitGatewayRouteTableId": "tgw-rtb-0123456789abcdef0",
+      "Filters": [{"Name": "state", "Values": ["blackhole"]}], "MaxResults": 5}),
+    ("route53resolver:ListResolverRules", "route53resolver", "list_resolver_rules", {"MaxResults": 1}),
+    ("route53resolver:ListResolverRuleAssociations", "route53resolver", "list_resolver_rule_associations",
+     {"MaxResults": 1}),
+    ("route53:ListHostedZones", "route53", "list_hosted_zones", {"MaxItems": "1"}),
+    ("route53:ListResourceRecordSets", "route53", "list_resource_record_sets",
+     {"HostedZoneId": "Z0000000000000000000", "MaxItems": "1"}),
+    ("route53:ListHealthChecks", "route53", "list_health_checks", {"MaxItems": "1"}),
+    ("route53:GetHealthCheckStatus", "route53", "get_health_check_status",
+     {"HealthCheckId": "00000000-0000-0000-0000-000000000000"}),
+    ("iam:ListServerCertificates", "iam", "list_server_certificates", {"MaxItems": 1}),
+    ("route53domains:ListDomains", "route53domains", "list_domains", {"MaxItems": 1}),
+    ("acm:DescribeCertificate", "acm", "describe_certificate",
+     {"CertificateArn": _ARN.format("acm", f"certificate/{_KEY}")}),
+    ("acm-pca:ListCertificateAuthorities", "acm-pca", "list_certificate_authorities", {"MaxResults": 1}),
 ]  # fmt: skip
 # The organisation-level assurance reads, in the management account.
 ASSURANCE_ORG_PROBES = [

@@ -2450,6 +2450,8 @@
     if (s.accounts_blind) gaps.unshift(`${plural(s.accounts_blind, "account")} could not be measured at all: first in section 8, and left out of the score`);
     if (s.accounts_cut) gaps.push(`${plural(s.accounts_cut, "account")} had more results than could be read, so some measures are missing`);
     if (s.clusters_read < s.clusters) gaps.push(`${num(s.clusters - s.clusters_read)} of ${plural(s.clusters, "EKS cluster")} could not be read, shown in section 10`);
+    const sh = r.shared;
+    if (sh?.not_scanned) gaps.push(`${plural(sh.not_scanned, "account")} that the scanned accounts use for their network or DNS ${sh.not_scanned === 1 ? "was" : "were"} not scanned, shown in section 4`);
     $("#orCoverage").hidden = !gaps.length;
     $("#orCoverage").textContent = gaps.length ? `Not everything was measured: ${gaps.join("; ")}. What was not measured is not a pass.` : "";
   }
@@ -2776,7 +2778,23 @@
   const OR_TONE_LABEL = { critical: "Act now", high: "Before the freeze", medium: "Watch", unknown: "Unknown", clear: "Nothing found" };
   const OR_TONE_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-error)", medium: "var(--sev-warning)", unknown: "var(--t3)", clear: "var(--good)" };
 
+  function renderOrShared(r) {
+    const sh = r.shared;
+    $("#orShared").hidden = !sh || (!sh.read && !sh.owners.length);
+    if (!sh) return;
+    if (!sh.owners.length) {
+      $("#orSharedLead").textContent = sh.read ? "The scanned accounts use no transit gateway, subnets or DNS rules owned by another account." : "";
+      $("#orSharedTable").innerHTML = "";
+      return;
+    }
+    $("#orSharedLead").textContent = sh.not_scanned
+      ? `${plural(sh.not_scanned, "account")} outside this scan own network or DNS the scanned accounts use.${sh.ous.length ? ` Add ${sh.ous.length === 1 ? "this OU" : "these OUs"} to the scan: ${sh.ous.join("; ")}.` : ""}`
+      : `Every account that owns network or DNS the scanned accounts use is in this scan.`;
+    $("#orSharedTable").innerHTML = `<thead><tr><th>Account</th><th>OU</th><th>What it provides</th><th class="num-cell">Accounts using it</th><th class="num-cell">Of them production</th><th>In this scan</th></tr></thead><tbody>${sh.owners.map((o) => `<tr><td>${o.scanned ? `<button type="button" class="link-btn" data-or-acct="${esc(o.name)}">${esc(o.name)}</button>` : esc(o.name || o.id)}<div class="muted small mono">${esc(o.id)}</div></td><td class="small">${esc(o.ou_path || EMPTY)}</td><td class="small">${esc(o.what.join(", "))}</td><td class="num-cell">${num(o.accounts)}</td><td class="num-cell">${num(o.production)}</td><td>${o.scanned ? pill(null, "Scanned", "var(--good)") : pill(null, "Not scanned", "var(--sev-critical)")}</td></tr>`).join("")}</tbody>`;
+  }
+
   function renderOrCoverageView(r) {
+    renderOrShared(r);
     const c = r.coverage, by = Object.fromEntries(c.levels.map((l) => [l.level, l]));
     const reviewed = by.deep.share + by.partial.share;
     $("#orCovHead").textContent = c.total ? `${pct(reviewed, 0)} of this scan's spend is on services reviewed in whole or part, ${pct(by.generic.share, 0)} has only its quotas checked, and ${pct(by.none.share, 0)} is not covered.` : "This scan holds no spend by service, so coverage cannot be measured against it.";

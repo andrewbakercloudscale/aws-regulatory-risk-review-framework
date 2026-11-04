@@ -53,6 +53,7 @@ MAX_WORKLOADS = 1500  # per cluster
 MAX_PODS = 8000  # per cluster
 K8S_TIMEOUT = 8
 CERT_DAYS = 120
+RENEWAL_DAYS = 60  # ACM starts renewing this long before expiry: a renewal still not done by then has stalled
 METRIC_BATCH = 100
 MIB, GIB = 1024**2, 1024**3
 EFS_BURST_MAX = 2.31 * 1024**4  # a file system starts with, and can bank, 2.31 TiB of credits
@@ -1577,6 +1578,7 @@ def task_dx(ctx: OutageCtx, region: str) -> None:
 
 
 def task_certificates(ctx: OutageCtx, region: str) -> None:
+    """ACM certificates in use that expire by the peak, renewals that have stalled, and private CAs."""
     acm = ctx.client("acm", region)
     limit = ctx.now + timedelta(days=CERT_DAYS)
     for c in _pages(acm, "list_certificates", "CertificateSummaryList", CertificateStatuses=["ISSUED"]):
@@ -1584,6 +1586,23 @@ def task_certificates(ctx: OutageCtx, region: str) -> None:
         if not ends or not c.get("InUse") or ends > limit:
             continue
         auto = c.get("Type") == "AMAZON_ISSUED" and c.get("RenewalEligibility") == "ELIGIBLE"
+        name = c.get("DomainName") or _short(c["CertificateArn"])
+        if auto and ends <= ctx.now + timedelta(days=RENEWAL_DAYS):
+            got = with_backoff(acm.describe_certificate, CertificateArn=c["CertificateArn"]).get("Certificate") or {}
+            renewal = got.get("RenewalSummary") or {}
+            status = renewal.get("RenewalStatus") or ""
+            if status in ("PENDING_VALIDATION", "FAILED"):
+                ctx.add(
+                    "cert_renewal_failing",
+                    name,
+                    region,
+                    ends=ends.date().isoformat(),
+                    note=f"renewal {status.replace('_', ' ').lower()}"
+                    + (f": {renewal['RenewalStatusReason']}" if renewal.get("RenewalStatusReason") else "")
+                    + f"; expires {ends.date().isoformat()}",
+                    now=True,
+                )
+                continue
         ctx.add(
             "cert_expiry",
             c.get("DomainName") or _short(c["CertificateArn"]),
@@ -1591,6 +1610,19 @@ def task_certificates(ctx: OutageCtx, region: str) -> None:
             ends=ends.date().isoformat(),
             note="AWS renews this one by itself" if auto else "does not renew by itself",
             auto=auto,
+        )
+    pca = ctx.client("acm-pca", region)
+    for ca in _pages(pca, "list_certificate_authorities", "CertificateAuthorities", cap=MAX_ITEMS):
+        ends = ca.get("NotAfter")
+        if ca.get("Status") != "ACTIVE" or not ends or ends > limit:
+            continue
+        ctx.add(
+            "cert_expiry",
+            f"private CA {_short(ca['Arn'])}",
+            region,
+            ends=ends.date().isoformat(),
+            note="a private certificate authority: every certificate it issued stops being trusted with it",
+            auto=False,
         )
     ctx.r.ok("certificates")
 

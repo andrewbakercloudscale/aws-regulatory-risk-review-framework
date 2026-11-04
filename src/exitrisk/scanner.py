@@ -443,6 +443,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None
         "outage": data.get("outage"),
         "unavailable": data.get("unavailable", {}),
         "completes": data.get("completes"),
+        "org_accounts": data.get("org_accounts"),
         "issues": [i.to_dict() for i in job.issues],
     }
 
@@ -517,6 +518,7 @@ def run_scan(job: ScanJob) -> dict:
             ),
         )
         organizations.remember_org_and_tree(p.profile, data["org"], tree)
+        data["org_accounts"] = _org_accounts(tree, known)
         ous = [organizations.find_ou(tree, i) for i in p.ous] if p.ous else [tree]
         missing = [i for i, ou in zip(p.ous, ous, strict=False) if ou is None]
         if missing:
@@ -753,6 +755,23 @@ def _save_finished(job: ScanJob, data: dict, accounts) -> dict:
     return doc
 
 
+def _org_accounts(tree: dict, known: dict) -> dict[str, dict]:
+    """Every account in the organisation with its name and OU, so a report can name an account outside the
+    scan that the scanned ones depend on (a network or shared-services account)."""
+    paths: dict[str, str] = {}
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        paths[node["id"]] = node["path"]
+        stack.extend(node.get("children") or [])
+    return {
+        a["Id"]: {"name": a.get("Name", ""), "ou_path": paths.get(ou, "")}
+        for ou, found in known.items()
+        for a in found
+        if a.get("Id")
+    }
+
+
 STEPS = ("inventory", "assurance", "outage")
 
 
@@ -812,7 +831,8 @@ def _complete(job: ScanJob, session, data: dict) -> dict:
             )
         )
         raise ScanFailed("sign in with the profile that ran the scan to complete it")
-    for k in ("org", "ou", "ous", "accounts", "costs", "region_costs", "storage", "direct_connect", "commitments"):
+    keep = ("org", "ou", "ous", "accounts", "costs", "region_costs", "storage", "direct_connect", "commitments")
+    for k in (*keep, "org_accounts"):
         data[k] = base.get(k)
     data["period"] = base.get("period")
     data["unavailable"] = base.get("unavailable") or {}

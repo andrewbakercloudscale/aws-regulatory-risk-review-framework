@@ -764,6 +764,12 @@
         <div id="orCovLevels" class="or-covlevels"></div>
         <p id="orCovGap" class="warn-text small" hidden></p>
       </div>
+      <div class="card" id="orShared">
+        <h3>Shared network and DNS accounts</h3>
+        <p id="orSharedLead"></p>
+        <p class="muted small">Accounts that own a transit gateway, shared subnets or DNS forwarding rules the scanned accounts use. A fault or a full limit there stops every account that uses it, so an account not scanned here is a gap: add its OU to the scan. Blackhole routes and attachment counts are read in the account that owns the gateway.</p>
+        <div class="table-wrap"><table class="data compact" id="orSharedTable"></table></div>
+      </div>
       <div class="card">
         <h3>Every billed service in this scan</h3>
         <p class="muted small">Security, audit and billing lines that take no customer traffic are left out.</p>

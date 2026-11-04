@@ -17,9 +17,10 @@ What could fail at a peak such as Black Friday, in every account, and where to s
 | Storage | EBS provisioned beyond what the instance can deliver, RDS replica smaller than its source, burst credits, volumes asking for more than provisioned, time to full on RDS, OpenSearch, EFS, FSx and instance disks (with the CloudWatch agent) |
 | MSK | Broker disk and time to full, brokers out of balance, no storage autoscaling, CPU against AWS's advice of 60%, partitions per broker |
 | EKS | CPU request or memory limit under a floor, no limit, fixed replica counts, one replica, autoscaler at maximum, recent OOM kills, Pending pods, CoreDNS that cannot scale, node groups at maximum, subnet addresses |
-| Network | Subnets running out of addresses, NAT and load balancer port errors, rejected connections, Direct Connect bandwidth |
+| Network | Subnets running out of addresses, NAT and load balancer port errors, rejected connections, Direct Connect bandwidth, transit gateway attachments in one zone or missing a zone, blackhole routes and attachments per gateway (in the account that owns it) |
+| Shared network and DNS | Which accounts own the transit gateways, shared subnets and DNS forwarding rules the scanned accounts use, and whether they were scanned. Forwarding rules with one target server, failover records with no health check, health checks failing now on records in use |
 | Per-service reviews | See [Service coverage](#service-coverage). Live settings, peak against average, limits with a forecast, resilience, CloudWatch alarms on what fails first, and what cannot be seen. |
-| Change and certificates | ECS deployments with no circuit breaker, certificates expiring before the peak that will not renew by themselves |
+| Change and certificates | ECS deployments with no circuit breaker, certificates expiring before the peak that will not renew by themselves, ACM renewals that have stalled (validation record missing), private CAs, IAM server certificates, CloudFront's certificates in us-east-1, Route 53 domains expiring with auto-renew off |
 
 Every rule is in [`data/outage.yaml`](../src/exitrisk/data/outage.yaml).
 

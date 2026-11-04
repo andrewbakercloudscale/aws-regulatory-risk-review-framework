@@ -12,7 +12,7 @@
 #   severity  for event and config rules. Lowered one level outside production.
 #   prod_only reported only in production accounts
 #   fix       what to do about it
-version: "2026.11.7"
+version: "2026.11.8"
 points: {critical: 40, high: 15, medium: 5, low: 1}
 
 areas:
@@ -155,6 +155,9 @@ rules:
   # ---- change and expiry
   - {id: ecs_no_circuit_breaker, area: change, kind: config, severity: medium, prod_only: true, title: ECS deployments with no automatic rollback, why: "A bad deployment keeps replacing tasks until someone notices. Change is the largest measured trigger of outages.", fix: "Turn on the deployment circuit breaker with rollback."}
   - {id: cert_expiry, area: change, kind: config, severity: high, title: Certificate in use expires by the peak, why: "An expired certificate takes the service down at once, and fixing it during a freeze is itself a risky change.", fix: "Renew it before the change freeze."}
+  - {id: cert_renewal_failing, area: change, kind: config, severity: critical, title: Certificate renewal has stalled, why: "AWS has started renewing this certificate in use and cannot finish, usually because its DNS validation record was removed or changed. If nothing changes it expires on the date shown and the service goes down at once.", fix: "Put back the validation CNAME record ACM shows for it, or request a new certificate and switch to it before the freeze."}
+  - {id: iam_cert_expiry, area: change, kind: config, severity: medium, title: IAM server certificate expires by the peak, why: "IAM server certificates never renew by themselves, and IAM does not say whether a load balancer or CloudFront still uses this one.", fix: "Check what uses it; move it to ACM or upload a renewed one before the freeze."}
+  - {id: domain_expiry, area: change, kind: config, severity: critical, title: Domain registration expires by the peak, why: "A domain that lapses stops resolving everywhere at once, and getting it back can take days.", fix: "Renew it now and turn on auto-renew; check the payment method and the registrant contact."}
 
   # ---- added by the per-service reviews
   - {id: no_alarm, area: storage, kind: config, severity: medium, prod_only: true, title: No CloudWatch alarm on what fails first, why: "The metric that stops this service filling up or failing has no CloudWatch alarm, so it can reach its limit unseen. Another monitoring tool may watch it: check before acting.", fix: "Alarm at a level that leaves time to act, for example at 70% and 85% of a disk."}
@@ -214,6 +217,12 @@ rules:
   - {id: nat_drops, area: network, kind: event, severity: high, title: NAT gateway dropped packets, why: "Traffic was lost at the gateway in the lookback window.", fix: "Split traffic over more gateways, or use VPC endpoints."}
   - {id: nat_one_az, area: network, kind: config, severity: medium, prod_only: true, title: NAT gateway in only one zone, why: "Other zones send their traffic through it, so losing that zone cuts their internet access.", fix: "Add a NAT gateway per zone."}
   - {id: tgw_drops, area: network, kind: event, severity: medium, title: Transit Gateway dropped packets, why: "Traffic hit a blackhole or had no route in the lookback window. It may be expected: check what it was.", fix: "Check the route tables."}
+  - {id: tgw_one_az, area: network, kind: config, severity: high, prod_only: true, title: Transit gateway attachment in one zone, why: "The VPC is attached to the transit gateway through one zone only. Losing that zone cuts the whole VPC off from the data centre and the other VPCs, and resources in its other zones cannot reach the gateway at all.", fix: "Add an attachment subnet in each zone the VPC uses."}
+  - {id: tgw_zone_gap, area: network, kind: config, severity: medium, prod_only: true, title: Transit gateway attachment misses a zone, why: "Resources in a zone with no attachment subnet cannot reach the transit gateway. If a workload moves there, for example after a zone failure, it loses the route.", fix: "Add an attachment subnet in that zone, or keep what needs the gateway out of it."}
+  - {id: tgw_blackhole_route, area: network, kind: config, severity: medium, title: Transit gateway route sends traffic nowhere, why: "A route in this table is a blackhole: traffic to it is dropped. Often deliberate, to block a range; otherwise an attachment it pointed at was deleted.", fix: "Check each one is meant; remove or repoint the rest."}
+  - {id: resolver_rule_one_target, area: network, kind: config, severity: high, prod_only: true, title: DNS forwarding rule with one server, why: "Names under this domain are forwarded to one DNS server. If it is down or unreachable, every lookup of those names fails, and so does everything that calls them.", fix: "Add a second target, in another site."}
+  - {id: r53_failover_no_check, area: network, kind: config, severity: high, prod_only: true, title: Failover record with nothing to fail it over, why: "The primary record has no health check and no alias evaluating its target, so Route 53 never treats it as unhealthy and traffic never moves to the secondary.", fix: "Add a health check to the primary record, or turn on Evaluate target health on its alias."}
+  - {id: r53_health_failing, area: network, kind: config, severity: high, title: Route 53 health check failing now, why: "Most Route 53 checkers see this endpoint as down, and a DNS record uses the check: traffic has already moved off it, or will fail to move to it when needed.", fix: "Fix the endpoint, or the check if it tests the wrong path or port."}
   - {id: vpn_tunnel_down, area: network, kind: config, severity: high, title: VPN tunnel down, why: "A connection has two tunnels so it can survive maintenance. With one down, it has no spare.", fix: "Bring the tunnel up; check the customer gateway."}
   - {id: cf_errors, area: network, kind: event, severity: high, title: CloudFront served server errors, why: "At least 1% of requests were 5xx in the worst hour. Usually the origin.", fix: "Check the origin at those times."}
   - {id: cf_no_failover, area: storage, kind: config, severity: low, prod_only: true, title: CloudFront has no origin failover, why: "With no origin group, a failed origin means errors for its traffic. It may not apply to every distribution.", fix: "Add an origin group where a second origin exists."}

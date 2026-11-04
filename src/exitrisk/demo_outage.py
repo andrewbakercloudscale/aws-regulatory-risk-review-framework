@@ -225,6 +225,9 @@ def _review_rows(rng: random.Random, name: str, region: str, prod: bool) -> tupl
     return rows, profiles, counts
 
 
+NETWORK_ACCOUNT = "999900001111"  # the demo's shared network account, outside the scanned OU
+
+
 def build(accounts: list[dict], seed: int = 21) -> dict:
     rng = random.Random(seed)  # noqa: S311 - deterministic synthetic data, not security
     out: dict[str, dict] = {}
@@ -377,6 +380,12 @@ def build(accounts: list[dict], seed: int = 21) -> dict:
                     "unit": "in the lookback window",
                 }
             )
+        if prod and rng.random() < 0.3:
+            rows.append({"rule": "resolver_rule_one_target", "res": f"corp.example ({name})", "region": region,
+                         "note": "forwards to 10.10.0.53 only"})  # fmt: skip
+        if prod and rng.random() < 0.2:
+            rows.append({"rule": "tgw_one_az", "res": f"tgw-attach-{rng.randint(1000, 9999)}", "region": region,
+                         "note": "attached in one zone only; the VPC has subnets in 3 zones"})  # fmt: skip
         extra, profiles, counts = _review_rows(rng, name, region, prod)
         for c in clusters:
             counts["eks"] = counts.get("eks", 0) + 1
@@ -406,7 +415,14 @@ def build(accounts: list[dict], seed: int = 21) -> dict:
                 k: {"status": "pass", "note": ""}
                 for k in ("limits", "s3_limits", "connect", "fixed", "storage", "msk", "eks", "network", "certificates")
             },
-            "facts": {},
+            "facts": {
+                "depends_on": {
+                    region: [
+                        {"owner": NETWORK_ACCOUNT, "what": "Transit gateway", "detail": "tgw-0demo"},
+                        {"owner": NETWORK_ACCOUNT, "what": "DNS forwarding rules", "detail": "corp.example"},
+                    ]
+                }
+            },
             "read_at": "",
             "seconds": 1.0,
         }

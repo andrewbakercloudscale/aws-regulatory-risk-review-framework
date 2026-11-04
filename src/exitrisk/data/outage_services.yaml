@@ -234,11 +234,11 @@ services:
   - id: transit_gateway
     label: Transit Gateway
     impact: shared
-    checks: [vpc]
+    checks: [vpc, shared]
     level: partial
     billed: []
-    rules: [tgw_drops, tgw_bandwidth]
-    reads: [Packets dropped for a blackhole or no route, Bandwidth per attachment in the busiest hour]
+    rules: [tgw_drops, tgw_bandwidth, tgw_one_az, tgw_zone_gap, tgw_blackhole_route]
+    reads: [Packets dropped for a blackhole or no route, Bandwidth per attachment in the busiest hour, Attachment subnets by zone, "Blackhole routes and attachments per gateway, in the account that owns it", Which account owns the gateway each VPC uses]
     not_seen: ["Packets a second per attachment", "Bursts inside the hour"]
   - id: vpn
     label: Site-to-Site VPN
@@ -350,22 +350,22 @@ services:
   - id: acm
     label: AWS Certificate Manager
     impact: shared
-    checks: [certificates]
     level: partial
     billed: ["AWS Certificate Manager"]
-    rules: [cert_expiry]
-    reads: [Certificates in use that expire by the peak]
-    not_seen: ["Certificates outside ACM, such as on instances or pods"]
+    checks: [certificates, dns]
+    rules: [cert_expiry, cert_renewal_failing, iam_cert_expiry]
+    reads: [Certificates in use that expire by the peak, Renewals that have stalled, Private certificate authorities, "IAM server certificates", CloudFront's certificates in us-east-1]
+    not_seen: ["Certificates outside AWS, such as on instances, pods, appliances or partners' endpoints"]
   - id: route53
     label: Amazon Route 53
     impact: shared
-    checks: [resolver]
+    checks: [resolver, dns, domains, shared]
     level: partial
     billed: ["Amazon Route 53"]
     quota: [route53, route53resolver]
-    rules: [resolver_load, resolver_one_az]
-    reads: [Hosted zones against the limit, Quotas that publish usage, "Resolver endpoints: queries a second against their addresses, and zones"]
-    not_seen: ["Health checks and failover records", "Resolver query logs and forwarding rules"]
+    rules: [resolver_load, resolver_one_az, resolver_rule_one_target, r53_failover_no_check, r53_health_failing, domain_expiry]
+    reads: [Hosted zones against the limit, Quotas that publish usage, "Resolver endpoints: queries a second against their addresses, and zones", Forwarding rules with one target, Failover records with no health check, Health checks failing now on records in use, Domains that expire by the peak]
+    not_seen: ["Resolver query logs", "Domains registered outside Route 53", "DNS servers in the data centre"]
   - {id: kms, label: AWS KMS, level: generic, billed: ["AWS Key Management Service"], quota: [kms], reads: [Request rate quotas that publish usage], not_seen: ["Which callers drive the rate"]}
   - {id: secrets, label: AWS Secrets Manager, level: generic, billed: ["AWS Secrets Manager"], quota: [secretsmanager], reads: [Quotas that publish usage], not_seen: ["Callers with no caching"]}
   - {id: ecr, label: Amazon ECR, level: generic, billed: ["Amazon EC2 Container Registry (ECR)"], quota: [ecr], reads: [Quotas that publish usage], not_seen: ["Pull rate during a scale-out"]}

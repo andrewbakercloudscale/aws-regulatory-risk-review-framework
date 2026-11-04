@@ -141,7 +141,9 @@ Only for **Run the outage risk checks** (`--outage`). All reads.
   CloudWatch `GetMetricData` and `DescribeAlarms`, account limits, MSK, Amazon Connect, capacity and
   autoscaling settings, and the settings the service reviews read (RDS parameters and maintenance,
   ElastiCache, Lambda, DynamoDB, Kinesis, SQS, Amazon MQ, API Gateway, Redshift, FSx, EFS, NAT, Transit
-  Gateway, VPN, CloudFront);
+  Gateway attachments, route tables and blackhole routes, VPN, CloudFront, Route 53 zones, records and
+  health checks, Resolver forwarding rules, Route 53 domains, ACM certificate renewal, private CAs and
+  IAM server certificates);
   the StackSet and Terraform include it). On IAM Identity Center, add it to the permission set used
   in the member accounts. AWS's ReadOnlyAccess covers most of it; Check access names what is missing.
 - **EKS workloads are a separate grant.** Replica counts, requests and limits come from each cluster's

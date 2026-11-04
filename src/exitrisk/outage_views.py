@@ -643,6 +643,50 @@ def _by_owner(findings: list[dict], table: list[dict], rules: dict, cat: dict, f
     return {"owners": out, "untagged_accounts": sum(1 for r in table if not r.get("owner"))}
 
 
+def _shared(scan: dict, table: list[dict]) -> dict:
+    """Accounts outside the scan that scanned accounts depend on for their network or DNS: a transit gateway,
+    shared subnets, forwarding rules. What fails there fails here too, so an account not scanned is a gap."""
+    org = scan.get("org_accounts") or {}
+    scanned = {r["id"] for r in table}
+    names = {r["id"]: r["name"] for r in table}
+    prod = {r["id"] for r in table if r["production"]}
+    owners: dict[str, dict] = {}
+    for acct, raw in ((scan.get("outage") or {}).get("accounts") or {}).items():
+        for deps in ((raw.get("facts") or {}).get("depends_on") or {}).values():
+            for d in deps:
+                o = owners.setdefault(d["owner"], {"what": set(), "users": set(), "production": set()})
+                o["what"].add(d["what"])
+                o["users"].add(acct)
+                if acct in prod:
+                    o["production"].add(acct)
+    rows = []
+    for owner, o in owners.items():
+        info = org.get(owner) or {}
+        rows.append(
+            {
+                "id": owner,
+                "name": names.get(owner) or info.get("name") or "",
+                "ou_path": info.get("ou_path", ""),
+                "scanned": owner in scanned,
+                "what": sorted(o["what"]),
+                "accounts": len(o["users"]),
+                "production": len(o["production"]),
+                "examples": sorted(names.get(a, a) for a in o["production"] or o["users"])[:5],
+            }
+        )
+    rows.sort(key=lambda r: (r["scanned"], -r["production"], -r["accounts"], r["id"]))
+    missing = [r for r in rows if not r["scanned"]]
+    return {
+        "owners": rows,
+        "not_scanned": len(missing),
+        "ous": sorted({r["ou_path"] for r in missing if r["ou_path"]}),
+        "read": any(
+            "depends_on" in (raw.get("facts") or {}) or "shared" in (raw.get("checks") or {})
+            for raw in ((scan.get("outage") or {}).get("accounts") or {}).values()
+        ),
+    }
+
+
 def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date, freeze: date, today: date) -> dict:
     """Add to the report what it needs to rank 300 accounts. Marks each finding with its service, and each
     account with its risk points (see _risk_points)."""
@@ -667,6 +711,7 @@ def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date
         "services_at_risk": _services_at_risk(findings, rules, svc_cat),
         "account_service": _account_service(table, findings, labels, rules),
         "top_risks": _top_risks(findings, table, rules, cat, freeze, peak, today),
+        "shared": _shared(scan, table),
         "immediate": _immediate(findings, table, rules, today, ranks),
         "by_owner": _by_owner(findings, table, rules, cat, freeze, peak, today),
         "runway": _runway(findings, peak, today),

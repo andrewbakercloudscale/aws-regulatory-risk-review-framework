@@ -199,7 +199,36 @@ ANSWERS = {
                 },
             ]
         },
-        "describe_transit_gateways": {"TransitGateways": [{"TransitGatewayId": "res1", "State": "available"}]},
+        "describe_transit_gateways": {
+            "TransitGateways": [{"TransitGatewayId": "res1", "State": "available", "OwnerId": "111111111111"}]
+        },
+        "describe_transit_gateway_attachments": {
+            "TransitGatewayAttachments": [
+                {
+                    "TransitGatewayId": "tgw-net",
+                    "State": "available",
+                    "ResourceOwnerId": "111111111111",
+                    "TransitGatewayOwnerId": "222222222222",
+                }
+            ]
+        },
+        "describe_transit_gateway_vpc_attachments": {
+            "TransitGatewayVpcAttachments": [
+                {
+                    "TransitGatewayAttachmentId": "tgw-attach-1",
+                    "VpcId": "v1",
+                    "VpcOwnerId": "111111111111",
+                    "State": "available",
+                    "SubnetIds": ["s1"],
+                }
+            ]
+        },
+        "describe_transit_gateway_route_tables": {
+            "TransitGatewayRouteTables": [{"TransitGatewayRouteTableId": "tgw-rtb-1", "TransitGatewayId": "res1"}]
+        },
+        "search_transit_gateway_routes": {
+            "Routes": [{"DestinationCidrBlock": "10.9.0.0/16", "Type": "static", "State": "blackhole"}]
+        },
         "describe_vpc_endpoints": {
             "VpcEndpoints": [
                 {
@@ -493,6 +522,126 @@ ANSWERS = {
         "list_resolver_endpoint_ip_addresses": {
             "IpAddresses": [{"IpId": "a", "SubnetId": "s1"}, {"IpId": "b", "SubnetId": "s1"}]
         },
+        "list_resolver_rules": {
+            "ResolverRules": [
+                {
+                    "Id": "rslvr-rr-1",
+                    "Name": "corp",
+                    "DomainName": "corp.example.",
+                    "RuleType": "FORWARD",
+                    "Status": "COMPLETE",
+                    "OwnerId": "222222222222",
+                    "TargetIps": [{"Ip": "10.1.1.1", "Port": 53}],
+                }
+            ]
+        },
+        "list_resolver_rule_associations": {
+            "ResolverRuleAssociations": [{"Id": "a1", "ResolverRuleId": "rslvr-rr-1", "VPCId": "v1"}]
+        },
+    },
+    "route53": {
+        "get_account_limit": {"Limit": {"Type": "MAX_HOSTED_ZONES_BY_OWNER", "Value": 500}, "Count": 10},
+        "list_hosted_zones": {
+            "HostedZones": [
+                {
+                    "Id": "/hostedzone/Z1",
+                    "Name": "example.com.",
+                    "CallerReference": "x",
+                    "Config": {"PrivateZone": False},
+                }
+            ]
+        },
+        "list_resource_record_sets": {
+            "ResourceRecordSets": [
+                {
+                    "Name": "api.example.com.",
+                    "Type": "A",
+                    "SetIdentifier": "p",
+                    "Failover": "PRIMARY",
+                    "TTL": 60,
+                    "ResourceRecords": [{"Value": "1.2.3.4"}],
+                },
+                {
+                    "Name": "web.example.com.",
+                    "Type": "A",
+                    "SetIdentifier": "w",
+                    "Weight": 1,
+                    "HealthCheckId": "hc1",
+                    "TTL": 60,
+                    "ResourceRecords": [{"Value": "1.2.3.5"}],
+                },
+            ]
+        },
+        "list_health_checks": {
+            "HealthChecks": [
+                {
+                    "Id": "hc1",
+                    "CallerReference": "x",
+                    "HealthCheckVersion": 1,
+                    "HealthCheckConfig": {"Type": "HTTPS", "FullyQualifiedDomainName": "web.example.com", "Port": 443},
+                }
+            ]
+        },
+        "get_health_check_status": {
+            "HealthCheckObservations": [
+                {"Region": "us-east-1", "StatusReport": {"Status": "Failure: HTTP Status Code 503"}},
+                {"Region": "eu-west-1", "StatusReport": {"Status": "Failure: HTTP Status Code 503"}},
+                {"Region": "us-west-2", "StatusReport": {"Status": "Success: HTTP Status Code 200"}},
+            ]
+        },
+    },
+    "iam": {
+        "list_server_certificates": {
+            "ServerCertificateMetadataList": [
+                {
+                    "Path": "/",
+                    "ServerCertificateName": "old-lb",
+                    "ServerCertificateId": "x" * 16,
+                    "Arn": "arn:aws:iam::111111111111:server-certificate/old-lb",
+                    "Expiration": NOW + timedelta(days=20),
+                }
+            ]
+        },
+    },
+    "route53domains": {
+        "list_domains": {
+            "Domains": [{"DomainName": "example.com", "AutoRenew": False, "Expiry": NOW + timedelta(days=10)}]
+        },
+    },
+    "acm": {
+        "list_certificates": {
+            "CertificateSummaryList": [
+                {
+                    "CertificateArn": "arn:aws:acm:eu-west-1:1:certificate/a",
+                    "DomainName": "api.example.com",
+                    "Type": "AMAZON_ISSUED",
+                    "RenewalEligibility": "ELIGIBLE",
+                    "InUse": True,
+                    "NotAfter": NOW + timedelta(days=20),
+                }
+            ]
+        },
+        "describe_certificate": {
+            "Certificate": {
+                "CertificateArn": "arn:aws:acm:eu-west-1:1:certificate/a",
+                "RenewalSummary": {
+                    "RenewalStatus": "PENDING_VALIDATION",
+                    "UpdatedAt": NOW,
+                    "DomainValidationOptions": [{"DomainName": "api.example.com"}],
+                },
+            }
+        },
+    },
+    "acm-pca": {
+        "list_certificate_authorities": {
+            "CertificateAuthorities": [
+                {
+                    "Arn": "arn:aws:acm-pca:eu-west-1:1:certificate-authority/ca1",
+                    "Status": "ACTIVE",
+                    "NotAfter": NOW + timedelta(days=30),
+                }
+            ]
+        },
     },
     "s3": {"list_buckets": {"Buckets": [{"Name": "res1", "CreationDate": NOW}]}},
 }
@@ -662,6 +811,8 @@ def test_the_rules_for_what_the_answers_hold_fire(read):
         "dx_no_redundancy", "dx_vif_down", "vpce_one_az", "vpce_drops", "ec2_net_allowance", "ec2_dns_allowance",
         "lambda_runtime", "lambda_reserved", "rds_busy_window", "pg_autovacuum_off", "aurora_one_az", "rds_old_gen",
         "ec2_old_gen", "ec2_event", "cache_old_gen", "search_old_gen", "mq_old_gen", "lambda_one_az",
+        "tgw_one_az", "tgw_blackhole_route", "resolver_rule_one_target", "r53_failover_no_check",
+        "r53_health_failing", "iam_cert_expiry", "domain_expiry", "cert_renewal_failing", "cert_expiry",
     }  # fmt: skip
     assert want <= rules, want - rules
     assert rules <= {r["id"] for r in catalog()["rules"]}
@@ -692,3 +843,10 @@ def test_a_task_runs_with_only_its_own_service_billed(billed):
         if v["status"] == "unknown" or "not measured" in (v.get("note") or "")
     }
     assert not down
+
+
+def test_what_an_account_uses_from_another_account_is_recorded(read):
+    out, _ = read
+    deps = [d for got in out["facts"]["depends_on"].values() for d in got]
+    assert {d["owner"] for d in deps} == {"222222222222"}
+    assert {d["what"] for d in deps} == {"Transit gateway", "DNS forwarding rules"}

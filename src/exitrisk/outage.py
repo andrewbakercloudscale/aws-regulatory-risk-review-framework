@@ -235,7 +235,7 @@ def _judge(row: dict, rule: dict, a: OutageAnswers, peak: date, days_to_peak: in
             why = judge_windows(row, a)
             if not why:
                 return None
-        elif rule["id"] == "cert_expiry":
+        elif rule["id"] in ("cert_expiry", "iam_cert_expiry", "domain_expiry"):
             ends = date.fromisoformat(row["ends"])
             if ends > peak + timedelta(days=7):
                 return None

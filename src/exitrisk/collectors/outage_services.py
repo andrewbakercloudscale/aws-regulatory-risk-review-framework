@@ -22,6 +22,7 @@ from ..aws_session import with_backoff
 from ..logging_config import get_logger
 from .assurance import _code, _pages
 from .outage import (
+    CERT_DAYS,
     GIB,
     GLOBAL_TASKS,
     LOOKBACK_DAYS,
@@ -35,6 +36,7 @@ from .outage import (
     _search,
     add_burstable,
     add_old_generation,
+    task_certificates,
 )
 
 log = get_logger("outage")
@@ -57,6 +59,7 @@ LAMBDA_DEPRECATED = {
     "python3.9", "nodejs18.x", "ruby3.2",
 }  # fmt: skip
 VPN_TUNNEL_BPS = {"standard": 1.25e9, "large": 5e9}  # per tunnel, by the connection's TunnelBandwidth
+TGW_ATTACHMENTS = 5000  # attachments per transit gateway, the default quota
 TGW_ATTACHMENT_BPS = 100e9  # per VPC attachment in each zone: the total is compared, so it errs early
 RESOLVER_QPS_PER_IP = 10000  # queries a second each endpoint address answers
 VPCE_DIMS = ("Endpoint Type", "Service Name", "VPC Endpoint Id", "VPC Id")
@@ -1521,6 +1524,157 @@ def task_s3_profile(ctx: OutageCtx, region: str) -> None:
     ctx.r.ok("s3_review")
 
 
+# ------------------------------------------------------------------------------- shared network and DNS
+MAX_ZONES = 100  # hosted zones read per account
+MAX_RECORDS = 5000  # records read per hosted zone
+MAX_HEALTH_CHECKS = 200
+
+
+def _depends(ctx: OutageCtx, region: str, owner: str | None, what: str, detail: str) -> None:
+    """Something this account uses that another account owns: ``what`` is the kind (Transit gateway, Shared
+    subnets, DNS forwarding rules), ``detail`` which one."""
+    if not owner or owner == ctx.account_id:
+        return
+    with ctx._lock:
+        got = ctx.r.facts.setdefault("depends_on", {}).setdefault(region, [])
+        if not any(d["owner"] == owner and d["detail"] == detail for d in got):
+            got.append({"owner": owner, "what": what, "detail": detail})
+
+
+def task_shared_network(ctx: OutageCtx, region: str) -> None:
+    """Transit gateway attachments by zone, blackhole routes and attachment counts in a gateway this account
+    owns, forwarding rules with one target, and what this account uses that another account owns."""
+    ec2 = ctx.client("ec2", region)
+    subnets = {s["SubnetId"]: s for s in _pages(ec2, "describe_subnets", "Subnets", cap=MAX_ITEMS)}
+    zones_in: dict[str, set[str]] = {}
+    for s in subnets.values():
+        zones_in.setdefault(s.get("VpcId", ""), set()).add(s.get("AvailabilityZone", ""))
+        if s.get("OwnerId") and s["OwnerId"] != ctx.account_id:
+            _depends(ctx, region, s["OwnerId"], "Shared subnets", s.get("VpcId", ""))
+    for a in _pages(ec2, "describe_transit_gateway_attachments", "TransitGatewayAttachments", cap=MAX_ITEMS):
+        if a.get("State") == "available" and a.get("ResourceOwnerId") == ctx.account_id:
+            _depends(ctx, region, a.get("TransitGatewayOwnerId"), "Transit gateway", a.get("TransitGatewayId", ""))
+    for a in _pages(ec2, "describe_transit_gateway_vpc_attachments", "TransitGatewayVpcAttachments", cap=MAX_ITEMS):
+        if a.get("State") != "available" or a.get("VpcOwnerId", ctx.account_id) != ctx.account_id:
+            continue
+        mine = {(subnets.get(x) or {}).get("AvailabilityZone") for x in a.get("SubnetIds") or []} - {None}
+        vpc_zones = zones_in.get(a.get("VpcId", ""), set()) - {""}
+        if not mine or len(vpc_zones) < 2:
+            continue
+        name = f"{a['TransitGatewayAttachmentId']} ({a.get('VpcId')})"
+        missing = sorted(vpc_zones - mine)
+        if len(mine) == 1:
+            ctx.add("tgw_one_az", name, region, note=f"attached in {next(iter(mine))} only; the VPC has "
+                    f"subnets in {len(vpc_zones)} zones")  # fmt: skip
+        elif missing:
+            ctx.add("tgw_zone_gap", name, region, note=f"no attachment subnet in {', '.join(missing)}")
+    for t in _pages(ec2, "describe_transit_gateways", "TransitGateways", cap=MAX_ITEMS):
+        if t.get("OwnerId") != ctx.account_id or t.get("State") != "available":
+            continue
+        tid = t["TransitGatewayId"]
+        count = len(_pages(ec2, "describe_transit_gateway_attachments", "TransitGatewayAttachments", cap=MAX_ITEMS,
+                           Filters=[{"Name": "transit-gateway-id", "Values": [tid]}]))  # fmt: skip
+        ctx.add("limit_product", f"ec2: Attachments per transit gateway ({tid})", region,
+                pct=100.0 * count / TGW_ATTACHMENTS, used=count, limit=TGW_ATTACHMENTS)  # fmt: skip
+        tables = _pages(ec2, "describe_transit_gateway_route_tables", "TransitGatewayRouteTables", cap=MAX_ITEMS,
+                        Filters=[{"Name": "transit-gateway-id", "Values": [tid]}])  # fmt: skip
+        for rt in tables:
+            got = with_backoff(
+                ec2.search_transit_gateway_routes,
+                TransitGatewayRouteTableId=rt["TransitGatewayRouteTableId"],
+                Filters=[{"Name": "state", "Values": ["blackhole"]}],
+                MaxResults=1000,
+            )
+            holes = [r.get("DestinationCidrBlock") or r.get("PrefixListId") for r in got.get("Routes") or []]
+            if holes:
+                ctx.add(
+                    "tgw_blackhole_route",
+                    f"{tid} route table {rt['TransitGatewayRouteTableId']}",
+                    region,
+                    used=len(holes),
+                    unit="blackhole routes",
+                    note=", ".join(h for h in holes[:5] if h)
+                    + (f" and {len(holes) - 5} more" if len(holes) > 5 else ""),
+                )
+    _forwarding_rules(ctx, region)
+    ctx.r.ok("shared")
+
+
+def _forwarding_rules(ctx: OutageCtx, region: str) -> None:
+    client = ctx.client("route53resolver", region)
+    used = {a.get("ResolverRuleId") for a in _pages(client, "list_resolver_rule_associations",
+                                                    "ResolverRuleAssociations", cap=MAX_ITEMS)}  # fmt: skip
+    for r in _pages(client, "list_resolver_rules", "ResolverRules", cap=MAX_ITEMS):
+        if r.get("RuleType") != "FORWARD" or r.get("Id") not in used or r.get("Status") != "COMPLETE":
+            continue
+        domain = (r.get("DomainName") or "").rstrip(".") or "."
+        _depends(ctx, region, r.get("OwnerId"), "DNS forwarding rules", domain)
+        targets = r.get("TargetIps") or []
+        if len(targets) == 1:
+            t = targets[0]
+            ctx.add("resolver_rule_one_target", f"{domain} ({r.get('Name') or r['Id']})", region,
+                    note=f"forwards to {t.get('Ip') or t.get('Ipv6')} only")  # fmt: skip
+
+
+def task_dns_and_domains(ctx: OutageCtx) -> None:
+    """Failover records with nothing to fail them over, health checks failing now on records in use, domains
+    about to expire, IAM server certificates, and ACM certificates in us-east-1 (CloudFront's) when the scan's
+    regions leave it out."""
+    r53 = ctx.client("route53")
+    zones = _pages(r53, "list_hosted_zones", "HostedZones", cap=MAX_ZONES)
+    checked: set[str] = set()
+    for z in zones:
+        zone = z["Name"].rstrip(".")
+        for rec in _pages(
+            r53, "list_resource_record_sets", "ResourceRecordSets", cap=MAX_RECORDS, HostedZoneId=z["Id"]
+        ):
+            if rec.get("HealthCheckId"):
+                checked.add(rec["HealthCheckId"])
+            alias = rec.get("AliasTarget") or {}
+            if (
+                rec.get("Failover") == "PRIMARY"
+                and not rec.get("HealthCheckId")
+                and not alias.get("EvaluateTargetHealth")
+            ):
+                private = " (private)" if (z.get("Config") or {}).get("PrivateZone") else ""
+                name = f"{rec['Name'].rstrip('.')} {rec.get('Type')}"
+                ctx.add("r53_failover_no_check", name, "global", note=f"zone {zone}{private}")
+    for hc in _pages(r53, "list_health_checks", "HealthChecks", cap=MAX_HEALTH_CHECKS):
+        cfg = hc.get("HealthCheckConfig") or {}
+        if hc["Id"] not in checked or cfg.get("Disabled") or cfg.get("Inverted"):
+            continue
+        if cfg.get("Type") not in ("HTTP", "HTTPS", "HTTP_STR_MATCH", "HTTPS_STR_MATCH", "TCP"):
+            continue
+        seen = with_backoff(r53.get_health_check_status, HealthCheckId=hc["Id"]).get("HealthCheckObservations") or []
+        bad = sum(1 for o in seen if not ((o.get("StatusReport") or {}).get("Status") or "").startswith("Success"))
+        if seen and bad * 2 > len(seen):
+            where = cfg.get("FullyQualifiedDomainName") or cfg.get("IPAddress") or hc["Id"]
+            ctx.add("r53_health_failing", f"{where}:{cfg.get('Port', '')} ({hc['Id']})", "global",
+                    note=f"{bad} of {len(seen)} checkers report a failure", now=True)  # fmt: skip
+    limit = ctx.now + timedelta(days=CERT_DAYS)
+    for c in _pages(ctx.client("iam"), "list_server_certificates", "ServerCertificateMetadataList", cap=MAX_ITEMS):
+        ends = c.get("Expiration")
+        if ends and ends <= limit:
+            ctx.add("iam_cert_expiry", c.get("ServerCertificateName", ""), "global", ends=ends.date().isoformat(),
+                    note="an IAM server certificate: it does not renew by itself")  # fmt: skip
+    if "us-east-1" not in ctx.regions:
+        task_certificates(ctx, "us-east-1")
+    ctx.r.ok("dns")
+
+
+def task_domains(ctx: OutageCtx) -> None:
+    """Domains registered in this account with Route 53 that expire by the peak."""
+    client = ctx.client("route53domains", "us-east-1")
+    limit = ctx.now + timedelta(days=CERT_DAYS)
+    for d in _pages(client, "list_domains", "Domains", cap=MAX_ITEMS):
+        ends = d.get("Expiry")
+        if ends and ends <= limit:
+            auto = bool(d.get("AutoRenew"))
+            ctx.add("domain_expiry", d.get("DomainName", ""), "global", ends=ends.date().isoformat(), auto=auto,
+                    note="renews by itself, if the payment goes through" if auto else "auto-renew is off")  # fmt: skip
+    ctx.r.ok("domains")
+
+
 REGION_TASKS.extend(
     [
         ("alarms", ("alarms",), task_alarms, None),
@@ -1545,6 +1699,7 @@ REGION_TASKS.extend(
         ("redshift review", ("redshift",), task_redshift_review, ("Amazon Redshift",)),
         ("file systems review", ("files",), task_files_review, ("Amazon FSx", "Amazon Elastic File System")),
         ("s3 review", ("s3_review",), task_s3_profile, None),
+        ("shared network", ("shared",), task_shared_network, None),
         (
             "step functions, eventbridge, cognito",
             ("small_services",),
@@ -1554,3 +1709,5 @@ REGION_TASKS.extend(
     ]
 )
 GLOBAL_TASKS.append(("cloudfront", ("cloudfront",), task_cloudfront, (CLOUDFRONT,)))
+GLOBAL_TASKS.append(("dns and certificates", ("dns",), task_dns_and_domains, None))
+GLOBAL_TASKS.append(("domains", ("domains",), task_domains, None))

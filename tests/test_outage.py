@@ -819,3 +819,20 @@ def test_connect_api_rates_follow_the_staff_not_the_peak_and_admin_calls_are_not
     out = got["StartOutboundVoiceContact"]
     assert out["severity"] == "high" and out["at_peak"] == out["pct"] and "staff is fixed" in out["why"]
     assert got["StartChatContact"]["severity"] in ("medium", "low")
+
+
+def test_dns_domain_and_certificate_findings_are_judged_by_date_and_auto_renewal():
+    soon = (date.today() + timedelta(days=10)).isoformat()
+    far = (date.today() + timedelta(days=100)).isoformat()
+    rows = [
+        {"rule": "domain_expiry", "res": "lapsing.example", "region": "global", "ends": soon, "auto": False},
+        {"rule": "domain_expiry", "res": "renewing.example", "region": "global", "ends": far, "auto": True},
+        {"rule": "cert_renewal_failing", "res": "api.example", "region": "r", "ends": soon, "now": True,
+         "note": "renewal pending validation"},
+        {"rule": "r53_failover_no_check", "res": "api.example A", "region": "global", "note": "zone example"},
+    ]  # fmt: skip
+    got = {f["res"]: f for f in _one(rows)}
+    assert got["lapsing.example"]["severity"] == "critical"
+    assert "renewing.example" not in got  # renews by itself, well after the peak
+    assert got["api.example"]["severity"] == "critical"
+    assert got["api.example A"]["severity"] == "high"
