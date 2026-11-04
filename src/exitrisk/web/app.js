@@ -2493,11 +2493,10 @@
   const OR_RATING_COLOR = { Critical: "var(--sev-critical)", High: "var(--sev-error)", Medium: "var(--sev-warning)", Low: "var(--good)", "Not measured": "var(--t3)" };
   const OR_SEV_COLOR = { critical: "var(--sev-critical)", high: "var(--sev-error)", medium: "var(--sev-warning)", low: "var(--sev-info)" };
   const orSev = (sev) => pill(null, cap(sev), OR_SEV_COLOR[sev]);
-  const OR_RATING_INK = { Critical: "#fff", High: "#111", Medium: "#111", Low: "#fff", "Not measured": "#111" };
 
   function renderOrMap(r) {
     renderOrMatrix(r);
-    renderOrTreemap(r);
+    renderOrBubbles(r);
     renderOrExposure(r);
     renderOrServiceBars(r);
     renderOrHeat(r);
@@ -2545,53 +2544,119 @@
     box.innerHTML = `<strong>${esc(rating)}, ${esc(band)}:</strong> ${c.names.map((n) => `<button type="button" class="link-btn" data-or-acct="${esc(n)}">${esc(n)}</button>`).join(", ")}${c.accounts > c.names.length ? `, and ${num(c.accounts - c.names.length)} more` : ""}`;
   }
 
-  // Squarified treemap (Bruls, Huizing, van Wijk): keeps tiles near square, so small accounts stay readable.
-  function squarify(items, x, y, w, h) {
-    const out = [];
-    let rest = items.slice(), box = { x, y, w, h };
-    const total = rest.reduce((n, i) => n + i.value, 0);
-    if (!total) return out;
-    const scale = (w * h) / total;
-    const worst = (row, side) => {
-      const sum = row.reduce((n, i) => n + i.value * scale, 0);
-      const max = Math.max(...row.map((i) => i.value * scale)), min = Math.min(...row.map((i) => i.value * scale));
-      return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
-    };
-    while (rest.length) {
-      const side = Math.min(box.w, box.h);
-      const row = [rest[0]];
-      let i = 1;
-      while (i < rest.length && worst([...row, rest[i]], side) <= worst(row, side)) row.push(rest[i++]);
-      rest = rest.slice(i);
-      const sum = row.reduce((n, it) => n + it.value * scale, 0);
-      const across = sum / side;
-      let at = 0;
-      for (const it of row) {
-        const along = (it.value * scale) / across;
-        if (box.w >= box.h) out.push({ ...it, x: box.x, y: box.y + at, w: across, h: along });
-        else out.push({ ...it, x: box.x + at, y: box.y, w: along, h: across });
-        at += along;
-      }
-      if (box.w >= box.h) box = { ...box, x: box.x + across, w: box.w - across };
-      else box = { ...box, y: box.y + across, h: box.h - across };
+  // Accounts as bubbles: up = how bad (outage score), right = how far an outage would spread, size = risk points.
+  // Top right is where to look first. Spend plays no part.
+  const OR_RATING_VAR = { Critical: "--sev-critical", High: "--sev-error", Medium: "--sev-warning", Low: "--good", "Not measured": "--t3" };
+  const OR_REACH_TICKS = { 1: "One workload", 2: "Data", 3: "Shared" };
+  function renderOrBubbles(r) {
+    // Biggest first, so a small bubble is drawn on top of a big one, not hidden under it.
+    const risky = r.accounts.filter((a) => a.risk > 0 && a.reach != null).sort((p, q) => q.risk - p.risk);
+    const clean = r.accounts.length - risky.length;
+    const legend = ["Critical", "High", "Medium", "Low"].map((k) => pill(null, k, OR_RATING_COLOR[k])).join(" ");
+    $("#orBubblesNote").innerHTML = `${legend} <span>Hollow: non-production.${clean ? ` ${plural(clean, "account")} with no finding ${clean === 1 ? "is" : "are"} not drawn; see section 8.` : ""}</span>`;
+    const box = $("#chOrAccounts").parentElement;
+    box.querySelector(".chart-empty")?.remove();
+    if (!risky.length) {
+      state.charts.chOrAccounts?.destroy();
+      box.insertAdjacentHTML("beforeend", '<p class="muted small chart-empty">No account has a finding.</p>');
+      return;
     }
-    return out;
+    const maxR = Math.max(...risky.map((a) => a.risk), 1);
+    // A small fixed nudge, so accounts with the same spread do not sit in one column.
+    const nudge = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return ((Math.abs(h) % 1000) / 1000 - 0.5) * 0.16; };
+    const colour = (a) => css(OR_RATING_VAR[a.rating] || "--t3");
+    const top = [...risky].sort((p, q) => q.risk * q.reach - p.risk * p.reach || p.name.localeCompare(q.name)).slice(0, 8).map((a) => a.id);
+    chart("chOrAccounts", {
+      type: "bubble",
+      data: {
+        datasets: [{
+          label: "Accounts",
+          data: risky.map((a) => ({ x: Math.min(3.1, Math.max(0.9, a.reach + nudge(a.id))), y: a.score, r: 4 + 24 * Math.sqrt(a.risk / maxR), a })),
+          backgroundColor: risky.map((a) => (a.production ? colour(a) + "cc" : colour(a) + "22")),
+          borderColor: risky.map((a) => (a.production ? css("--surface") : colour(a))),
+          borderWidth: risky.map((a) => (a.production ? 1.5 : 2)),
+          hoverBorderWidth: 2,
+          clip: 30, // a big bubble near 100 is drawn whole, not cut at the top
+        }],
+      },
+      options: {
+        layout: { padding: 12 },
+        onHover: (e, els) => { e.native.target.style.cursor = els.length ? "pointer" : "default"; },
+        onClick: (e, els) => { if (els.length) openOrAccount(risky[els[0].index].name); },
+        scales: {
+          x: { min: 0.8, max: 3.2, title: { display: true, text: "How far an outage would spread: the services its findings are on" }, ticks: { stepSize: 1, callback: (v) => OR_REACH_TICKS[v] || "" }, grid: { color: (c) => (OR_REACH_TICKS[c.tick?.value] ? css("--grid") : "transparent") } },
+          y: { min: 0, max: 100, title: { display: true, text: "Outage risk score" }, grid: { color: css("--grid") } },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: {
+            title: (items) => items[0].raw.a.name,
+            label: (c) => {
+              const a = c.raw.a;
+              return [` Score ${num(a.score)} (${a.rating})${a.production ? "" : " · non-production"}`, ` ${num(a.critical)} critical, ${num(a.high)} high, ${num(a.medium)} medium`, a.top ? ` Worst: ${a.top}` : "", " Select to see its findings"].filter(Boolean);
+            },
+          } },
+        },
+      },
+      plugins: [{
+        id: "orZones",
+        beforeDatasetsDraw(ch) {
+          const { ctx, chartArea: ca, scales: { x, y } } = ch;
+          ctx.save();
+          // The corner to start in: Critical or High, on data or shared services.
+          ctx.fillStyle = css("--sev-critical") + "12";
+          const x0 = x.getPixelForValue(1.75), y0 = y.getPixelForValue(50);
+          ctx.fillRect(x0, ca.top, ca.right - x0, y0 - ca.top);
+          ctx.strokeStyle = css("--axis");
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.fillStyle = css("--muted");
+          ctx.font = `11px ${css("--font")}`;
+          for (const [v, label] of [[80, "Critical ↑"], [50, "High ↑"]]) {
+            const yy = y.getPixelForValue(v);
+            ctx.beginPath(); ctx.moveTo(ca.left, yy); ctx.lineTo(ca.right, yy); ctx.stroke();
+            ctx.fillText(label, ca.left + 6, yy - 6);
+          }
+          ctx.setLineDash([]);
+          ctx.font = `600 11px ${css("--font")}`;
+          ctx.textAlign = "right";
+          ctx.fillText("Start here", ca.right - 6, ca.top + 14);
+          ctx.restore();
+        },
+      }, {
+        id: "orLabels",
+        afterDatasetsDraw(ch) {
+          const ctx = ch.ctx, meta = ch.getDatasetMeta(0);
+          ctx.save();
+          ctx.font = `600 11px ${css("--font")}`;
+          ctx.fillStyle = css("--ink");
+          ctx.strokeStyle = css("--surface");
+          ctx.lineWidth = 3;
+          const placed = [];
+          meta.data.map((pt, i) => ({ pt, a: risky[i] })).filter((o) => top.includes(o.a.id)).sort((p, q) => p.pt.y - q.pt.y).forEach(({ pt, a }) => {
+            const rad = pt.options.radius || 6;
+            const w = ctx.measureText(a.name).width;
+            const left = pt.x > ch.chartArea.right - 180;
+            const x0 = left ? pt.x - rad - 6 - w : pt.x + rad + 6;
+            let y = pt.y + 4;
+            while (placed.some((b) => x0 < b.x + b.w && x0 + w > b.x && Math.abs(y - b.y) < 14)) y += 14;
+            placed.push({ x: x0, y, w });
+            ctx.strokeText(a.name, x0, y);
+            ctx.fillText(a.name, x0, y);
+          });
+          ctx.restore();
+        },
+      }],
+    });
   }
 
-  function renderOrTreemap(r) {
-    const risky = r.accounts.filter((a) => a.risk > 0).sort((a, b) => b.risk - a.risk);
-    const W = 1000, H = Math.min(760, 340 + risky.length * 1.4);
-    // Square root, so one account with many criticals does not crowd out the rest.
-    const tiles = squarify(risky.map((a) => ({ a, value: Math.sqrt(a.risk) })), 0, 0, W, H);
-    const counts = (a) => `${num(a.critical)} critical, ${num(a.high)} high`;
-    $("#orTreemap").innerHTML = tiles.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Treemap of accounts: size is outage risk, colour is the rating">${tiles.map((t) => {
-      const a = t.a, fit = Math.floor((t.w - 8) / 6.4);
-      const label = t.w > 52 && t.h > 20 ? `<text x="${(t.x + 4).toFixed(1)}" y="${(t.y + 14).toFixed(1)}" fill="${OR_RATING_INK[a.rating]}" font-size="11">${esc(a.name.length > fit ? `${a.name.slice(0, Math.max(fit - 1, 1))}…` : a.name)}</text>${t.h > 36 ? `<text x="${(t.x + 4).toFixed(1)}" y="${(t.y + 28).toFixed(1)}" fill="${OR_RATING_INK[a.rating]}" font-size="10" opacity=".85">${esc(counts(a))}</text>` : ""}` : "";
-      return `<g data-or-acct="${esc(a.name)}" class="or-tile"><rect x="${t.x.toFixed(1)}" y="${t.y.toFixed(1)}" width="${t.w.toFixed(1)}" height="${t.h.toFixed(1)}" fill="${OR_RATING_COLOR[a.rating]}" stroke="var(--surface)" stroke-width="1.5"><title>${esc(a.name)}${a.production ? "" : " (non-production)"}: ${esc(counts(a))}, score ${num(a.score)} (${esc(a.rating)})</title></rect>${label}</g>`;
-    }).join("")}</svg>` : '<p class="muted small">No account has a finding.</p>';
-    const legend = ["Critical", "High", "Medium", "Low"].map((k) => pill(null, k, OR_RATING_COLOR[k])).join(" ");
-    const clean = r.accounts.length - risky.length;
-    $("#orTreemapNote").innerHTML = `${legend} <span>${clean ? `${plural(clean, "account")} with no finding ${clean === 1 ? "is" : "are"} not drawn; see section 8.` : ""}</span>`;
+  function openOrAccount(name) {
+    state.orAccount = name;
+    $("#orSearch").value = name;
+    $("#orProd").checked = false;
+    for (const id of ["#orArea", "#orService", "#orRule"]) $(id).value = "";
+    renderOrFindings();
+    $("#or-findings").scrollIntoView({ behavior: "smooth" });
   }
 
   function orBar(label, value, max, color, note, acct) {
@@ -2795,12 +2860,7 @@
     $("#orContent").addEventListener("click", (e) => {
       const b = e.target.closest("[data-or-acct]");
       if (b) {
-        state.orAccount = b.dataset.orAcct;
-        $("#orSearch").value = state.orAccount;
-        $("#orProd").checked = false;
-        for (const id of ["#orArea", "#orService", "#orRule"]) $(id).value = "";
-        renderOrFindings();
-        $("#or-findings").scrollIntoView({ behavior: "smooth" });
+        openOrAccount(b.dataset.orAcct);
         return;
       }
       const c = e.target.closest("[data-or-cell]");

@@ -290,6 +290,21 @@ def _risk_points(found: list[dict]) -> float:
     return round(sum(POINTS[f["severity"]] * (1 if f["production"] else NON_PROD_SHARE) for f in worst.values()), 1)
 
 
+def _reach(found: list[dict], ranks: dict[str, int]) -> float | None:
+    """How far an outage from an account's findings would spread: the impact rank of each finding's service
+    (1 one workload, 2 data, 3 shared), averaged with the same weights as _risk_points. None with no finding."""
+    worst: dict[str, dict] = {}
+    for f in found:
+        w = worst.get(f["rule"])
+        if w is None or (f["production"], -SEV_ORDER[f["severity"]]) > (w["production"], -SEV_ORDER[w["severity"]]):
+            worst[f["rule"]] = f
+    weights = [(POINTS[f["severity"]] * (1 if f["production"] else NON_PROD_SHARE), f) for f in worst.values()]
+    total = sum(w for w, _ in weights)
+    if not total:
+        return None
+    return round(sum(w * ranks.get(f["service"], 1) for w, f in weights) / total, 2)
+
+
 def _heatmap(table: list[dict]) -> dict:
     """Accounts in a matrix of rating by environment, with their critical and high findings."""
     cells: dict[tuple[str, str], list[dict]] = defaultdict(list)
@@ -511,8 +526,10 @@ def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date
     mine: dict[str, list[dict]] = defaultdict(list)
     for f in findings:
         mine[f["account_id"]].append(f)
+    ranks = {s["id"]: svc_cat["impacts"][s.get("impact", "workload")]["rank"] for s in svc_cat["services"]}
     for r in table:
         r["risk"] = _risk_points(mine.get(r["id"]) or [])
+        r["reach"] = _reach(mine.get(r["id"]) or [], ranks)
     billed = _monthly_by_service(scan, {a["id"] for a in table})
     return {
         "coverage": _coverage(billed, svc_cat, by_billed),

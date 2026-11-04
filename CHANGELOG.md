@@ -6,6 +6,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- Outage Risk Report: the risk map's treemap is now a bubble chart. Up is the account's outage risk score, right is how far an outage would spread (the services its findings are on: one workload, data, or shared), and size is its risk points, so the accounts to start with stand out in the top right. Non-production accounts are hollow, the eight worst are named, and a bubble opens its findings. Spend plays no part.
+
 ## [0.26.0] - 2026-11-04
 
 ### Added

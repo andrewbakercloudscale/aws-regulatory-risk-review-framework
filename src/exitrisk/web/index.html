@@ -705,11 +705,11 @@
         <div class="table-wrap"><table class="or-matrix" id="orMatrix"></table></div>
         <p id="orMatrixList" class="small" hidden></p>
       </div>
-      <div class="card">
-        <h3>Every account with a finding, sized by its outage risk</h3>
-        <div id="orTreemap" class="or-treemap"></div>
-        <p id="orTreemapNote" class="muted small"></p>
-      </div>
+      <figure class="card chart-card" id="orBubbles">
+        <figcaption><h3>Outage risk vs how far it would spread</h3><p class="muted">Each bubble is an account with a finding. Up = worse findings; right = they sit on services others depend on (data, then shared: network, DNS, a shared cluster, the event backbone); bubble size = its risk points. Start at the top right. Select a bubble to see its findings.</p></figcaption>
+        <div class="chart-box tall"><canvas id="chOrAccounts" role="img" aria-label="Bubble chart of each account's outage risk score against how far an outage of the services its findings are on would spread"></canvas></div>
+        <p id="orBubblesNote" class="muted small"></p>
+      </figure>
       <div class="grid-2 or-map-grid">
         <div class="card">
           <h3>Most risk</h3>

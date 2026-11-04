@@ -57,7 +57,8 @@ Each row names the worst risk, where it is, and what to do.
 
 Accounts are ranked by what was found in them: 100 points per critical, 10 per high, 1 per medium, one per risk
 however many copies, and a non-production finding a tenth. The map shows accounts by rating in production and
-non-production, every account with a finding as a treemap sized by its risk, the 20 accounts with the most
+non-production, every account with a finding as a bubble (up = its outage risk score, right = how far an outage
+would spread, from one workload to data to shared services, size = its risk points), the 20 accounts with the most
 risk, severity by account and service (each cell opens its risks and what to do), and what reaches a limit
 first. An account that could not be read at all is rated Not measured, listed first, and left out of the score.
 

@@ -872,9 +872,6 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 .or-cell.is-empty { background: var(--surface-2); }
 .or-cell .link-btn { display: flex; flex-direction: column; align-items: center; width: 100%; color: var(--ink); text-decoration: none; }
 .or-cell strong { font-size: 18px; line-height: 1.2; }
-.or-treemap svg { display: block; width: 100%; height: auto; border-radius: 6px; }
-.or-tile { cursor: pointer; }
-.or-tile:hover rect { opacity: .82; }
 .or-bars, .or-runway { display: grid; gap: 5px; }
 .or-bar { display: grid; grid-template-columns: minmax(110px, 30%) 1fr minmax(84px, auto); align-items: center; gap: 8px; }
 .or-bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
@@ -900,7 +897,6 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 .or-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 700px) { .or-two { grid-template-columns: 1fr; } }
 @media print {
-  .or-treemap svg { max-height: 620px; }
   .or-review, .or-matrix, .or-heat { break-inside: auto; }
   /* Long tables split across pages: kept whole, they leave a section heading alone on a blank page. */
   #or-top .card, #or-causes .card, #or-findings .card, #or-accounts .card, #or-eks .card, #or-coverage .card { break-inside: auto; }
