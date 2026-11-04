@@ -781,6 +781,8 @@
           <label>Low CPU request under, millicores<input type="number" name="cpu_request_floor_m" min="1" max="4000"><span class="muted small">Added across the pod's containers</span></label>
           <label>Low memory limit under, MiB<input type="number" name="memory_limit_floor_mi" min="1" max="65536"><span class="muted small">Added across the pod's containers</span></label>
           <label>Namespaces left out of the EKS checks<input name="ignore_namespaces" maxlength="400"></label>
+          <label>Busy hours, local time<input name="busy_hours" maxlength="11" pattern="\d{2}:\d{2}-\d{2}:\d{2}" placeholder="06:00-22:00"><span class="muted small">Database maintenance and backups in these hours are flagged</span></label>
+          <label>Local time, hours ahead of UTC<input type="number" name="utc_offset" min="-12" max="14" step="0.5"><span class="muted small">South Africa: 2</span></label>
           </div>
         </form>
       </div>
@@ -791,7 +793,7 @@
       <div class="card">
         <div class="row no-print or-filters">
           <label class="inline">Area<select id="orArea"></select></label>
-          <label class="inline">Severity<select id="orSev"><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+          <label class="inline">Severity<select id="orSev"><option value="outage" selected>Critical and high: outage risk</option><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
           <label class="inline">Service<select id="orService"></select></label>
           <label class="inline">Finding<select id="orRule"></select></label>
           <label class="inline">Search<input id="orSearch" type="search" placeholder="Account, resource or region"></label>

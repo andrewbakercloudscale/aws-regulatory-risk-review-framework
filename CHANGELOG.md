@@ -6,6 +6,37 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-04
+
+### Added
+
+- **Outage Risk: database health checks.** PostgreSQL autovacuum (or track_counts) turned off, read from the instance and Aurora cluster parameter groups; transaction IDs ageing towards wraparound (MaximumUsedTransactionIDs against AWS's 1 billion alarm point); a replication slot holding back write-ahead log. Each fires on a setting read or a figure measured, never a guess.
+- **Maintenance and backups in busy hours.** RDS maintenance windows, and backups on single-AZ instances, that fall in the busy hours set in section 6 (local time, default 06:00 to 22:00 at UTC+2). Changing the hours needs no new scan.
+- **Old hardware.** EC2, RDS, ElastiCache, OpenSearch and Amazon MQ sizes on Xen (pre-Nitro) families, such as t2, m4, r4 and i3, with the family to move to. AWS's CurrentGeneration flag is not used: checked against the EC2 API, it now marks m5, r5, m6i and r7g as not current.
+- Reboots, stops and retirements AWS has scheduled on servers before the peak; Aurora clusters whose instances are all in one zone; Lambda functions attached to one zone of a multi-zone VPC.
+- Service reviews say what is wrong with each resource: every finding on it, worst first, with the reason.
+
+### Changed
+
+- **Outage Risk: critical and high now mean evidence of an outage.** Validated against a 166-account production scan: production critical and high findings fell from 591 to 202. Each lowered finding stays listed at medium or low with the reason:
+  - errors, throttles and dropped events counted only when they are at least 1% of requests and 100 in the window (5 API errors in 35 days is noise);
+  - MSK under-replication and target groups with no healthy target count as high only when still happening in the last hour (a broker restart or deployment recovers);
+  - Lambda: background jobs called under once every three minutes, reserved or provisioned concurrency reached with no real throttling, and timeouts with rare errors;
+  - quotas on counts of things created (phone numbers, queues, users) and on analyst services (SageMaker Studio, Athena);
+  - Redshift CPU and EBS throughput projected from an hourly average; SQS queues with a few unconsumed messages; NAT gateways dropping a few packets;
+  - CI and housekeeping tooling (GitHub runners, SonarQube, Security Hub exporters) and restored copies are not counted as production.
+- **Aurora Serverless v2 is judged by CPU against the maximum ACUs**, as AWS measures it, not by capacity used, which the buffer cache holds up. Production Aurora Serverless critical and high fell from 28 to 5; without a CPU figure it is medium with "insufficient evidence". Reviews show minimum and maximum ACUs and capacity used.
+- Findings default to critical and high, and every table shows what is wrong, the evidence, and what to do in separate columns.
+
+### Fixed
+- PDF export writes dates in British form (27 Nov 2026, 03/11/2026) instead of the headless browser's US default; set `EXITRISK_LOCALE` to change it.
+- Review figures read "9.5 a second", not "9.5a second". In the PDF, long tables split across pages so a heading no longer sits alone on a blank page, and "What to do" in Services most at risk is wide enough to read.
+- Aurora no longer reports a missing FreeStorageSpace alarm (its storage grows by itself and has no such figure), and Aurora, MySQL and MariaDB memory is judged against the quarter of memory their cache leaves, not all of it. On the last Prod scan this removed 319 false findings.
+
+### Access
+
+- The member role reads two more calls: rds:DescribeDBClusterParameters and ec2:DescribeInstanceStatus. A role without them still scans; those checks are left out.
+
 ## [0.25.0] - 2026-11-03
 
 ### Added

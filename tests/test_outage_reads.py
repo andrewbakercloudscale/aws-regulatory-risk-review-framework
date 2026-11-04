@@ -75,6 +75,8 @@ ANSWERS = {
                     "Iops": 3000,
                     "BackupRetentionPeriod": 7,
                     "DBParameterGroups": [{"DBParameterGroupName": "pg"}],
+                    "PreferredMaintenanceWindow": "mon:05:00-mon:05:30",
+                    "PreferredBackupWindow": "05:00-05:30",
                 },
                 {
                     "DBInstanceIdentifier": "aur1",
@@ -84,9 +86,39 @@ ANSWERS = {
                     "EngineVersion": "15.8",
                     "DBParameterGroups": [{"DBParameterGroupName": "pg"}],
                 },
+                {
+                    "DBInstanceIdentifier": "aur2",
+                    "DBClusterIdentifier": "cl2",
+                    "DBInstanceClass": "db.r4.large",
+                    "Engine": "aurora-postgresql",
+                    "AvailabilityZone": "eu-west-1a",
+                    "DBParameterGroups": [{"DBParameterGroupName": "pg2"}],
+                },
+                {
+                    "DBInstanceIdentifier": "aur3",
+                    "DBClusterIdentifier": "cl2",
+                    "DBInstanceClass": "db.r6g.large",
+                    "Engine": "aurora-postgresql",
+                    "AvailabilityZone": "eu-west-1a",
+                    "DBParameterGroups": [{"DBParameterGroupName": "pg2"}],
+                },
             ]
         },
-        "describe_db_parameters": {"Parameters": [{"ParameterName": "max_connections", "ParameterValue": "100"}]},
+        "describe_db_parameters": {
+            "Parameters": [
+                {"ParameterName": "max_connections", "ParameterValue": "100", "Source": "user"},
+                {"ParameterName": "autovacuum", "ParameterValue": "0", "Source": "user"},
+            ]
+        },
+        "describe_db_clusters": {
+            "DBClusters": [
+                {"DBClusterIdentifier": "cl1", "DBClusterParameterGroup": "cpg"},
+                {"DBClusterIdentifier": "cl2", "DBClusterParameterGroup": "cpg"},
+            ]
+        },
+        "describe_db_cluster_parameters": {
+            "Parameters": [{"ParameterName": "track_counts", "ParameterValue": "1", "Source": "engine-default"}]
+        },
         "describe_pending_maintenance_actions": {
             "PendingMaintenanceActions": [
                 {
@@ -100,7 +132,33 @@ ANSWERS = {
     },
     "ec2": {
         "describe_instances": {
-            "Reservations": [{"Instances": [{"InstanceId": "res1", "InstanceType": "t3.medium", "Tags": []}]}]
+            "Reservations": [
+                {
+                    "Instances": [
+                        {"InstanceId": "res1", "InstanceType": "t3.medium", "Tags": []},
+                        {
+                            "InstanceId": "old1",
+                            "InstanceType": "m4.large",
+                            "Tags": [{"Key": "Name", "Value": "legacy"}],
+                        },
+                    ]
+                }
+            ]
+        },
+        "describe_instance_status": {
+            "InstanceStatuses": [
+                {
+                    "InstanceId": "res1",
+                    "Events": [
+                        {
+                            "Code": "system-reboot",
+                            "Description": "scheduled reboot",
+                            "NotBefore": NOW + timedelta(days=3),
+                        },
+                        {"Code": "system-reboot", "Description": "[Completed] old", "NotBefore": NOW},
+                    ],
+                }
+            ]
         },
         "describe_volumes": {
             "Volumes": [
@@ -185,6 +243,13 @@ ANSWERS = {
                     "MultiAZ": "disabled",
                     "MemberClusters": [],
                 },
+                {
+                    "ReplicationGroupId": "old",
+                    "CacheNodeType": "cache.m4.large",
+                    "AutomaticFailover": "enabled",
+                    "MultiAZ": "enabled",
+                    "MemberClusters": [],
+                },
             ]
         },
     },
@@ -200,7 +265,13 @@ ANSWERS = {
         },
         "list_functions": {
             "Functions": [
-                {"FunctionName": "res1", "Timeout": 3, "MemorySize": 512, "Runtime": "python3.12"},
+                {
+                    "FunctionName": "res1",
+                    "Timeout": 3,
+                    "MemorySize": 512,
+                    "Runtime": "python3.12",
+                    "VpcConfig": {"SubnetIds": ["s1"], "VpcId": "v1"},
+                },
                 {"FunctionName": "old", "Timeout": 3, "MemorySize": 128, "Runtime": "nodejs16.x"},
             ]
         },
@@ -240,7 +311,17 @@ ANSWERS = {
                         "DedicatedMasterEnabled": False,
                     },
                     "EBSOptions": {"EBSEnabled": True, "VolumeSize": 100, "VolumeType": "gp3"},
-                }
+                },
+                {
+                    "DomainName": "old",
+                    "DomainId": "o",
+                    "ARN": "arn:o",
+                    "ClusterConfig": {
+                        "InstanceType": "r4.large.search",
+                        "InstanceCount": 2,
+                        "ZoneAwarenessEnabled": True,
+                    },
+                },
             ]
         },
     },
@@ -277,7 +358,14 @@ ANSWERS = {
                     "DeploymentMode": "SINGLE_INSTANCE",
                     "EngineType": "ACTIVEMQ",
                     "HostInstanceType": "mq.m5.large",
-                }
+                },
+                {
+                    "BrokerName": "old",
+                    "BrokerId": "o",
+                    "DeploymentMode": "ACTIVE_STANDBY_MULTI_AZ",
+                    "EngineType": "ACTIVEMQ",
+                    "HostInstanceType": "mq.t2.micro",
+                },
             ]
         }
     },
@@ -572,7 +660,8 @@ def test_the_rules_for_what_the_answers_hold_fire(read):
         "mq_single", "lb_one_az", "nat_one_az", "vpn_tunnel_down", "redshift_single_node", "fsx_single_az",
         "cf_no_failover", "no_alarm", "ec2_burstable", "cache_burstable", "search_burstable", "resolver_one_az",
         "dx_no_redundancy", "dx_vif_down", "vpce_one_az", "vpce_drops", "ec2_net_allowance", "ec2_dns_allowance",
-        "lambda_runtime", "lambda_reserved",
+        "lambda_runtime", "lambda_reserved", "rds_busy_window", "pg_autovacuum_off", "aurora_one_az", "rds_old_gen",
+        "ec2_old_gen", "ec2_event", "cache_old_gen", "search_old_gen", "mq_old_gen", "lambda_one_az",
     }  # fmt: skip
     assert want <= rules, want - rules
     assert rules <= {r["id"] for r in catalog()["rules"]}

@@ -149,7 +149,7 @@ def test_a_heat_cell_lists_its_risks_and_what_to_do(page):
     assert "What to do" in box.inner_text()
     assert box.locator("tbody tr").count() >= 1
     assert page.locator("#orTopTitle").inner_text().startswith("Top")
-    assert "Do:" in page.locator("#orTable").inner_text()
+    assert "What to do" in page.locator("#orTable thead").inner_text()
     assert not page.errors
 
 

@@ -73,6 +73,8 @@ Resources:
                   - kafka:DescribeConfigurationRevision
                   - rds:DescribeDBParameters
                   - rds:DescribePendingMaintenanceActions
+                  - rds:DescribeDBClusterParameters
+                  - ec2:DescribeInstanceStatus
                   - dynamodb:DescribeLimits
                   - kinesis:DescribeStreamSummary
                   - sqs:GetQueueAttributes

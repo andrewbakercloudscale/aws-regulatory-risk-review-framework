@@ -161,18 +161,25 @@ def _rule_rows(mine: list[dict], rules: dict) -> list[dict]:
 def _resources(profiles: list[dict], mine: list[dict]) -> list[dict]:
     """The worst resources: most severe finding first, then the busiest."""
     worst: dict[tuple, str] = {}
+    issues: dict[tuple, list[dict]] = {}
     for f in mine:
         res = f["res"].split(": ", 1)[-1] if f["rule"] == "no_alarm" else f["res"]
         key = (f["account_id"], res, f["region"])
         if key not in worst or SEV_ORDER[f["severity"]] < SEV_ORDER[worst[key]]:
             worst[key] = f["severity"]
+        issues.setdefault(key, []).append({"severity": f["severity"], "title": f["title"], "why": f.get("why") or ""})
 
     def rank(p: dict) -> tuple:
         sev = worst.get((p["account_id"], p["res"], p["region"]))
         return (SEV_ORDER.get(sev, 9), -max((s.get("peak") or 0 for s in p["stats"]), default=0))
 
     rows = sorted(profiles, key=rank)[:REVIEW_RESOURCES]
-    return [{**p, "severity": worst.get((p["account_id"], p["res"], p["region"]), "")} for p in rows]
+    out = []
+    for p in rows:
+        key = (p["account_id"], p["res"], p["region"])
+        found = sorted(issues.get(key, []), key=lambda i: SEV_ORDER[i["severity"]])
+        out.append({**p, "severity": worst.get(key, ""), "issues": found})
+    return out
 
 
 def _reviews(accounts, checked, findings, rules, cat, by_billed, billed) -> list[dict]:

@@ -197,6 +197,8 @@
         "kafka:DescribeConfigurationRevision",
         "rds:DescribeDBParameters",
         "rds:DescribePendingMaintenanceActions",
+        "rds:DescribeDBClusterParameters",
+        "ec2:DescribeInstanceStatus",
         "elasticache:DescribeReplicationGroups",
         "lambda:ListFunctions",
         "dynamodb:DescribeLimits",

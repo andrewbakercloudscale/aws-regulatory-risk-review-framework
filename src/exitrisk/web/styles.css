@@ -902,6 +902,10 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 @media print {
   .or-treemap svg { max-height: 620px; }
   .or-review, .or-matrix, .or-heat { break-inside: auto; }
+  /* Long tables split across pages: kept whole, they leave a section heading alone on a blank page. */
+  #or-top .card, #or-causes .card, #or-findings .card, #or-accounts .card, #or-eks .card, #or-coverage .card { break-inside: auto; }
+  .section > h2 { break-after: avoid; }
+  #orSvcRisk td:last-child { min-width: 180px; }
   .or-cell, .or-heat-cell, .or-bar-track i, .or-covbar i { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 .or-heat-btn { all: unset; display: block; width: 100%; height: 100%; text-align: center; cursor: pointer; }
@@ -909,3 +913,5 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 .or-heat-detail { margin-top: 12px; padding: 12px; border: 1px solid var(--border, #ddd); border-radius: 8px; }
 .or-heat-detail h4 { margin: 0 0 8px; }
 .or-fix { margin-top: 4px; }
+
+.or-issues > div + div { margin-top: 6px; }

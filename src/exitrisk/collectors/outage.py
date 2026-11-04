@@ -398,6 +398,7 @@ class OutageCtx(Ctx):
         self.quota_values: dict[str, dict[str, float]] = {}
         self.profiles: list[dict] = []  # what each resource is set to, for the per-service reviews
         self.alarm_wants: list[tuple[str, str, str, str]] = []
+        self.lambda_subnets: list[tuple[str, str, str, list[str]]] = []
         self.alarms: dict[str, set[tuple[str, str, str]]] = {}
         self._metric_locks = {r: threading.Lock() for r in regions}
         self._metrics: dict[str, dict | Exception] = {}
@@ -833,6 +834,57 @@ def _filling(ctx: OutageCtx, rule: str, res: str, region: str, pct: float, slope
     ctx.add(rule, res, region, pct=pct, days=days, **kw)
 
 
+# Families on the Xen hypervisor: hardware from before the Nitro system (2017). Checked against
+# ec2:DescribeInstanceTypes (Hypervisor "xen") in November 2026; g2 to hs1 are Xen families no longer
+# offered, kept for the servers still running them. AWS's own CurrentGeneration flag is not used:
+# it now marks m5, r5, m6i and even r7g sizes as not current, which would flag nearly everything.
+XEN_FAMILIES = frozenset({"c1", "c3", "c4", "d2", "h1", "i2", "i3", "m1", "m2", "m3", "m4", "r3", "r4", "t1", "t2",
+                          "x1", "x1e", "g2", "g3", "p2", "p3", "cc2", "cr1", "hs1"})  # fmt: skip
+SUCCESSOR = {"t": "t3 or t4g", "m": "m7i or m7g", "c": "c7i or c7g", "r": "r7i or r7g", "i": "i4i or i7ie",
+             "d": "d3", "h": "d3en", "x": "x2idn or x2iedn", "g": "g5 or g6", "p": "p4d or p5",
+             "cc": "c7i", "cr": "r7i", "hs": "d3en"}  # fmt: skip
+TYPE_PREFIXES = ("db.", "cache.", "kafka.", "mq.")
+
+
+def old_generation(kind: str) -> tuple[str, str] | None:
+    """(family, a current family to move to) of an instance size on Xen hardware, for any service that
+    names its sizes after EC2 (db.r4.large, cache.m4.xlarge, r4.large.search, mq.t2.micro); else None."""
+    size = kind or ""
+    for prefix in TYPE_PREFIXES:
+        size = size.removeprefix(prefix)
+    family = size.split(".")[0]
+    if family not in XEN_FAMILIES:
+        return None
+    letters = re.match(r"[a-z]+", family)[0]
+    return family, SUCCESSOR.get(letters, "a current generation")
+
+
+def add_old_generation(ctx: OutageCtx, rule: str, res: str, region: str, kind: str, note: str = "") -> None:
+    """A resource on pre-Nitro hardware, if it is."""
+    old = old_generation(kind)
+    if old:
+        said = f"{kind}: {old[0]} runs on Xen, pre-Nitro hardware; move to {old[1]}"
+        ctx.add(rule, res, region, note=f"{said}; {note}" if note else said)
+
+
+def _scheduled_events(ctx: OutageCtx, ec2, region: str, label) -> None:
+    """Reboots, retirements and stops AWS has scheduled on running servers."""
+    for page in ec2.get_paginator("describe_instance_status").paginate():
+        for st in page.get("InstanceStatuses") or []:
+            for e in st.get("Events") or []:
+                text = e.get("Description") or ""
+                when = e.get("NotBefore")
+                if not when or text.startswith(("[Completed]", "[Canceled]")):
+                    continue
+                ctx.add(
+                    "ec2_event",
+                    label(st["InstanceId"]),
+                    region,
+                    ends=when.date().isoformat(),
+                    note=f"{e.get('Code')}: {text}"[:200],
+                )
+
+
 def burstable(kind: str) -> tuple[str, float | None] | None:
     """(family, baseline CPU % per vCPU or None) of a T-family size; None for a fixed-performance one."""
     hit = BURST_TYPE.match(kind or "")
@@ -939,6 +991,17 @@ def task_ec2(ctx: OutageCtx, region: str) -> None:
                 note=instances[iid]["type"],
             )
     _net_allowances(ctx, m, instances, label, region)
+    by_type: dict[str, list[str]] = {}
+    for iid, i in instances.items():
+        if old_generation(i["type"]):
+            by_type.setdefault(i["type"], []).append(label(iid))
+    for kind, names in by_type.items():
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        add_old_generation(ctx, "ec2_old_gen", f"{len(names)} x {kind}", region, kind, note=shown)
+    try:
+        _scheduled_events(ctx, ec2, region, lambda iid: label(iid) if iid in instances else iid)
+    except ClientError:  # a role from before this check: the rest of the server checks stand
+        pass
     bursting = [iid for iid, i in instances.items() if burstable(i["type"]) and iid not in out_of_credits]
     modes = _credit_modes(ec2, bursting) if bursting else {}
     for iid in bursting:
@@ -1802,6 +1865,7 @@ REGION_TASKS = [
 def _finish(ctx: OutageCtx) -> None:
     """Subnets, once it is known which of them EKS uses; quota values kept only for quotas near a limit."""
     outage_services.finish_alarms(ctx)
+    outage_services.finish_lambda_zones(ctx)
     for region, subnets in ctx.subnets.items():
         used_by = ctx.eks_subnets.get(region) or {}
         for s in subnets:

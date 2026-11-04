@@ -34,6 +34,7 @@ from .outage import (
     _filling,
     _search,
     add_burstable,
+    add_old_generation,
 )
 
 log = get_logger("outage")
@@ -87,6 +88,8 @@ METRICS.update(
         "rds_conn": ("AWS/RDS", ("DBInstanceIdentifier",), "DatabaseConnections", "Maximum", RDS),
         "rds_mem": ("AWS/RDS", ("DBInstanceIdentifier",), "FreeableMemory", "Minimum", RDS),
         "rds_lag": ("AWS/RDS", ("DBInstanceIdentifier",), "ReplicaLag", "Maximum", RDS),
+        "rds_xid": ("AWS/RDS", ("DBInstanceIdentifier",), "MaximumUsedTransactionIDs", "Maximum", RDS),
+        "rds_slot": ("AWS/RDS", ("DBInstanceIdentifier",), "OldestReplicationSlotLag", "Maximum", RDS),
         "cache_conn": ("AWS/ElastiCache", ("CacheClusterId", "CacheNodeId"), "CurrConnections", "Maximum", CACHE),
         "cache_hit": ("AWS/ElastiCache", ("CacheClusterId", "CacheNodeId"), "CacheHitRate", "Minimum", CACHE),
         "cache_host_cpu": ("AWS/ElastiCache", ("CacheClusterId", "CacheNodeId"), "CPUUtilization", "Average", CACHE),
@@ -228,6 +231,22 @@ def task_alarms(ctx: OutageCtx, region: str) -> None:
     ctx.r.ok("alarms")
 
 
+def finish_lambda_zones(ctx: OutageCtx) -> None:
+    """A function attached to a VPC through subnets in one zone only, where its VPC spans more than one:
+    the loss of that zone stops it. Judged once the subnets of the region are read."""
+    for name, region, vpc, ids in ctx.lambda_subnets:
+        subnets = ctx.subnets.get(region)
+        if not subnets:
+            continue
+        zone_of = {s["SubnetId"]: s.get("AvailabilityZone") for s in subnets}
+        if any(i not in zone_of for i in ids):
+            continue  # a subnet the scan did not see: say nothing rather than guess
+        mine = {zone_of[i] for i in ids}
+        vpc_zones = {s.get("AvailabilityZone") for s in subnets if s.get("VpcId") == vpc}
+        if len(mine) == 1 and len(vpc_zones) > 1:
+            ctx.add("lambda_one_az", name, region, note=f"{len(ids)} subnet(s), all in {next(iter(mine))}")
+
+
 def finish_alarms(ctx: OutageCtx) -> None:
     """A resource whose region's alarms were read, and none watches the metric that fails first."""
     for svc, res, region, value in ctx.alarm_wants:
@@ -315,9 +334,19 @@ def msk_profile(ctx: OutageCtx, client, c: dict, region: str, m: dict) -> None:
                 region,
                 note="; ".join(low) + " (the cluster default; a topic can override it)",
             )
-    urp = sum(s.high > 0 for s in _per_node(m["msk_urp"], name))
+    nodes = _per_node(m["msk_urp"], name)
+    urp = sum(s.high > 0 for s in nodes)
     if urp:
-        ctx.add("msk_under_replicated", name, region, used=urp, unit="broker(s) with under-replicated partitions")
+        now = sum(s.n and s.last > 0 for s in nodes)
+        ctx.add(
+            "msk_under_replicated",
+            name,
+            region,
+            used=urp,
+            unit="broker(s) with under-replicated partitions",
+            now=now,
+            note=f"{now} still under-replicated in the last hour" if now else "none in the last hour",
+        )
     off = m["msk_offline"].get(name)
     if off and off.n and off.high > 0:
         ctx.add("msk_offline", name, region, used=round(off.high), unit="partitions offline at the worst")
@@ -375,22 +404,31 @@ def task_rds_review(ctx: OutageCtx, region: str) -> None:
         return
     m = ctx.metrics(region)
     memory = _instance_memory(ctx, region, {d.get("DBInstanceClass", "") for d in dbs})
-    limits: dict[str, str | None] = {}
+    groups_read: dict[str, dict[str, tuple[str | None, str]]] = {}
+    try:
+        cluster_groups, acu_range = _cluster_parameter_groups(rds, dbs)
+    except ClientError:  # a role from before this check: the instance groups still say most of it
+        cluster_groups, acu_range = {}, {}
     members: dict[str, int] = {}
+    zones: dict[str, set[str]] = {}
     for d in dbs:
         if d.get("DBClusterIdentifier"):
             members[d["DBClusterIdentifier"]] = members.get(d["DBClusterIdentifier"], 0) + 1
+            zones.setdefault(d["DBClusterIdentifier"], set()).add(d.get("AvailabilityZone") or "")
+    for cluster, n in members.items():
+        where = zones[cluster] - {""}
+        if n > 1 and len(where) == 1 and len(zones[cluster]) == 1:
+            ctx.add("aurora_one_az", cluster, region, note=f"all {n} instances in {next(iter(where))}")
     for d in dbs:
         name = d["DBInstanceIdentifier"]
         cls = d.get("DBInstanceClass", "")
         conn = m["rds_conn"].get(name)
         limit = None
         groups = d.get("DBParameterGroups") or []
-        if groups and conn and conn.n:
-            group = groups[0].get("DBParameterGroupName", "")
-            if group not in limits:
-                limits[group] = _rds_parameter(rds, group, "max_connections")
-            limit = max_connections(limits[group], memory.get(cls))
+        group = groups[0].get("DBParameterGroupName", "") if groups else ""
+        params = _group_parameters(rds, group, groups_read) if group else {}
+        if group and conn and conn.n:
+            limit = max_connections(params.get("max_connections", (None, ""))[0], memory.get(cls))
             if limit:
                 ctx.add(
                     "rds_connections",
@@ -415,8 +453,19 @@ def task_rds_review(ctx: OutageCtx, region: str) -> None:
         if lag and lag.n and lag.high >= 60:
             ctx.add("rds_replica_lag", name, region, used=round(lag.high), unit="seconds behind at the worst")
         cluster = d.get("DBClusterIdentifier")
+        add_old_generation(ctx, "rds_old_gen", name, region, cls, note=d.get("Engine", ""))
         if cluster and members.get(cluster) == 1 and d.get("Engine", "").startswith(("aurora", "docdb", "neptune")):
             ctx.add("aurora_no_reader", name, region, note=f"cluster {cluster} has one instance")
+        cluster_params = cluster_groups.get(cluster or "", {})
+        vacuum = _postgres(ctx, d, name, region, params, cluster_params, m)
+        ctx.add(
+            "rds_busy_window",
+            name,
+            region,
+            maintenance=d.get("PreferredMaintenanceWindow") or "",
+            backup="" if cluster else d.get("PreferredBackupWindow") or "",
+            multi_az=bool(cluster or d.get("MultiAZ")),
+        )
         facts = {
             "Engine": f"{d.get('Engine', '')} {d.get('EngineVersion', '')}".strip(),
             "Class": cls,
@@ -427,24 +476,134 @@ def task_rds_review(ctx: OutageCtx, region: str) -> None:
             "Backups, days": d.get("BackupRetentionPeriod"),
             "Replica of": (d.get("ReadReplicaSourceDBInstanceIdentifier") or "").rsplit(":", 1)[-1],
             "Cluster": cluster,
+            "Maintenance window, UTC": d.get("PreferredMaintenanceWindow"),
+            "Backup window, UTC": None if cluster else d.get("PreferredBackupWindow"),
+            "Autovacuum": vacuum,
+            "ACUs, minimum to maximum": (
+                f"{acu_range[cluster][0]:g} to {acu_range[cluster][1]:g}" if cluster in acu_range else None
+            ),
         }
         stats = [
             stat(m["rds_cpu"].get(name), "CPU", "%", limit=100),
+            stat(m["rds_acu"].get(name), "Capacity used, of maximum ACUs", "%", limit=100)
+            if cls == "db.serverless"
+            else None,
             stat(conn, "Connections", "", limit=round(limit) if limit else None),
             stat(low, "Lowest freeable memory", "GiB", 1 / GIB) if low else None,
             stat(m["rds_free"].get(name), "Free storage", "GiB", 1 / GIB),
             stat(lag, "Replica lag", "s"),
+            stat(m["rds_xid"].get(name), "Oldest transaction ID age", "million", 1e-6, limit=XID_WRAP / 1e6),
         ]
-        profile(ctx, "rds", name, region, facts, stats, alarm=name)
+        aurora = bool(cluster) and d.get("Engine", "").startswith(("aurora", "docdb", "neptune"))
+        profile(ctx, "rds", name, region, facts, stats, alarm=None if aurora else name)
     _rds_maintenance(ctx, rds, region)
     ctx.r.ok("rds")
 
 
-def _rds_parameter(rds, group: str, name: str) -> str | None:
-    for p in _pages(rds, "describe_db_parameters", "Parameters", DBParameterGroupName=group):
-        if p.get("ParameterName") == name:
-            return p.get("ParameterValue")
-    return None
+PG_PARAMETERS = ("max_connections", "autovacuum", "track_counts")
+XID_WRAP = 2**31  # PostgreSQL stops taking writes a few million transactions short of this
+XID_ALARM = 1e9  # AWS's advice: alarm when the oldest transaction ID age passes a billion
+SLOT_FLOOR = GIB  # write-ahead log a replication slot holds back, below which it is not worth a line
+
+
+def _group_parameters(rds, group: str, seen: dict) -> dict[str, tuple[str | None, str]]:
+    """{name: (value, source)} of the parameters this review reads, from one DB parameter group, read once."""
+    if group not in seen:
+        seen[group] = {
+            p["ParameterName"]: (p.get("ParameterValue"), p.get("Source") or "")
+            for p in _pages(rds, "describe_db_parameters", "Parameters", DBParameterGroupName=group)
+            if p.get("ParameterName") in PG_PARAMETERS
+        }
+    return seen[group]
+
+
+def _cluster_parameter_groups(rds, dbs: list[dict]) -> tuple[dict, dict[str, tuple[float, float]]]:
+    """({cluster: its cluster parameter group's parameters} for the Aurora PostgreSQL clusters, and
+    {cluster: (minimum, maximum) ACUs} for the Serverless v2 ones)."""
+    wanted = {d["DBClusterIdentifier"] for d in dbs if d.get("DBClusterIdentifier") and _is_postgres(d)}
+    serverless = {d["DBClusterIdentifier"] for d in dbs if d.get("DBInstanceClass") == "db.serverless"}
+    out: dict[str, dict] = {}
+    acu: dict[str, tuple[float, float]] = {}
+    if not wanted and not serverless:
+        return out, acu
+    seen: dict[str, dict] = {}
+    for c in _pages(rds, "describe_db_clusters", "DBClusters"):
+        name, group = c.get("DBClusterIdentifier"), c.get("DBClusterParameterGroup")
+        scaling = c.get("ServerlessV2ScalingConfiguration") or {}
+        if name in serverless and scaling.get("MaxCapacity"):
+            acu[name] = (float(scaling.get("MinCapacity") or 0), float(scaling["MaxCapacity"]))
+        if name not in wanted or not group:
+            continue
+        if group not in seen:
+            seen[group] = {
+                p["ParameterName"]: (p.get("ParameterValue"), p.get("Source") or "")
+                for p in _pages(rds, "describe_db_cluster_parameters", "Parameters", DBClusterParameterGroupName=group)
+                if p.get("ParameterName") in PG_PARAMETERS
+            }
+        out[name] = seen[group]
+    return out, acu
+
+
+def _is_postgres(d: dict) -> bool:
+    return d.get("Engine", "") in ("postgres", "aurora-postgresql")
+
+
+def _off(value: str | None) -> bool:
+    return str(value or "").strip().lower() in ("0", "off", "false")
+
+
+def pg_setting(name: str, instance: dict, cluster: dict) -> str | None:
+    """A parameter's value as the database runs it: the instance's group where it was set there, else
+    the cluster's (Aurora), else the instance group's own default. None: the engine default."""
+    mine, source = instance.get(name, (None, ""))
+    if source == "user" or not cluster:
+        return mine
+    theirs = cluster.get(name, (None, ""))[0]
+    return theirs if theirs is not None else mine
+
+
+def _postgres(ctx: OutageCtx, d: dict, name: str, region: str, params: dict, cluster: dict, m) -> str | None:
+    """The PostgreSQL checks: autovacuum off, transaction ID wraparound, and a replication slot holding
+    back write-ahead log. Each fires on a setting read or a figure measured, never on a guess.
+    Returns the autovacuum state for the review."""
+    if not _is_postgres(d):
+        return None
+    vacuum = pg_setting("autovacuum", params, cluster)
+    counts = pg_setting("track_counts", params, cluster)
+    state = "on"
+    if _off(vacuum) or _off(counts):
+        why = "autovacuum is off" if _off(vacuum) else "track_counts is off, so autovacuum cannot run"
+        ctx.add("pg_autovacuum_off", name, region, note=f"{why} in the parameter group")
+        state = "off" if _off(vacuum) else "stopped by track_counts=off"
+    xid = m["rds_xid"].get(name)
+    if xid and xid.n:
+        ctx.add(
+            "pg_xid_age",
+            name,
+            region,
+            pct=100.0 * xid.high / XID_ALARM,
+            used=round(xid.high / 1e6),
+            limit=round(XID_ALARM / 1e6),
+            unit="million transactions",
+            note=(
+                f"oldest transaction ID age {xid.high / 1e6:,.0f} million; "
+                f"writes stop near {XID_WRAP / 1e6:,.0f} million"
+            ),
+        )
+    slot = m["rds_slot"].get(name)
+    allocated = (d.get("AllocatedStorage") or 0) * GIB
+    if slot and slot.n and not d.get("DBClusterIdentifier"):
+        if slot.high >= max(SLOT_FLOOR, 0.1 * allocated):
+            share = f", {100.0 * slot.high / allocated:.0f}% of its {allocated / GIB:,.0f} GiB" if allocated else ""
+            ctx.add(
+                "pg_slot_lag",
+                name,
+                region,
+                used=round(slot.high / GIB, 1),
+                unit="GiB of write-ahead log held by a replication slot at the worst",
+                note=f"oldest replication slot held {slot.high / GIB:,.1f} GiB{share}",
+            )
+    return state
 
 
 def _rds_maintenance(ctx: OutageCtx, rds, region: str) -> None:
@@ -516,6 +675,7 @@ def task_cache_review(ctx: OutageCtx, region: str) -> None:
         cpus = [s for member in members for s in _per_node(m["cache_host_cpu"], member)]
         credits = [s for member in members for s in _per_node(m["cache_credits"], member)]
         # ElastiCache runs T-family nodes in standard mode: out of credits, a node is held to its baseline.
+        add_old_generation(ctx, "cache_old_gen", name, region, g.get("CacheNodeType") or "")
         add_burstable(
             ctx,
             "cache_burstable",
@@ -568,6 +728,10 @@ def task_lambda_review(ctx: OutageCtx, region: str) -> None:
                 load=True,
                 note=f"{f.get('MemorySize')} MB",
             )
+        vpc = f.get("VpcConfig") or {}
+        if vpc.get("SubnetIds"):
+            with ctx._lock:
+                ctx.lambda_subnets.append((name, region, vpc.get("VpcId") or "", list(vpc["SubnetIds"])))
         if f.get("Runtime") in LAMBDA_DEPRECATED:
             ctx.add("lambda_runtime", name, region, note=f"{f['Runtime']}: AWS no longer supports it")
         inv = m["lambda_inv"].get(name)
@@ -746,8 +910,13 @@ def task_search_review(ctx: OutageCtx, region: str) -> None:
             busiest = _busiest(m["search_cpu"], name, -1)
             kind = c.get("InstanceType") or ""
             add_burstable(ctx, "search_burstable", name, region, kind, cpu=busiest.high if busiest else None)
+            add_old_generation(
+                ctx, "search_old_gen", name, region, kind.removesuffix(".search").removesuffix(".elasticsearch")
+            )
             if c.get("DedicatedMasterEnabled"):
                 add_burstable(ctx, "search_burstable", f"{name} masters", region, c.get("DedicatedMasterType") or "")
+                masters = (c.get("DedicatedMasterType") or "").removesuffix(".search").removesuffix(".elasticsearch")
+                add_old_generation(ctx, "search_old_gen", f"{name} masters", region, masters)
             ebs = d.get("EBSOptions") or {}
             facts = {
                 "Engine": d.get("EngineVersion"),
@@ -888,6 +1057,7 @@ def task_mq_review(ctx: OutageCtx, region: str) -> None:
             stat(keys["mq_heap"], "Heap", "%", limit=100),
             stat(keys["mq_store"], "Store", "%", limit=100),
         ]
+        add_old_generation(ctx, "mq_old_gen", name, region, b.get("HostInstanceType") or "")
         profile(
             ctx,
             "mq",
@@ -970,7 +1140,11 @@ def task_lb_review(ctx: OutageCtx, region: str) -> None:
                 continue  # an empty target group serves nothing, so it is not an outage
             target = f"{name}: {group.split('/')[1] if group.count('/') >= 2 else group}"
             if low.low <= 0:
-                ctx.add("lb_no_healthy", target, region, note=f"up to {high.high:.0f} healthy at other times")
+                now = low.last <= 0
+                note = f"up to {high.high:.0f} healthy at other times" + (
+                    "; none healthy in the last hour" if now else ""
+                )
+                ctx.add("lb_no_healthy", target, region, note=note, now=now)
             elif high.high <= 1:
                 ctx.add("lb_single_target", target, region, note="one healthy target at most")
         stats = [stat(req, "Requests", "a second", per=PERIOD), stat(err, "Own 5xx errors", "an hour")]

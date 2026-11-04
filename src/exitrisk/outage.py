@@ -81,6 +81,9 @@ class OutageAnswers(BaseModel):
     cpu_request_floor_m: int = Field(100, ge=1, le=4000)
     memory_limit_floor_mi: int = Field(256, ge=1, le=65536)
     ignore_namespaces: str = Field(SYSTEM_NS, max_length=400)
+    # When customers use the service, local time, every day: maintenance and backups should miss it.
+    busy_hours: str = Field("06:00-22:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-4]):[0-5]\d$")
+    utc_offset: float = Field(2.0, ge=-12, le=14)  # hours local time is ahead of UTC (South Africa: 2)
 
 
 def _lower(sev: str) -> str:
@@ -130,6 +133,81 @@ def judge_burstable(row: dict, a: OutageAnswers) -> tuple[str, str]:
     return "high", f"{said}; above it the credits drain, then it is held to the baseline"
 
 
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+WEEK = 7 * 1440
+
+
+def _minute(text: str) -> int:
+    h, m = text.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _window_minutes(window: str) -> list[int] | None:
+    """UTC minutes of the week a window covers: "sun:23:00-mon:00:30" weekly, "02:00-02:30" every day.
+    None for anything not in either form."""
+    try:
+        start, end = window.strip().lower().split("-")
+        if start[:3] in DAYS:
+            a = DAYS.index(start[:3]) * 1440 + _minute(start[4:])
+            b = DAYS.index(end[:3]) * 1440 + _minute(end[4:])
+            span = (b - a) % WEEK or WEEK
+            return [(a + i) % WEEK for i in range(span)]
+        a, b = _minute(start), _minute(end)
+        span = (b - a) % 1440 or 1440
+        return [(day * 1440 + a + i) % WEEK for day in range(7) for i in range(span)]
+    except (ValueError, IndexError):
+        return None
+
+
+def busy_overlap(window: str, a: OutageAnswers) -> int | None:
+    """Minutes of the window in a week that fall in the busy hours, local time; None if unreadable."""
+    minutes = _window_minutes(window)
+    if minutes is None:
+        return None
+    s, e = (_minute(x) for x in a.busy_hours.split("-"))
+    shift = round(a.utc_offset * 60)
+    hit = 0
+    for m in minutes:
+        local = (m + shift) % 1440
+        hit += (s <= local < e) if s <= e else (local >= s or local < e)
+    return hit
+
+
+def _local(window: str, a: OutageAnswers) -> str:
+    """The window in local time, for the finding's text: "Sun 01:00 to Sun 01:30", or "04:00 to 04:30"."""
+    shift = round(a.utc_offset * 60)
+
+    def one(part: str) -> str:
+        part = part.strip().lower()
+        if part[:3] in DAYS:
+            t = (DAYS.index(part[:3]) * 1440 + _minute(part[4:]) + shift) % WEEK
+            return f"{DAYS[t // 1440].title()} {t % 1440 // 60:02d}:{t % 60:02d}"
+        t = (_minute(part) + shift) % 1440
+        return f"{t // 60:02d}:{t % 60:02d}"
+
+    try:
+        start, end = window.split("-")
+        return f"{one(start)} to {one(end)}"
+    except (ValueError, IndexError):
+        return window
+
+
+def judge_windows(row: dict, a: OutageAnswers) -> str | None:
+    """Why the database's maintenance or backup window is in the busy hours, or None when neither is.
+    A backup counts only on a single-AZ instance: Multi-AZ backs up from the standby, Aurora continuously."""
+    said = []
+    tz = f"UTC{a.utc_offset:+g}"
+    maint = row.get("maintenance") or ""
+    if maint and busy_overlap(maint, a):
+        said.append(f"maintenance window {_local(maint, a)} ({tz}), {maint} UTC")
+    backup = row.get("backup") or ""
+    if backup and not row.get("multi_az") and busy_overlap(backup, a):
+        said.append(f"daily backup {_local(backup, a)} ({tz}) on a single-AZ instance")
+    if not said:
+        return None
+    return "; ".join(said) + f"; busy hours {a.busy_hours}"
+
+
 BURSTABLE_RULES = {"ec2_burstable", "rds_burstable", "cache_burstable", "search_burstable", "msk_burstable"}
 
 
@@ -148,11 +226,15 @@ def _judge(row: dict, rule: dict, a: OutageAnswers, peak: date, days_to_peak: in
         sev, why = rule["severity"], row.get("note", "")
         if rule["id"] in BURSTABLE_RULES:
             sev, why = judge_burstable(row, a)
-        elif rule["id"] == "rds_maintenance":
+        elif rule["id"] in ("rds_maintenance", "ec2_event"):
             ends = date.fromisoformat(row["ends"])
             if ends > peak + timedelta(days=7):
                 return None
             why = f"applies on {row['ends']}: {row.get('note', '')}"
+        elif rule["id"] == "rds_busy_window":
+            why = judge_windows(row, a)
+            if not why:
+                return None
         elif rule["id"] == "cert_expiry":
             ends = date.fromisoformat(row["ends"])
             if ends > peak + timedelta(days=7):
@@ -297,6 +379,8 @@ SHORT_RETENTION = re.compile(
 )  # a queue that keeps messages under an hour drops them on purpose
 READ_API = re.compile(r"\b(Describe|List|Get|Search)[A-Z]\w*|describe .* information rate", re.I)
 NO_FREEABLE = ("oracle", "sqlserver", "db2")  # these engines allocate their memory up front
+BUFFER_POOL = ("aurora", "mysql", "mariadb")  # these give about 3/4 of memory to their cache at start
+BUFFER_SHARE = 0.25  # the share of memory left for connections, sorts and the operating system
 
 
 def _stat(profile: dict | None, key: str) -> dict:
@@ -321,19 +405,167 @@ def _false_positive(row: dict, profiles: dict) -> bool:
         engine = str((facts.get(("rds", row["res"])) or {}).get("Engine") or row.get("engine") or "")
         if engine.startswith(NO_FREEABLE):
             return True
+    if rule == "no_alarm" and row["res"].startswith("rds: "):
+        engine = str((facts.get(("rds", row["res"][5:])) or {}).get("Engine") or "")
+        if engine.startswith(("aurora", "docdb", "neptune")):
+            return True  # cluster storage grows by itself and has no FreeStorageSpace to alarm on
     return False
 
 
+SERVERLESS_NOTE = (
+    "AWS measures Aurora Serverless v2 CPU against the maximum ACUs, so CPU is the headroom left before the "
+    "ceiling. Capacity used is held up by the buffer cache and falls slowly, so it does not grow with load"
+)
+
+
+def _rebase(row: dict, profiles: dict) -> dict:
+    """A measure judged against the headroom the engine really has. MySQL, MariaDB and Aurora give about
+    three quarters of memory to the buffer pool or cache when they start, by design: low freeable memory
+    there is normal, so it is measured against the remaining quarter."""
+    if row["rule"] == "aurora_acu" and row.get("pct") is not None:
+        cpu = _stat(profiles.get(("rds", row["res"])), "CPU")
+        if cpu.get("peak") is None:
+            return {**row, "evidence": "thin"}
+        used = f"capacity used {row['pct']:.0f}% of the maximum ACUs"
+        note = f"{used}, CPU {cpu['peak']:.0f}% of the maximum at the busiest hour. {SERVERLESS_NOTE}"
+        return {**row, "pct": round(min(cpu["peak"], 100.0), 1), "note": note, "acu_used": row["pct"]}
+    if row["rule"] != "rds_memory" or row.get("pct") is None:
+        return row
+    engine = str(((profiles.get(("rds", row["res"])) or {}).get("facts") or {}).get("Engine") or "")
+    if not engine.startswith(BUFFER_POOL):
+        return row
+    pct = max(0.0, 100.0 - (100.0 - row["pct"]) / BUFFER_SHARE)
+    cache = f"{engine.split()[0]} keeps about three quarters of memory as cache by design, so measured against the rest"
+    note = f"{row.get('note', '')}; {cache}"
+    return {**row, "pct": round(pct, 1), "note": note.lstrip("; ")}
+
+
+# Events seen in the lookback window count as an outage sign only when they are a real share of the
+# traffic: a handful of errors in 35 days is noise every busy system has.
+ERROR_SHARE = 0.01  # of requests, on average
+MIN_EVENTS = 100  # in the lookback window
+NAT_DROPS = 10_000  # packets in the lookback window; a few dropped packets are retransmitted unnoticed
+SQS_BACKLOG = 100  # messages waiting: below it, an old message is a few left unconsumed, not a stalled consumer
+# Rated against these traffic figures: {rule: (svc, [(failures, requests)])}
+EVENT_RATES = {
+    "apigw_5xx": ("apigateway", [("Server errors", "Requests")]),
+    "lb_5xx": ("elb", [("Own 5xx errors", "Requests")]),
+    "lambda_throttles": ("lambda", [("Throttles", "Invocations")]),
+    "lambda_async_dropped": ("lambda", [("Errors", "Invocations")]),
+    "ddb_throttles": ("dynamodb", [("Read throttles", "Reads"), ("Write throttles", "Writes")]),
+}
+# A count of things created, not traffic: at the quota nothing new can be added, but what runs is not hit.
+STATIC_QUOTA = re.compile(
+    r"phone numbers|queues|flows|users|routing profiles|hours of operation|security profiles|prompts|"
+    r"domains|tracking server|serverless endpoints|apps running|notebook|spaces|user profiles",
+    re.I,
+)
+ANALYST_QUOTA = re.compile(r"^(sagemaker|athena|glue|quicksight|databrew|emr-serverless|bedrock): ", re.I)
+# Build, CI and housekeeping tooling: when it stops, delivery waits, but customers are not hit.
+TOOLING = re.compile(
+    r"github-?runner|gitlab-?runner|(?<![a-z0-9])runners?(?![a-z0-9])|jenkins|sonarqube|buildkite|atlantis|"
+    r"image-?builder|idle-?reaper|warm-?pool|security-?hub|(?<![a-z0-9])backup-test(?![a-z0-9])|"
+    r"(?<![a-z0-9])restore(?![a-z])",
+    re.I,
+)
+
+
+LOOKBACK_HOURS = 35 * 24
+LAMBDA_RULES = {"lambda_timeout", "lambda_async_dropped", "lambda_throttles", "lambda_reserved", "lambda_pc_util"}
+JOB_AVG = 0.005  # calls a second on average (under one every three minutes), and
+JOB_PEAK = 0.05  # at the busiest hour (under three a minute): a scheduled or triggered job, not a request path
+
+
+def _share(prof: dict | None, pairs) -> float | None:
+    """The worst share of requests that failed, on average across the window (None: traffic not read).
+    Refused calls are not counted in the traffic figure, so they are added to it."""
+    shares = []
+    for bad, total in pairs:
+        b, t = _stat(prof, bad), _stat(prof, total)
+        if b and t:
+            failed, served = b.get("avg") or 0, (t.get("avg") or 0) * 3600  # failures an hour, requests a second
+            if failed + served > 0:
+                shares.append(failed / (failed + served))
+    return max(shares) if shares else None
+
+
+def _rare(prof: dict | None, bad: str, total: str) -> str | None:
+    """Why a failure count beside a resource is too rare to be an outage sign, or None when it is not."""
+    b = _stat(prof, bad)
+    count = (b.get("avg") or 0) * LOOKBACK_HOURS
+    share = _share(prof, [(bad, total)]) or 0.0
+    if count < MIN_EVENTS or share < ERROR_SHARE:
+        return f"about {count:,.0f} {bad.lower()} in 35 days, {share:.2%} of calls: too rare to be an outage sign"
+    return None
+
+
+def _lower_to(f: dict, severity: str, why: str) -> None:
+    f["severity"] = severity
+    f["why"] += f"; {why}"
+
+
 def _temper(f: dict, row: dict, profiles: dict) -> None:
-    """Lower a finding the evidence beside it does not bear out, and say why."""
+    """Lower a finding the evidence beside it does not bear out, and say why. Critical and high are kept
+    for what is likely to cause an outage at the peak; the rest stays listed, lower, with the reason."""
     if f["severity"] not in ("critical", "high"):
         return
     rule = row["rule"]
-    if rule in QUOTA_RULES and READ_API.search(row["res"]) and row.get("load"):
-        f["severity"] = "medium"
-        f["why"] += "; a read API, usually called by tooling that retries, not by customers"
+    res = row["res"]
+    calls = _stat(profiles.get(("lambda", res)), "Invocations") if rule in LAMBDA_RULES else {}
+    if calls and (calls.get("avg") or 0) < JOB_AVG and (calls.get("peak") or 0) < JOB_PEAK:
+        _lower_to(
+            f,
+            "medium",
+            "a background job (almost never called): it fails its own work, not customer traffic at the peak",
+        )
+    elif row.get("evidence") == "thin":
+        _lower_to(
+            f,
+            "medium",
+            "insufficient evidence: CPU was not read, and capacity used alone does not show the ceiling is near",
+        )
+    elif rule in QUOTA_RULES and READ_API.search(res) and row.get("load"):
+        _lower_to(f, "medium", "a read API, usually called by tooling that retries, not by customers")
+    elif rule in QUOTA_RULES and ANALYST_QUOTA.search(res):
+        _lower_to(
+            f, "medium", "an analyst or data science service: at the quota work queues or waits, customers are not hit"
+        )
+    elif rule in QUOTA_RULES and STATIC_QUOTA.search(res) and not row.get("load"):
+        _lower_to(
+            f, "medium", "a count of things created: at the quota nothing new can be added, what runs keeps working"
+        )
+    elif rule in EVENT_RATES:
+        svc, pairs = EVENT_RATES[rule]
+        share = _share(profiles.get((svc, res)), pairs)
+        total = row.get("used") or 0
+        if share is None:
+            _lower_to(
+                f, "medium", "insufficient evidence: the traffic beside it was not read, so its share is not known"
+            )
+        elif total < MIN_EVENTS or share < ERROR_SHARE:
+            sev = "medium" if total >= MIN_EVENTS else "low"
+            _lower_to(f, sev, f"about {share:.2%} of requests on average: background noise, not a sign of an outage")
+        else:
+            f["why"] += f"; about {share:.1%} of requests on average"
+    elif rule == "nat_drops" and (row.get("used") or 0) < NAT_DROPS:
+        sev = "medium" if (row.get("used") or 0) >= MIN_EVENTS else "low"
+        _lower_to(f, sev, "a few packets in 35 days: TCP sends them again, so nothing fails")
+    elif rule in ("msk_under_replicated", "lb_no_healthy") and not row.get("now"):
+        what = (
+            "it recovered: brief under-replication is what a broker restart, such as AWS patching, looks like"
+            if rule == "msk_under_replicated"
+            else "it recovered: a brief gap is usually a deployment or scale-in; check it is not a failing health check"
+        )
+        _lower_to(f, "medium", what)
+    elif rule in ("lambda_reserved", "lambda_pc_util"):
+        prof = profiles.get(("lambda", res))
+        rare = _rare(prof, "Throttles", "Invocations")
+        if rare:
+            past = "calls past it run on demand with a cold start, they do not fail" if rule == "lambda_pc_util" else ""
+            _lower_to(f, "medium", f"{rare}{'; ' + past if past else ''}")
     elif rule == "lambda_timeout":
-        errors = _stat(profiles.get(("lambda", row["res"])), "Errors").get("peak") or 0
+        prof = profiles.get(("lambda", res))
+        errors = _stat(prof, "Errors").get("peak") or 0
         if (row.get("pct") or 0) > 101 and not errors:
             f["severity"] = "medium"
             f["why"] = (
@@ -341,10 +573,26 @@ def _temper(f: dict, row: dict, profiles: dict) -> None:
                 "no errors since"
             )
         elif not errors:
-            f["severity"] = "high"
-            f["why"] += "; no errors recorded, so no run was cut off yet"
+            _lower_to(f, "medium", "no errors recorded, so no run was cut off yet")
+        elif rare := _rare(prof, "Errors", "Invocations"):
+            _lower_to(f, "medium", rare)
+    elif rule == "sqs_backlog":
+        waiting = _stat(profiles.get(("sqs", res)), "Messages waiting").get("peak") or 0
+        if waiting < SQS_BACKLOG:
+            _lower_to(
+                f,
+                "medium",
+                f"at most {waiting:,.0f} messages waiting: a few left unconsumed expire, the queue is not stalled",
+            )
+    elif rule in ("redshift_cpu", "ebs_iops_use") and f["severity"] == "high" and row.get("load"):
+        what = (
+            "a data warehouse: at its limit queries queue and reports run late, customers are not hit"
+            if rule == "redshift_cpu"
+            else "a projection of an hourly average: busy hours on a volume are usually backups or batch jobs"
+        )
+        _lower_to(f, "medium", what)
     elif rule == "kinesis_iterator":
-        behind = _stat(profiles.get(("kinesis", row["res"])), "Reader behind")
+        behind = _stat(profiles.get(("kinesis", res)), "Reader behind")
         if behind.get("peak") and (behind.get("avg") or 0) < 0.1 * behind["peak"]:
             f["severity"] = "medium"
             f["why"] = (
@@ -376,10 +624,14 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
             rule = rules.get(row["rule"])
             if not rule or _false_positive(row, profiles):
                 continue
-            live = production and not NONPROD_RESOURCE.search(row["res"])
-            f = _judge(row, rule, a, peak, days_to_peak, live)
+            named = f"{row['res']} {row.get('note', '')}"
+            live = production and not NONPROD_RESOURCE.search(named) and not TOOLING.search(named)
+            based = _rebase(row, profiles)
+            f = _judge(based, rule, a, peak, days_to_peak, live)
             if f:
-                _temper(f, row, profiles)
+                if based.get("acu_used") is not None:
+                    f["why"] = f"CPU {f['why']}; capacity used {based['acu_used']:.0f}% of the maximum ACUs"
+                _temper(f, based, profiles)
                 found.append(
                     {
                         **f,

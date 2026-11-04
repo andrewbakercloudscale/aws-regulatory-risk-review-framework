@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import signal
 import sys
@@ -380,7 +381,9 @@ def _pdf(args) -> int:
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
-            page = browser.new_page(viewport={"width": 1000, "height": 1400})  # ~A4 width
+            page = browser.new_page(
+                viewport={"width": 1000, "height": 1400}, locale=os.environ.get("EXITRISK_LOCALE", "en-GB")
+            )  # ~A4 width
             page.on("console", lambda m: m.type == "error" and log.error("page: %s", m.text))
             page.goto(f"http://127.0.0.1:{args.port}/?{query}")
             try:

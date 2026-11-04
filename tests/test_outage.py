@@ -608,3 +608,136 @@ def test_every_critical_risk_is_listed_beyond_fifty():
                                    for i in range(60)}}  # fmt: skip
     top = build_outage(scan)["top_risks"]
     assert len(top) == 60 and all(f["severity"] == "critical" for f in top)
+
+
+def _one_account(rows, profiles=()):
+    scan = {"accounts": [{"id": "1", "name": "prod", "ou_path": "Root"}], "params": {"outage": True}}
+    scan["outage"] = {"accounts": {"1": {"rows": rows, "clusters": [], "checks": {}, "regions": ["eu-west-1"],
+                                         "profiles": list(profiles)}}}  # fmt: skip
+    return scan
+
+
+@pytest.mark.parametrize(
+    "row, fires",
+    [
+        ({"maintenance": "mon:05:00-mon:05:30", "backup": "", "multi_az": True}, True),  # 07:00 local
+        ({"maintenance": "sun:23:00-sun:23:30", "backup": "", "multi_az": True}, False),  # 01:00 local
+        ({"maintenance": "sun:23:00-sun:23:30", "backup": "06:00-06:30", "multi_az": True}, False),  # from standby
+        ({"maintenance": "sun:23:00-sun:23:30", "backup": "06:00-06:30", "multi_az": False}, True),
+        ({"maintenance": "garbage", "backup": "", "multi_az": False}, False),
+    ],
+)
+def test_database_windows_are_judged_in_local_busy_hours(row, fires):
+    rows = [{"rule": "rds_busy_window", "res": "db", "region": "af-south-1", **row}]
+    found = build_outage(_one_account(rows))["findings"]
+    assert bool(found) == fires
+    if fires:
+        assert "UTC+2" in found[0]["why"] and found[0]["severity"] == "medium"
+
+
+def test_busy_hours_are_an_answer_needing_no_new_scan():
+    rows = [{"rule": "rds_busy_window", "res": "db", "region": "eu-west-1", "maintenance": "mon:05:00-mon:05:30"}]
+    assert build_outage(_one_account(rows))["findings"]
+    late = OutageAnswers(busy_hours="08:00-18:00")
+    assert not build_outage(_one_account(rows), a=late)["findings"]  # 07:00 local is before 08:00
+    assert build_outage(_one_account(rows), a=OutageAnswers(busy_hours="08:00-18:00", utc_offset=4))["findings"]
+
+
+def test_aurora_and_mysql_memory_is_measured_against_what_the_cache_leaves():
+    """Aurora PostgreSQL on 16 GiB showing 1.8 GiB freeable is normal: its cache holds the rest by design."""
+    row = {"rule": "rds_memory", "res": "a", "region": "eu-west-1", "pct": 89.0, "note": "db.r7g.large"}
+    aurora = {"svc": "rds", "res": "a", "region": "eu-west-1", "facts": {"Engine": "aurora-postgresql 16.11"},
+              "stats": []}  # fmt: skip
+    assert not build_outage(_one_account([row], [aurora]))["findings"]
+    tight = {**row, "pct": 98.0}  # 2% free: 92% of the quarter left over is used
+    assert build_outage(_one_account([tight], [aurora]))["findings"][0]["severity"] == "critical"
+    plain = {**aurora, "facts": {"Engine": "postgres 16.3"}}
+    assert build_outage(_one_account([row], [plain]))["findings"]
+
+
+def test_no_free_storage_alarm_is_asked_of_aurora():
+    rows = [
+        {"rule": "no_alarm", "res": "rds: a", "region": "eu-west-1", "note": "no CloudWatch alarm on FreeStorageSpace"}
+    ]
+    aurora = {"svc": "rds", "res": "a", "region": "eu-west-1", "facts": {"Engine": "aurora-postgresql 16"}, "stats": []}
+    assert not build_outage(_one_account(rows, [aurora]))["findings"]
+    plain = {**aurora, "facts": {"Engine": "postgres 16"}}
+    assert build_outage(_one_account(rows, [plain]))["findings"]
+
+
+@pytest.mark.parametrize(
+    "kind, family",
+    [
+        ("m4.large", "m4"), ("db.r4.xlarge", "r4"), ("cache.t2.micro", "t2"), ("r4.large.search", "r4"),
+        ("mq.t2.micro", "t2"), ("i3.2xlarge", "i3"), ("m5.large", None), ("db.r7g.large", None),
+        ("t3.medium", None), ("db.serverless", None), ("", None), ("kafka.m5.large", None),
+    ],
+)  # fmt: skip
+def test_old_generation_is_xen_hardware_whatever_the_service(kind, family):
+    got = collector.old_generation(kind)
+    assert (got[0] if got else None) == family
+
+
+def test_a_scheduled_aws_event_counts_only_when_it_lands_by_the_peak():
+    soon = (date.today() + timedelta(days=3)).isoformat()
+    later = (black_friday() + timedelta(days=60)).isoformat()
+    rows = [{"rule": "ec2_event", "res": "web", "region": "eu-west-1", "ends": d, "note": "system-reboot"}
+            for d in (soon, later)]  # fmt: skip
+    found = build_outage(_one_account(rows))["findings"]
+    assert [f["why"].split(":")[0] for f in found] == [f"applies on {soon}"]
+
+
+def test_a_service_review_says_what_is_wrong_with_each_resource():
+    rows = [{"rule": "rds_single_az", "res": "a", "region": "eu-west-1", "note": "db.r6g.large, postgres"}]
+    prof = {"svc": "rds", "res": "a", "region": "eu-west-1", "facts": {"Engine": "postgres 16"}, "stats": []}
+    r = build_outage(_one_account(rows, [prof]))
+    rds = next(s for s in r["services"] if s["id"] == "rds")
+    issues = rds["resource_rows"][0]["issues"]
+    assert issues and issues[0]["title"] == "Production database in one availability zone"
+
+
+def test_aurora_serverless_is_judged_by_cpu_against_the_maximum_not_by_capacity_used():
+    # Capacity used is held up by the buffer cache; AWS measures Serverless v2 CPU against the maximum ACUs.
+    rows = [
+        {"rule": "aurora_acu", "res": "idle", "region": "r", "pct": 59.0, "load": True},
+        {"rule": "aurora_acu", "res": "busy", "region": "r", "pct": 95.0, "load": True},
+        {"rule": "aurora_acu", "res": "blind", "region": "r", "pct": 99.0, "load": True},
+    ]
+
+    def cpu(res, peak):
+        return {"svc": "rds", "res": res, "region": "r", "facts": {}, "stats": [{"k": "CPU", "peak": peak, "avg": 3}]}
+
+    found = {f["res"]: f for f in _one(rows, [cpu("idle", 7.8), cpu("busy", 94.0)])}
+    assert "idle" not in found
+    assert found["busy"]["severity"] == "critical" and "capacity used 95%" in found["busy"]["why"]
+    assert found["blind"]["severity"] == "medium" and "insufficient evidence" in found["blind"]["why"]
+
+
+def test_only_evidence_of_an_outage_stays_critical_or_high():
+    def prof(svc, res, **stats):
+        rows = [{"k": k.replace("_", " "), "peak": v[0], "avg": v[1]} for k, v in stats.items()]
+        return {"svc": svc, "res": res, "region": "r", "facts": {}, "stats": rows}
+
+    rows = [
+        {"rule": "apigw_5xx", "res": "quiet", "region": "r", "used": 5},
+        {"rule": "apigw_5xx", "res": "failing", "region": "r", "used": 29161},
+        {"rule": "msk_under_replicated", "res": "patched", "region": "r", "used": 3},
+        {"rule": "msk_under_replicated", "res": "stuck", "region": "r", "used": 3, "now": 2},
+        {"rule": "nat_drops", "res": "nat-1", "region": "r", "used": 19},
+        {"rule": "lambda_throttles", "res": "nightly", "region": "r", "used": 500},
+        {"rule": "aurora_no_reader", "res": "sonarqube-prod-inst-1", "region": "r"},
+        {"rule": "limit_connect", "res": "connect-prod: phone numbers", "region": "r", "pct": 100.0},
+    ]
+    profiles = [
+        prof("apigateway", "quiet", Requests=(0.05, 0.01), Server_errors=(3, 0.03)),
+        prof("apigateway", "failing", Requests=(2.99, 0.11), Server_errors=(9049, 182.26)),
+        prof("lambda", "nightly", Invocations=(0.01, 0.0), Throttles=(30, 0.6)),
+    ]
+    found = {f["res"]: f for f in _one(rows, profiles)}
+    assert found["quiet"]["severity"] == "low" and "noise" in found["quiet"]["why"]
+    assert found["failing"]["severity"] == "high" and "of requests" in found["failing"]["why"]
+    assert found["patched"]["severity"] == "medium" and found["stuck"]["severity"] == "high"
+    assert found["nat-1"]["severity"] == "low"
+    assert found["nightly"]["severity"] == "medium" and "background job" in found["nightly"]["why"]
+    assert not found.get("sonarqube-prod-inst-1", {}).get("production")
+    assert found["connect-prod: phone numbers"]["severity"] == "medium"
