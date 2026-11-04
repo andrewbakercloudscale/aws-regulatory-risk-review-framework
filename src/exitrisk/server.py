@@ -36,6 +36,7 @@ from .ai import providers as ai_providers
 from .ai import review as ai_review
 from .assurance import AssuranceAnswers, build_assurance, evidence, ownership_export
 from .aws_session import available_profiles, make_session, profile_accounts
+from .build_info import build_info
 from .catalog import load_catalog
 from .collectors import organizations
 from .compare import compare_scans
@@ -291,6 +292,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         return {
             "status": "ok",
             "version": __version__,
+            "build": build_info(),
             "catalog_version": load_catalog().version,
             "pid": os.getpid(),
             "scans_running": running_scans(),

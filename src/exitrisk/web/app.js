@@ -3727,6 +3727,21 @@
   const sso = { sessions: [], loginTimer: null, mgmt: null };
   const LS_SSO = "exitrisk.ssoSession";
 
+  // Version and release time in the top bar; a console running commits made after the release says so.
+  async function showBuild() {
+    try {
+      const { build: b } = await api("/api/health");
+      if (!b) return;
+      const at = (iso) => iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+      const el = $("#buildInfo");
+      el.textContent = b.commits_since ? `v${b.version} + ${b.commits_since} unreleased · ${at(b.built_at)}` : `v${b.version} · ${at(b.released_at || b.built_at)}`;
+      el.classList.toggle("unreleased", !!b.commits_since);
+      el.title = b.commits_since
+        ? `Version ${b.version}, released ${at(b.released_at)}, plus ${b.commits_since} commit${b.commits_since === 1 ? "" : "s"} not yet released, the latest ${at(b.built_at)}`
+        : `Version ${b.version}, released ${at(b.released_at || b.built_at)}`;
+    } catch (e) { console.error("build info", e); }
+  }
+
   async function refreshSsoBadge() {
     try {
       ({ sessions: sso.sessions } = await api("/api/sso/sessions"));
@@ -4303,6 +4318,7 @@
     $("#btnScanRunning").addEventListener("click", () => openScanDialog());
     $("#btnStopScan").addEventListener("click", stopScan);
     $("#btnSso").addEventListener("click", openSsoDialog);
+    showBuild();
     $("#btnGsSso").addEventListener("click", openSsoDialog);
     $("#btnGsCheck").addEventListener("click", () => openAccessDialog());
     $("#btnGsScan").addEventListener("click", () => openScanDialog());
