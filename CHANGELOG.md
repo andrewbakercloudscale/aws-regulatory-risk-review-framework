@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- Outage Risk Report: an Immediate attention section at the front. It lists, for production only, what is at or past its limit now, has failed in the last 35 days, is failing now, fills before the peak, or is a change AWS will make in the next two weeks: one line per finding per account, with why now, the account and its owner, what to do and the date to do it by.
+- The findings CSV has the account owner and what to do, so a team can filter to its own findings and act on them.
+
 ### Changed
 - Outage Risk Report: the risk map's treemap is now a bubble chart. Up is the account's outage risk score, right is how far an outage would spread (the services its findings are on: one workload, data, or shared), and size is its risk points, so the accounts to start with stand out in the top right. Non-production accounts are hollow, the eight worst are named, and a bubble opens its findings. Spend plays no part.
 

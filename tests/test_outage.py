@@ -473,6 +473,8 @@ def test_a_scan_without_the_checks_says_so(scan):
 def test_csv_has_a_row_for_each_finding_and_cannot_run_a_formula(report):
     text = findings_csv(report)
     assert len(text.strip().splitlines()) == len(report["findings"]) + 1
+    head = text.splitlines()[0].split(",")
+    assert "owner" in head and head[-1] == "what to do"  # a team can filter to its own and act
     bad = {**report, "findings": [{**report["findings"][0], "res": "=cmd()"}]}
     assert ",'=cmd()," in findings_csv(bad)
 
@@ -741,3 +743,49 @@ def test_only_evidence_of_an_outage_stays_critical_or_high():
     assert found["nightly"]["severity"] == "medium" and "background job" in found["nightly"]["why"]
     assert not found.get("sonarqube-prod-inst-1", {}).get("production")
     assert found["connect-prod: phone numbers"]["severity"] == "medium"
+
+
+def test_immediate_attention_lists_what_needs_someone_now_in_production_only():
+    from exitrisk.outage_views import _immediate
+
+    today = date(2026, 11, 4)
+    rules = {
+        "msk_offline": {"kind": "event", "fix": "Find the broker."},
+        "ec2_cpu": {"kind": "capacity", "fix": "Resize."},
+        "rds_maintenance": {"kind": "config", "fix": "Apply it in a quiet window."},
+        "search_storage": {"kind": "capacity", "fix": "Grow it."},
+    }
+    base = {"res": "r1", "region": "af-south-1", "account_id": "1", "account": "prd-a", "title": "t", "pct": None}
+    base |= {"days": None, "production": True, "service_label": "S"}
+    findings = [
+        {**base, "rule": "rds_maintenance", "severity": "high", "why": "applies on 2026-11-07: upgrade"},
+        {**base, "rule": "rds_maintenance", "severity": "high", "why": "applies on 2026-12-30: upgrade", "res": "r9"},
+        {**base, "rule": "search_storage", "severity": "critical", "why": "fills", "pct": 70, "days": 18},
+        {**base, "rule": "msk_offline", "severity": "critical", "why": "1 offline"},
+        {**base, "rule": "ec2_cpu", "severity": "critical", "why": "at 100%", "pct": 100},
+        {**base, "rule": "ec2_cpu", "severity": "critical", "why": "at 96%", "pct": 96, "res": "r2"},
+        {**base, "rule": "ec2_cpu", "severity": "high", "why": "80% now", "pct": 80, "account_id": "2"},
+        {
+            **base,
+            "rule": "ec2_cpu",
+            "severity": "critical",
+            "why": "x",
+            "pct": 100,
+            "production": False,
+            "account_id": "3",
+        },
+    ]
+    table = [{"id": "1", "owner": "Team A"}, {"id": "2", "owner": ""}, {"id": "3", "owner": ""}]
+    got = _immediate(findings, table, rules, today)
+    whens = [r["when"] for r in got["rows"]]
+    assert whens == [
+        "At or past its limit now",
+        "Failed in the last 35 days",
+        "AWS applies it on 2026-11-07",
+        "Full in about 18 days",
+    ]
+    assert (
+        got["rows"][0]["more"] == 1 and got["rows"][0]["owner"] == "Team A" and got["rows"][0]["do_by"] == "2026-11-04"
+    )
+    assert got["rows"][2]["do_by"] == "2026-11-06"  # the day before AWS makes the change
+    assert got["total"] == 4 and got["accounts"] == 1 and got["resources"] == 5

@@ -2408,6 +2408,7 @@
     }
     try {
       renderOrCover(r);
+      renderOrNow(r);
       renderOrSummary(r);
       renderOrMap(r);
       renderOrTop(r);
@@ -2691,6 +2692,24 @@
     $("#orRunwayNote").textContent = w.total ? `Production measures with a measured trend, soonest first: ${num(Math.min(w.rows.length, w.total))} of ${num(w.total)}. The line is the peak, in ${plural(w.days_to_peak, "day")}. A straight line through 35 days, so a surge at the peak fills sooner.` : "No production measure is on a trend to reach its limit.";
     const at = Math.min(100, (100 * w.days_to_peak) / scale).toFixed(1);
     $("#orRunway").innerHTML = w.rows.map((x) => `<div class="or-bar"><div class="or-bar-name small" title="${esc(x.title)}"><strong>${esc(x.res)}</strong><br><span class="muted">${esc(x.account)}</span></div><div class="or-bar-track"><i style="width:${Math.max(1, Math.min(100, (100 * x.days) / scale)).toFixed(1)}%;background:${OR_SEV_COLOR[x.severity]}"></i><b style="left:${at}%"></b></div><div class="or-bar-note small">${num(x.days, 0)} days</div></div>`).join("");
+  }
+
+  function renderOrNow(r) {
+    const m = r.immediate;
+    $("#or-now").hidden = !m;
+    if (!m) return;
+    const isoDay = (t) => t.replace(/\d{4}-\d{2}-\d{2}/, (d) => orDate(d));
+    const tone = (w) => (/^(Failing|At or past|Failed)/.test(w) ? "var(--sev-critical)" : /^Near/.test(w) ? "var(--sev-error)" : "var(--sev-warning)");
+    if (!m.total) {
+      $("#orNowLead").textContent = "Nothing in production needs attention today: nothing is at its limit, failing, filling before the peak or about to be changed by AWS.";
+      $("#orNow").innerHTML = "";
+      $("#orNowMore").textContent = "";
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    $("#orNowLead").textContent = `${plural(m.total, "risk")} in production need${m.total === 1 ? "s" : ""} someone now, on ${plural(m.resources, "resource")} in ${plural(m.accounts, "account")}.`;
+    $("#orNow").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Why now</th><th>What is wrong</th><th>Account and owner</th><th>What to do</th><th>Do by</th></tr></thead><tbody>${m.rows.map((f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${pill(null, isoDay(f.when), tone(f.when))}</td><td><strong>${esc(f.title)}</strong>${f.why ? `<div class="small">${esc(isoDay(f.why))}</div>` : ""}<div class="small mono">${esc(f.res)}${f.more ? ` <span class="muted">and ${num(f.more)} more</span>` : ""}</div><div class="muted small">${esc([f.service, f.region].filter(Boolean).join(" · "))}</div></td><td><button type="button" class="link-btn" data-or-acct="${esc(f.account)}">${esc(f.account)}</button><div class="small ${f.owner ? "" : "muted"}">${f.owner ? esc(f.owner) : "No owner tag"}</div></td><td class="small">${esc(f.fix)}</td><td class="small nowrap">${f.do_by <= today ? "<strong>Today</strong>" : esc(orDate(f.do_by))}</td></tr>`).join("")}</tbody>`;
+    $("#orNowMore").textContent = m.total > m.rows.length ? `The first ${num(m.rows.length)} of ${num(m.total)}; the rest are in Findings (section 7).` : "";
   }
 
   function renderOrTop(r) {

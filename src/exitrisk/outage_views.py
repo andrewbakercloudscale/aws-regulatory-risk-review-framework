@@ -8,6 +8,7 @@ as context only, since a cheap account that takes payments can matter more than 
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from functools import lru_cache
@@ -514,6 +515,85 @@ def _runway(findings: list[dict], peak: date, today: date) -> dict:
     }
 
 
+IMMEDIATE_ROWS = 60  # everything that needs someone today, not a sample
+IMMEDIATE_SOON = 14  # days: a change AWS will make this soon needs a decision now
+LOOKBACK_DAYS = 35  # matches outage.LOOKBACK_HOURS
+SCHEDULED = ("rds_maintenance", "ec2_event")
+SCHEDULED_ON = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def _immediate(findings: list[dict], table: list[dict], rules: dict, today: date) -> dict:
+    """What needs someone today, in production only: what is past or at its limit, has failed in the lookback,
+    is failing now, fills before the peak, or is a change AWS will make within IMMEDIATE_SOON days. One row per
+    finding per account, its other resources counted. Each says why now, who owns the account and what to do."""
+    owners = {r["id"]: r.get("owner") or "" for r in table}
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for f in findings:
+        if not f["production"]:
+            continue
+        rule = rules.get(f["rule"]) or {}
+        when, rank, by = None, 9, today
+        if f["rule"] in SCHEDULED:
+            m = SCHEDULED_ON.search(f.get("why") or "")
+            on = date.fromisoformat(m.group(1)) if m else None
+            if on and 0 <= (on - today).days <= IMMEDIATE_SOON and f["severity"] in ("critical", "high"):
+                when, rank, by = f"AWS applies it on {on.isoformat()}", 4, max(today, on - timedelta(days=1))
+        elif f["severity"] == "critical" or f.get("now"):
+            if f.get("now"):
+                when, rank = "Failing now", 0
+            elif rule.get("kind") == "event":
+                when, rank = f"Failed in the last {LOOKBACK_DAYS} days", 2
+            elif f.get("days") is not None and (f.get("pct") or 0) < 90:
+                when, rank, by = (
+                    f"Full in about {round(f['days'])} days",
+                    5,
+                    today + timedelta(days=max(0, int(f["days"]) - 7)),
+                )
+            elif round(f.get("pct") or 0) >= 100:
+                when, rank = "At or past its limit now", 1
+            else:
+                when, rank = "Near its limit now", 3
+        if when:
+            grouped[(f["rule"], f["account_id"])].append({**f, "_when": when, "_rank": rank, "_by": by})
+    rows = []
+    for mine in grouped.values():
+        f = min(mine, key=lambda x: (x["_rank"], SEV_ORDER[x["severity"]], -(x["pct"] or 0)))
+        rows.append(
+            {
+                "rule": f["rule"],
+                "title": f["title"],
+                "severity": f["severity"],
+                "when": f["_when"],
+                "do_by": min(x["_by"] for x in mine).isoformat(),
+                "account": f["account"],
+                "owner": owners.get(f["account_id"], ""),
+                "service": f.get("service_label", ""),
+                "res": f["res"],
+                "region": f["region"],
+                "more": len(mine) - 1,
+                "why": f["why"],
+                "fix": (rules.get(f["rule"]) or {}).get("fix", ""),
+                "_key": (
+                    f["_rank"],
+                    min(x["_by"] for x in mine),
+                    SEV_ORDER[f["severity"]],
+                    -(f["pct"] or 0),
+                    f["account"],
+                    f["rule"],
+                ),
+            }
+        )
+    rows.sort(key=lambda r: r["_key"])
+    keep = [{k: v for k, v in r.items() if k != "_key"} for r in rows]
+    return {
+        "rows": keep[:IMMEDIATE_ROWS],
+        "total": len(keep),
+        "accounts": len({r["account"] for r in keep}),
+        "resources": sum(1 + r["more"] for r in keep),
+        "soon_days": IMMEDIATE_SOON,
+    }
+
+
 def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date, freeze: date, today: date) -> dict:
     """Add to the report what it needs to rank 300 accounts. Marks each finding with its service, and each
     account with its risk points (see _risk_points)."""
@@ -538,6 +618,7 @@ def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date
         "services_at_risk": _services_at_risk(findings, rules, svc_cat),
         "account_service": _account_service(table, findings, labels, rules),
         "top_risks": _top_risks(findings, table, rules, cat, freeze, peak, today),
+        "immediate": _immediate(findings, table, rules, today),
         "runway": _runway(findings, peak, today),
         "spend": {
             "total": round(sum(r["monthly_spend"] for r in table), 2),

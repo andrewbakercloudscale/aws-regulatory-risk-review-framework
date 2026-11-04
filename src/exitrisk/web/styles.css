@@ -135,6 +135,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
 .meta dt { color: var(--ink-2); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
 .meta dd { margin: 0; overflow-wrap: anywhere; }
 .section { margin-top: 32px; }
+.num.urgent { background: var(--sev-critical); color: #fff; }
 .num { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: var(--surface); font-size: 13px; font-weight: 700; flex: none; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); margin-bottom: 16px; }
 figure { margin: 0; }
@@ -899,7 +900,7 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 @media print {
   .or-review, .or-matrix, .or-heat { break-inside: auto; }
   /* Long tables split across pages: kept whole, they leave a section heading alone on a blank page. */
-  #or-top .card, #or-causes .card, #or-findings .card, #or-accounts .card, #or-eks .card, #or-coverage .card { break-inside: auto; }
+  #or-now .card, #or-top .card, #or-causes .card, #or-findings .card, #or-accounts .card, #or-eks .card, #or-coverage .card { break-inside: auto; }
   .section > h2 { break-after: avoid; }
   #orSvcRisk td:last-child { min-width: 180px; }
   .or-cell, .or-heat-cell, .or-bar-track i, .or-covbar i { -webkit-print-color-adjust: exact; print-color-adjust: exact; }

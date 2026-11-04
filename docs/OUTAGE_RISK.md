@@ -55,6 +55,10 @@ Each row names the worst risk, where it is, and what to do.
 
 ## Risk map
 
+The report opens with Immediate attention: the production findings that need someone now (at or past a limit,
+failed in the last 35 days, failing now, filling before the peak, or a change AWS will make in the next two weeks),
+each with why now, the account and its owner, what to do and the date to do it by.
+
 Accounts are ranked by what was found in them: 100 points per critical, 10 per high, 1 per medium, one per risk
 however many copies, and a non-production finding a tenth. The map shows accounts by rating in production and
 non-production, every account with a finding as a bubble (up = its outage risk score, right = how far an outage

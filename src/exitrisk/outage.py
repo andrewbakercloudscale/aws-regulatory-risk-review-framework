@@ -907,6 +907,7 @@ def findings_csv(report: dict) -> str:
             "service",
             "finding",
             "account",
+            "owner",
             "production",
             "region",
             "resource",
@@ -918,9 +919,12 @@ def findings_csv(report: dict) -> str:
             "days to full",
             "why",
             "note",
+            "what to do",
         ]
     )
     areas = report.get("areas") or {}
+    owners = {a["id"]: a.get("owner") or "" for a in report.get("accounts") or []}
+    fixes = {r["id"]: r.get("fix", "") for r in report.get("rules") or []}
     for f in report.get("findings") or []:
         w.writerow(
             [
@@ -929,6 +933,7 @@ def findings_csv(report: dict) -> str:
                 f.get("service_label", ""),
                 f["title"],
                 _cell(f["account"]),
+                _cell(owners.get(f.get("account_id"), "")),
                 "yes" if f["production"] else "no",
                 f["region"],
                 _cell(f["res"]),
@@ -940,6 +945,7 @@ def findings_csv(report: dict) -> str:
                 f["days"],
                 _cell(f["why"]),
                 _cell(f["note"]),
+                _cell(fixes.get(f["rule"], "")),
             ]
         )
     return out.getvalue()
