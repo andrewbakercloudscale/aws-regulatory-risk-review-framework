@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-04
+
 ### Added
 - Outage Risk Report: an Immediate attention section at the front. It lists, for production only, the 20 findings most likely to cause an outage if nobody acts: failing now, failed in the last 35 days, at or past its limit, fills before the peak, or near its limit, then by how far an outage would spread. Planned changes such as AWS upgrades and design gaps such as a single zone stay in Top risks. One line per finding per account, with why now, the account and its owner, what to do and the date to do it by. About two pages in the PDF.
 - Outage Risk Report: Actions by owner (section 9). Production critical and high findings grouped by the account's owner tag, one action per finding type, with resources, accounts, what to do and when to start. Accounts with no owner tag form one group.
