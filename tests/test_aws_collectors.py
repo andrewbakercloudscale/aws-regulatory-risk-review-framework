@@ -72,13 +72,14 @@ def test_list_accounts_recurses_ou_tree(monkeypatch):
     stub.add_response(
         "list_organizational_units_for_parent", {"OrganizationalUnits": []}, {"ParentId": "ou-ab12-abcd1234"}
     )
-    stub.add_response("list_accounts_for_parent", mgmt, {"ParentId": "r-ab12"})
-    stub.add_response("list_accounts_for_parent", app, {"ParentId": "ou-ab12-abcd1234"})
     session = _session()
     monkeypatch.setattr(session, "client", lambda *a, **k: client)
     with stub:
-        tree = organizations.list_ou_tree(session)
-        accts = organizations.list_accounts_under(session, tree)
+        known: dict = {}
+        tree = organizations.list_ou_tree(session, known)
+        # From what the tree read, as a scan does: listing again reads the two nodes in parallel, in either
+        # order, which a Stubber (one fixed order) cannot answer.
+        accts = organizations.list_accounts_under(session, tree, known)
     assert tree["children"][0]["path"] == "Root / Prod"
     assert (tree["accounts"], tree["children"][0]["accounts"]) == (1, 1)
     assert {a.name: a.ou_path for a in accts} == {"mgmt": "Root", "app-prod": "Root / Prod"}
