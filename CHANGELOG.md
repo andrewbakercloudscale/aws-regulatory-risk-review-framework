@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-04
+
 ### Added
 - Outage Risk Report, shared network and DNS: which accounts own the transit gateways, shared subnets and DNS forwarding rules the scanned accounts use, whether each was scanned, and the OU to add when it was not. Shown in section 4 and on the cover.
 - New checks: transit gateway attachment in one zone or missing a zone, blackhole routes and attachments per gateway, DNS forwarding rule with one target, failover record with no health check, Route 53 health check failing now on a record in use, ACM renewal stalled, private CA expiry, IAM server certificate expiry, CloudFront's certificates in us-east-1 when the scan's regions leave it out, and Route 53 domains expiring by the peak.
