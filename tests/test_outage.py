@@ -745,7 +745,7 @@ def test_only_evidence_of_an_outage_stays_critical_or_high():
     assert found["connect-prod: phone numbers"]["severity"] == "medium"
 
 
-def test_immediate_attention_lists_what_needs_someone_now_in_production_only():
+def test_immediate_attention_lists_what_will_most_likely_cause_an_outage_in_production_only():
     from exitrisk.outage_views import _immediate
 
     today = date(2026, 11, 4)
@@ -778,14 +778,44 @@ def test_immediate_attention_lists_what_needs_someone_now_in_production_only():
     table = [{"id": "1", "owner": "Team A"}, {"id": "2", "owner": ""}, {"id": "3", "owner": ""}]
     got = _immediate(findings, table, rules, today)
     whens = [r["when"] for r in got["rows"]]
-    assert whens == [
-        "At or past its limit now",
-        "Failed in the last 35 days",
-        "AWS applies it on 2026-11-07",
-        "Full in about 18 days",
-    ]
+    assert whens == ["Failed in the last 35 days", "At or past its limit now", "Full in about 18 days"]  # no upgrades
     assert (
-        got["rows"][0]["more"] == 1 and got["rows"][0]["owner"] == "Team A" and got["rows"][0]["do_by"] == "2026-11-04"
+        got["rows"][1]["more"] == 1 and got["rows"][1]["owner"] == "Team A" and got["rows"][1]["do_by"] == "2026-11-04"
     )
-    assert got["rows"][2]["do_by"] == "2026-11-06"  # the day before AWS makes the change
-    assert got["total"] == 4 and got["accounts"] == 1 and got["resources"] == 5
+    assert got["total"] == 3 and got["accounts"] == 1 and got["resources"] == 4
+
+
+def test_a_queue_at_its_expiry_is_judged_by_whether_anyone_reads_it_and_if_it_has_caught_up():
+    rows = [
+        {"rule": "sqs_backlog", "res": "unread", "region": "r", "pct": 100.0, "sent": 8826247, "received": 0},
+        {"rule": "sqs_backlog", "res": "idle", "region": "r", "pct": 100.0, "sent": 0, "received": 0},
+        {"rule": "sqs_backlog", "res": "caught-up", "region": "r", "pct": 94.0, "sent": 9, "received": 9,
+         "age_now_pct": 0.0},
+        {"rule": "sqs_backlog", "res": "stalled", "region": "r", "pct": 100.0, "sent": 9000, "received": 10,
+         "age_now_pct": 100.0},
+    ]  # fmt: skip
+    prof = [{"svc": "sqs", "res": n, "region": "r", "facts": {}, "stats": [{"k": "Messages waiting", "peak": 5000}]}
+            for n in ("unread", "idle", "caught-up", "stalled")]  # fmt: skip
+    got = {f["res"]: f for f in _one(rows, prof)}
+    assert got["unread"]["severity"] == "medium" and "nobody reads this queue" in got["unread"]["why"]
+    assert got["idle"]["severity"] == "low"
+    assert got["caught-up"]["severity"] == "medium" and "caught up" in got["caught-up"]["why"]
+    assert got["stalled"]["severity"] == "critical"
+    sink = [{"rule": "sqs_backlog", "res": "prd-sms-process-invalid-prd", "region": "r", "pct": 100.0, "received": 9}]
+    assert _one(sink)[0]["severity"] == "medium"
+
+
+def test_connect_api_rates_follow_the_staff_not_the_peak_and_admin_calls_are_not_customer_traffic():
+    rows = [
+        {"rule": "limit_connect", "res": "connect: Rate of UpdateUserHierarchy API requests", "region": "r",
+         "pct": 106.0, "used": 2.1, "limit": 2.0, "load": True},
+        {"rule": "limit_connect", "res": "connect: Rate of StartOutboundVoiceContact API requests", "region": "r",
+         "pct": 105.3, "used": 5.26, "limit": 5.0, "load": True},
+        {"rule": "limit_connect", "res": "connect: Rate of StartChatContact API requests", "region": "r",
+         "pct": 60.0, "used": 3.0, "limit": 5.0, "load": True},
+    ]  # fmt: skip
+    got = {f["res"].split()[3]: f for f in _one(rows)}
+    assert got["UpdateUserHierarchy"]["severity"] == "medium" and "admin API" in got["UpdateUserHierarchy"]["why"]
+    out = got["StartOutboundVoiceContact"]
+    assert out["severity"] == "high" and out["at_peak"] == out["pct"] and "staff is fixed" in out["why"]
+    assert got["StartChatContact"]["severity"] in ("medium", "low")

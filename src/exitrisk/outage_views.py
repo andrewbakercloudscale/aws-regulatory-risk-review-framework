@@ -8,7 +8,6 @@ as context only, since a cheap account that takes payments can matter more than 
 
 from __future__ import annotations
 
-import re
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from functools import lru_cache
@@ -515,17 +514,16 @@ def _runway(findings: list[dict], peak: date, today: date) -> dict:
     }
 
 
-IMMEDIATE_ROWS = 60  # everything that needs someone today, not a sample
-IMMEDIATE_SOON = 14  # days: a change AWS will make this soon needs a decision now
+IMMEDIATE_ROWS = 20  # two pages at the front of the report; the rest are in Top risks
 LOOKBACK_DAYS = 35  # matches outage.LOOKBACK_HOURS
-SCHEDULED = ("rds_maintenance", "ec2_event")
-SCHEDULED_ON = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 
-def _immediate(findings: list[dict], table: list[dict], rules: dict, today: date) -> dict:
-    """What needs someone today, in production only: what is past or at its limit, has failed in the lookback,
-    is failing now, fills before the peak, or is a change AWS will make within IMMEDIATE_SOON days. One row per
-    finding per account, its other resources counted. Each says why now, who owns the account and what to do."""
+def _immediate(findings: list[dict], table: list[dict], rules: dict, today: date, reach: dict | None = None) -> dict:
+    """What is most likely to cause an outage if nobody acts, in production only: what is failing now, has
+    failed in the lookback, is at or past its limit, is near it, or fills before the peak. Planned changes
+    (maintenance, upgrades, certificates) are left to Top risks: they happen on a date, they are not a fault.
+    One row per finding per account, its other resources counted; most likely first, then how far an outage
+    would spread. Each says why now, who owns the account, what to do and by when."""
     owners = {r["id"]: r.get("owner") or "" for r in table}
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for f in findings:
@@ -533,24 +531,21 @@ def _immediate(findings: list[dict], table: list[dict], rules: dict, today: date
             continue
         rule = rules.get(f["rule"]) or {}
         when, rank, by = None, 9, today
-        if f["rule"] in SCHEDULED:
-            m = SCHEDULED_ON.search(f.get("why") or "")
-            on = date.fromisoformat(m.group(1)) if m else None
-            if on and 0 <= (on - today).days <= IMMEDIATE_SOON and f["severity"] in ("critical", "high"):
-                when, rank, by = f"AWS applies it on {on.isoformat()}", 4, max(today, on - timedelta(days=1))
-        elif f["severity"] == "critical" or f.get("now"):
+        if rule.get("kind") == "config" and not f.get("now"):
+            continue  # a design gap or a planned change: in Top risks, not a fault in progress
+        if f["severity"] == "critical" or f.get("now"):
             if f.get("now"):
                 when, rank = "Failing now", 0
             elif rule.get("kind") == "event":
-                when, rank = f"Failed in the last {LOOKBACK_DAYS} days", 2
+                when, rank = f"Failed in the last {LOOKBACK_DAYS} days", 1
             elif f.get("days") is not None and (f.get("pct") or 0) < 90:
                 when, rank, by = (
                     f"Full in about {round(f['days'])} days",
-                    5,
+                    4,
                     today + timedelta(days=max(0, int(f["days"]) - 7)),
                 )
             elif round(f.get("pct") or 0) >= 100:
-                when, rank = "At or past its limit now", 1
+                when, rank = "At or past its limit now", 2
             else:
                 when, rank = "Near its limit now", 3
         if when:
@@ -576,6 +571,7 @@ def _immediate(findings: list[dict], table: list[dict], rules: dict, today: date
                 "_key": (
                     f["_rank"],
                     min(x["_by"] for x in mine),
+                    -(reach or {}).get(f.get("service"), 1),
                     SEV_ORDER[f["severity"]],
                     -(f["pct"] or 0),
                     f["account"],
@@ -590,8 +586,61 @@ def _immediate(findings: list[dict], table: list[dict], rules: dict, today: date
         "total": len(keep),
         "accounts": len({r["account"] for r in keep}),
         "resources": sum(1 + r["more"] for r in keep),
-        "soon_days": IMMEDIATE_SOON,
     }
+
+
+NO_OWNER = "No owner tag"
+OWNER_SEVERITIES = ("critical", "high")
+
+
+def _by_owner(findings: list[dict], table: list[dict], rules: dict, cat: dict, freeze: date, peak: date, today: date):
+    """Each owner's actions: production critical and high findings, one action per finding type, with the
+    resources and accounts it covers and when to start. Accounts with no owner tag are one group, by account."""
+    owners = {r["id"]: r.get("owner") or "" for r in table}
+    leads = cat["areas"]
+    groups: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    for f in findings:
+        if f["production"] and f["severity"] in OWNER_SEVERITIES:
+            groups[owners.get(f["account_id"]) or NO_OWNER][f["rule"]].append(f)
+    out = []
+    for owner, by_rule in groups.items():
+        actions = []
+        for rule_id, mine in by_rule.items():
+            worst = min(mine, key=lambda x: (SEV_ORDER[x["severity"]], -(x["pct"] or 0)))
+            start = min(freeze, peak) - timedelta(days=leads.get(worst["area"], {}).get("lead_days", 0))
+            accts = sorted({x["account"] for x in mine})
+            actions.append(
+                {
+                    "rule": rule_id,
+                    "title": worst["title"],
+                    "severity": worst["severity"],
+                    "critical": sum(1 for x in mine if x["severity"] == "critical"),
+                    "high": sum(1 for x in mine if x["severity"] == "high"),
+                    "resources": len(mine),
+                    "accounts": accts,
+                    "example": worst["res"],
+                    "why": worst["why"],
+                    "service": worst.get("service_label", ""),
+                    "fix": (rules.get(rule_id) or {}).get("fix", ""),
+                    "start_by": start.isoformat(),
+                    "late": start < today,
+                }
+            )
+        actions.sort(key=lambda x: (SEV_ORDER[x["severity"]], -x["critical"], -x["high"], x["title"]))
+        crit = sum(x["critical"] for x in actions)
+        high = sum(x["high"] for x in actions)
+        out.append(
+            {
+                "owner": owner,
+                "tagged": owner != NO_OWNER,
+                "critical": crit,
+                "high": high,
+                "accounts": sorted({a for x in actions for a in x["accounts"]}),
+                "actions": actions,
+            }
+        )
+    out.sort(key=lambda o: (-o["critical"], -o["high"], o["owner"]))
+    return {"owners": out, "untagged_accounts": sum(1 for r in table if not r.get("owner"))}
 
 
 def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date, freeze: date, today: date) -> dict:
@@ -618,7 +667,8 @@ def build_views(scan, accounts, checked, table, findings, rules, cat, peak: date
         "services_at_risk": _services_at_risk(findings, rules, svc_cat),
         "account_service": _account_service(table, findings, labels, rules),
         "top_risks": _top_risks(findings, table, rules, cat, freeze, peak, today),
-        "immediate": _immediate(findings, table, rules, today),
+        "immediate": _immediate(findings, table, rules, today, ranks),
+        "by_owner": _by_owner(findings, table, rules, cat, freeze, peak, today),
         "runway": _runway(findings, peak, today),
         "spend": {
             "total": round(sum(r["monthly_spend"] for r in table), 2),

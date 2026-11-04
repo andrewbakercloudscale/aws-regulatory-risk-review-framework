@@ -669,6 +669,7 @@
       <h1 id="orTitle">Outage Risk Report</h1>
       <p class="muted">What is close to a limit, what runs hot and cannot grow, what fills up before the peak, and which EKS workloads are sized or scaled to fail, in every account.</p>
       <div id="orCoverage" class="coverage" role="alert" hidden></div>
+      <div id="orComplete" class="complete-scan no-print" hidden></div>
       <dl id="orMeta" class="meta"></dl>
     </section>
 
@@ -676,7 +677,8 @@
       <h2><span class="num urgent">!</span>Immediate attention</h2>
       <div class="card or-now">
         <p class="brief-headline" id="orNowLead"></p>
-        <p class="muted small">Production only. What is at or past its limit now, has failed in the last 35 days, is failing now, fills before the peak, or is a change AWS will make in the next two weeks. One line per finding per account, with its other resources counted. Each line says why now, which account and owner, what to do and by when. Select an account to see all its findings.</p>
+        <p class="muted small">Production only. What is most likely to cause an outage if nobody acts: failing now, failed in the last 35 days, at or past its limit, fills before the peak, or near its limit. Planned changes such as AWS upgrades and design gaps such as a single zone are in Top risks (section 3), not here. Most likely first, then how far an outage would spread. One line per finding per account, with its other resources counted. Each line says why now, which account and owner, what to do and by when. Select an account to see all its findings.</p>
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-now">Export table to PDF</button></p>
         <div class="table-wrap"><table class="data compact" id="orNow"></table></div>
         <p id="orNowMore" class="muted small"></p>
       </div>
@@ -749,6 +751,7 @@
       <h2><span class="num">3</span><span id="orTopTitle">Top risks</span></h2>
       <div class="card">
         <p class="muted small">One line per finding per account, with its other copies counted. Production first, then severity, then how far an outage would spread (shared services, then data stores, then compute), then how far past its limit. Lead times are our judgement.</p>
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-top">Export table to PDF</button></p>
         <div class="table-wrap"><table class="data compact" id="orTop"></table></div>
       </div>
     </section>
@@ -826,8 +829,18 @@
       </div>
     </section>
 
+    <section class="section" id="or-owners">
+      <h2><span class="num">9</span>Actions by owner</h2>
+      <div class="card">
+        <p class="brief-headline" id="orOwnLead"></p>
+        <p class="muted small">Production critical and high findings, one action per finding type for each owner, with the resources and accounts it covers and when to start. The owner is the account's owner tag; accounts with no owner tag are one group, so tag them to route their actions. Select an account to see all its findings.</p>
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-owners">Export table to PDF</button></p>
+        <div id="orOwners"></div>
+      </div>
+    </section>
+
     <section class="section" id="or-eks">
-      <h2><span class="num">9</span>EKS clusters</h2>
+      <h2><span class="num">10</span>EKS clusters</h2>
       <div class="card">
         <p class="muted small">Replica counts, requests and limits come from each cluster's Kubernetes API, which needs a read-only access entry for the scan's identity and a network path to the endpoint. The scan never adds an entry. A cluster not read is not a pass; Container Insights, where on, still gives memory and CPU against limits.</p>
         <p id="orEksHelp" class="small" hidden></p>
@@ -836,7 +849,7 @@
     </section>
 
     <section class="section" id="or-causes">
-      <h2><span class="num">10</span>What causes outages</h2>
+      <h2><span class="num">11</span>What causes outages</h2>
       <div class="card">
         <p class="muted small">Published evidence, beside what this scan found for the same cause. The order is our judgement for a bank's peak event, not a published ranking, and no source here measures AWS customers or banks directly. A scan measures capacity far better than it measures change, yet change has the strongest evidence: hold the freeze as well as fixing the findings.</p>
         <div class="table-wrap"><table class="data compact" id="orCauses"></table></div>
@@ -844,7 +857,7 @@
     </section>
 
     <section class="section" id="or-method">
-      <h2><span class="num">11</span>Method and limits</h2>
+      <h2><span class="num">12</span>Method and limits</h2>
       <div class="card small" id="orMethod"></div>
     </section>
     <p id="orFooter" class="muted small"></p>

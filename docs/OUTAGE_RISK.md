@@ -79,7 +79,7 @@ Measures are collected at scan time and judged when the report is built, so chan
 
 ## The evidence
 
-The report's section 6 shows each cause with its source and limits. In short:
+The report's "What causes outages" section shows each cause with its source and limits. In short:
 
 - **Change is the largest measured trigger.** Google: "roughly 70% of outages are due to changes in a live system". Across thousands of postmortems from 2010 to 2017: binary push 37%, configuration push 31%, user behaviour change 9%, processing pipeline 6%, service provider change 5%, performance decay 5%, capacity management 5%, hardware 2%.
 - **Limits and capacity are smaller on an average day**, and matter more at a peak. Nobody publishes how much more. AWS's Well-Architected guidance suggests a buffer such as 15% and warns to expect a wait for a quota increase.

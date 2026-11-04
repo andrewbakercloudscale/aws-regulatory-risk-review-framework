@@ -460,3 +460,47 @@ def test_eta_waits_for_a_full_round_of_parallel_accounts():
     assert eta_seconds(120, 8, 168, parallel=8) == 2400  # 15 s an account, 160 left
     assert eta_seconds(30, 2, 2, parallel=8) == 0
     assert eta_seconds(0, 0, 10) is None
+
+
+def test_completing_a_scan_reads_only_what_it_missed_and_keeps_the_rest(monkeypatch):
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+    monkeypatch.setattr(scanner, "member_session", lambda s, pr, a, r, j: object())
+    read: list[str] = []
+
+    def inv(_s, account_id, _regions, dependencies=False):
+        read.append(account_id)
+        if account_id == "222222222222" and len(read) <= 2:  # fails in the first scan only
+            raise KeyError("Reservations")
+        return {"resources": {"n": len(read)}}, []
+
+    monkeypatch.setattr(scanner.inventory, "inventory_account", inv)
+    first = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams(inventory=True, role_name="r")))
+    assert first["status"] == "partial" and list(first["inventory"]) == ["333333333333"]
+    assert scanner.incomplete_accounts(first)["inventory"] == {"missing": ["222222222222"], "failed": [], "eks": []}
+
+    def no_cost(*_a, **_k):
+        raise AssertionError("completing a scan keeps its spend: Cost Explorer is not asked again")
+
+    monkeypatch.setattr(scanner.cost, "fetch_costs", no_cost)
+    read.clear()
+    read.extend(["x", "y"])  # past the first scan's failure
+    params = ScanParams(inventory=True, role_name="r", completes=first["id"])
+    doc = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=params))
+    assert read[2:] == ["222222222222"]  # only the account it missed
+    assert doc["status"] == "complete" and doc["completes"] == first["id"]
+    assert set(doc["inventory"]) == {"222222222222", "333333333333"}
+    assert doc["inventory"]["333333333333"] == first["inventory"]["333333333333"]  # kept as it was
+    assert not any(i["account_id"] == "222222222222" for i in doc["issues"])
+    assert doc["costs"] == first["costs"]
+    assert scanner.incomplete_accounts(doc)["inventory"] == {"missing": [], "failed": [], "eks": []}
+
+
+def test_a_scan_is_completed_only_with_a_sign_in_to_the_same_account(monkeypatch):
+    _org(monkeypatch)
+    monkeypatch.setattr(scanner.organizations, "fetch_account_tags", lambda s, ids: {})
+    first = scanner.run_scan(ScanJob(id=store.new_scan_id(), params=ScanParams()))
+    monkeypatch.setattr(scanner, "caller_identity", lambda s: {"account_id": "999999999999", "arn": "arn:other"})
+    job = ScanJob(id=store.new_scan_id(), params=ScanParams(completes=first["id"]))
+    with pytest.raises(scanner.ScanFailed, match="same|profile"):
+        scanner.run_scan(job)

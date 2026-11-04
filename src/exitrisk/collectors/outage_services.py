@@ -130,6 +130,8 @@ METRICS.update(
         "apigw2_5xx": ("AWS/ApiGateway", ("ApiId",), "5xx", "Sum", APIGW),
         "sqs_age": ("AWS/SQS", ("QueueName",), "ApproximateAgeOfOldestMessage", "Maximum", SQS),
         "sqs_depth": ("AWS/SQS", ("QueueName",), "ApproximateNumberOfMessagesVisible", "Maximum", SQS),
+        "sqs_sent": ("AWS/SQS", ("QueueName",), "NumberOfMessagesSent", "Sum", SQS),
+        "sqs_recv": ("AWS/SQS", ("QueueName",), "NumberOfMessagesReceived", "Sum", SQS),
         "sns_failed": ("AWS/SNS", ("TopicName",), "NumberOfNotificationsFailed", "Sum", SNS),
         "sns_pub": ("AWS/SNS", ("TopicName",), "NumberOfMessagesPublished", "Sum", SNS),
         "alb_5xx": ("AWS/ApplicationELB", ("LoadBalancer",), "HTTPCode_ELB_5XX_Count", "Sum", None),
@@ -1000,12 +1002,17 @@ def task_sqs_review(ctx: OutageCtx, region: str) -> None:
             or {}
         )
         keep = int(attrs.get("MessageRetentionPeriod") or 345600)
+        sent, recv = m["sqs_sent"].get(name), m["sqs_recv"].get(name)
+        traffic = {"age_now_pct": round(100.0 * age.last / keep, 1)}
+        if recv is not None or sent is not None:  # a queue no one reads shows 0 received, not missing data
+            traffic |= {"sent": round(sent.total if sent else 0), "received": round(recv.total if recv else 0)}
         ctx.add(
             "sqs_backlog",
             name,
             region,
             pct=100.0 * age.high / keep,
             note=f"oldest message {age.high / 60:,.0f} minutes old; deleted after {keep / 3600:,.0f} hours",
+            **traffic,
         )
         if not attrs.get("RedrivePolicy") and not re.search(r"dlq|dead", name, re.I):
             ctx.add("sqs_no_dlq", name, region)
@@ -1015,7 +1022,12 @@ def task_sqs_review(ctx: OutageCtx, region: str) -> None:
             "Visibility timeout": f"{attrs.get('VisibilityTimeout')} s",
             "FIFO": "yes" if name.endswith(".fifo") else "no",
         }
-        stats = [stat(age, "Oldest message", "s", limit=keep), stat(m["sqs_depth"].get(name), "Messages waiting", "")]
+        stats = [
+            stat(age, "Oldest message", "s", limit=keep),
+            stat(m["sqs_depth"].get(name), "Messages waiting", ""),
+            stat(sent, "Messages sent", ""),
+            stat(recv, "Messages received", ""),
+        ]
         profile(ctx, "sqs", name, region, facts, stats, alarm=name)
     ctx.r.fact("sqs_queues", len(urls), region)
     ctx.r.ok("sqs")

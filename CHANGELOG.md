@@ -7,10 +7,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 ## [Unreleased]
 
 ### Added
-- Outage Risk Report: an Immediate attention section at the front. It lists, for production only, what is at or past its limit now, has failed in the last 35 days, is failing now, fills before the peak, or is a change AWS will make in the next two weeks: one line per finding per account, with why now, the account and its owner, what to do and the date to do it by.
+- Outage Risk Report: an Immediate attention section at the front. It lists, for production only, the 20 findings most likely to cause an outage if nobody acts: failing now, failed in the last 35 days, at or past its limit, fills before the peak, or near its limit, then by how far an outage would spread. Planned changes such as AWS upgrades and design gaps such as a single zone stay in Top risks. One line per finding per account, with why now, the account and its owner, what to do and the date to do it by. About two pages in the PDF.
+- Outage Risk Report: Actions by owner (section 9). Production critical and high findings grouped by the account's owner tag, one action per finding type, with resources, accounts, what to do and when to start. Accounts with no owner tag form one group.
+- Export table to PDF: a button on Immediate attention, Top risks and Actions by owner prints that section alone, landscape.
+- Complete the scan: a scan that missed accounts or steps can read only what it missed, with the same sign-in, and keep the rest. EKS clusters can be read again once they give the sign-in an access entry.
 - The findings CSV has the account owner and what to do, so a team can filter to its own findings and act on them.
 
 ### Changed
+- Outage Risk Report: an SQS queue at its expiry is judged by its traffic. A queue nobody reads (messages sent, none received) is medium, an idle queue is low, a queue whose consumers have caught up is medium, and a queue of invalid or failed messages is medium. Only a queue still behind with consumers stays critical or high. The scan reads messages sent and received for this.
+- Outage Risk Report: Amazon Connect API rates are judged on today, not at the peak multiplier, since the contact centre's staff is fixed. Admin APIs (Update, Create, Delete and similar) called by setup or sync tooling are medium.
 - Outage Risk Report: the risk map's treemap is now a bubble chart. Up is the account's outage risk score, right is how far an outage would spread (the services its findings are on: one workload, data, or shared), and size is its risk points, so the accounts to start with stand out in the top right. Non-production accounts are hollow, the eight worst are named, and a bubble opens its findings. Spend plays no part.
 
 ## [0.26.0] - 2026-11-04

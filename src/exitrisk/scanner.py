@@ -112,6 +112,10 @@ class ScanParams:
     outage: bool = False
     label: str = ""
     target: str = "azure"  # exit target asked at scan time; seeds the estimate questionnaire
+    # Complete an earlier scan: read only the accounts it could not read, or read with a failed check, and
+    # keep the rest (its organisation, spend and the accounts it read). Saved as a new scan.
+    completes: str | None = None
+    completes_eks: bool = False  # also read again the accounts with an EKS cluster the earlier scan could not read
 
     @property
     def ous(self) -> list[str]:
@@ -176,6 +180,8 @@ class ScanJob:
     # "seconds_left" (None until a few accounts are done), "then" (a step still to come, or None),
     # "parallel" (accounts read at once)}.
     eta: dict | None = None
+    # Completing a scan: per step, the accounts the earlier scan read and this one keeps.
+    kept: dict = field(default_factory=dict, repr=False)
     # Lost network: paused until it is back. ``net_epoch`` counts the pauses, so an account read across
     # one is read again; ``paused_seconds`` is left out of the pace behind the ETA.
     paused: bool = False
@@ -394,6 +400,7 @@ def _with_step(job: ScanJob) -> dict:
     if not job.step:
         return job.data
     key, results = job.step
+    results = {**job.kept.get(key, {}), **results}
     read = dict(results) if key == "inventory" else {**(job.data.get(key) or {}), "accounts": dict(results)}
     return {**job.data, key: read}
 
@@ -435,6 +442,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None
         "assurance": data.get("assurance"),
         "outage": data.get("outage"),
         "unavailable": data.get("unavailable", {}),
+        "completes": data.get("completes"),
         "issues": [i.to_dict() for i in job.issues],
     }
 
@@ -491,6 +499,8 @@ def run_scan(job: ScanJob) -> dict:
         job.add_issue(Issue("critical", "auth", f"could not authenticate: {msg}", hint, error_code=code))
         raise ScanFailed(msg) from exc
     job.update("auth", 10, f"Authenticated as {data['identity']['arn']}")
+    if p.completes:
+        return _complete(job, session, data)
 
     # 2. Organisation and accounts.
     job.update("organizations", 15, "Reading the organisation's OU tree")
@@ -720,6 +730,10 @@ def run_scan(job: ScanJob) -> dict:
         data["outage"] = _run_outage(job, session, accounts, caller, regions_for, span_of("outage"))
         job.step = None
 
+    return _save_finished(job, data, accounts)
+
+
+def _save_finished(job: ScanJob, data: dict, accounts) -> dict:
     status = "complete" if not any(i.severity in ("error", "critical") for i in job.issues) else "partial"
     job.update("saving", 99, "Saving the scan")
     doc = _document(job, data, status=status)
@@ -737,6 +751,108 @@ def run_scan(job: ScanJob) -> dict:
     )
     job.finish(status, f"Scan {status}: {len(accounts)} account(s), {len(job.issues)} issue(s)")
     return doc
+
+
+STEPS = ("inventory", "assurance", "outage")
+
+
+def _step_results(scan: dict, key: str) -> dict:
+    """The accounts a step read: the inventory is keyed by account, the checks under "accounts"."""
+    return (scan.get("inventory") or {}) if key == "inventory" else ((scan.get(key) or {}).get("accounts") or {})
+
+
+def incomplete_accounts(scan: dict) -> dict[str, dict]:
+    """Per per-account step the scan ran, the accounts to read again to complete it: those it could not read
+    ("missing"), those it read with a check that failed ("failed"), and for the outage checks those with an EKS
+    cluster it could not read ("eks"): worth reading again once the cluster gives the scan an access entry."""
+    params = scan.get("params") or {}
+    active = {a["id"] for a in scan.get("accounts") or [] if a.get("status") in ("ACTIVE", "UNKNOWN")}
+    out: dict[str, dict] = {}
+    for key in STEPS:
+        if not params.get(key):
+            continue
+        want = active
+        if key == "inventory" and params.get("inventory_scope") == "material":
+            want = active & material_accounts(scan.get("costs") or [], int(params.get("months") or 12))
+        read = _step_results(scan, key)
+        missing = want - set(read)
+        failed = {
+            i["account_id"]
+            for i in scan.get("issues") or []
+            if i.get("category") == key
+            and i.get("severity") in ("warning", "error", "critical")
+            and i.get("account_id")
+        }
+        eks = set()
+        if key == "outage":
+            eks = {acct for acct, r in read.items() if any(c.get("access") != "read" for c in r.get("clusters") or [])}
+        failed = (failed & want) - missing
+        out[key] = {
+            "missing": sorted(missing),
+            "failed": sorted(failed),
+            "eks": sorted((eks & want) - missing - failed),
+        }
+    return out
+
+
+def _complete(job: ScanJob, session, data: dict) -> dict:
+    """Read again only what an earlier scan could not read, keep the rest, and save the whole as a new scan."""
+    p = job.params
+    try:
+        base = store.load_scan(p.completes)
+    except store.ScanNotFound as exc:
+        raise ScanFailed(f"scan {p.completes} to complete was not found") from exc
+    if (base.get("identity") or {}).get("account_id") != data["identity"]["account_id"]:
+        job.add_issue(
+            Issue(
+                "critical",
+                "auth",
+                "this sign-in is in a different AWS account from the scan being completed",
+                "Sign in with the profile that ran the scan.",
+            )
+        )
+        raise ScanFailed("sign in with the profile that ran the scan to complete it")
+    for k in ("org", "ou", "ous", "accounts", "costs", "region_costs", "storage", "direct_connect", "commitments"):
+        data[k] = base.get(k)
+    data["period"] = base.get("period")
+    data["unavailable"] = base.get("unavailable") or {}
+    data["completes"] = base["id"]
+    todo = incomplete_accounts(base)
+    redo = {
+        k: set(v["missing"]) | set(v["failed"]) | (set(v["eks"]) if p.completes_eks else set()) for k, v in todo.items()
+    }
+    # The earlier scan's issues stay, except those of the accounts read again: they are read afresh.
+    for i in base.get("issues") or []:
+        if not (i.get("account_id") and i.get("account_id") in redo.get(i.get("category"), ())):
+            job.issues.append(Issue(**{k: i.get(k) for k in Issue.__dataclass_fields__ if k in i}))
+    fields = organizations.Account.__dataclass_fields__
+    accounts = [organizations.Account(**{k: a.get(k, "") for k in fields}) for a in data["accounts"] or []]
+    caller = data["identity"]["account_id"]
+    total = sum(len(v) for v in redo.values())
+    log.info("completing scan %s: %s", base["id"], {k: len(v) for k, v in redo.items()})
+    job.update("organizations", 55, f"Completing scan {base['id']}: {plural(total, 'account')} to read again")
+    steps = [k for k in STEPS if redo.get(k)]
+    regions_for = _region_picker(job) if steps else None
+    for at, key in enumerate(steps):
+        width = 40 // len(steps)
+        span = (58 + at * width, 98 if key == steps[-1] else 58 + (at + 1) * width)
+        subset = [a for a in accounts if a.id in redo[key]]
+        kept = {acct: r for acct, r in _step_results(base, key).items() if acct not in redo[key]}
+        job.kept[key] = kept
+        if key == "inventory":
+            data["inventory"] = {**kept, **_run_inventory(job, session, subset, caller, regions_for, span)}
+        elif key == "assurance":
+            got = _run_assurance(job, session, subset, caller, regions_for, None, {}, span, org=base.get("assurance"))
+            data["assurance"] = {**got, "accounts": {**kept, **got["accounts"]}}
+        else:
+            got = _run_outage(job, session, subset, caller, regions_for, span)
+            data["outage"] = {**(base.get("outage") or {}), **got, "accounts": {**kept, **got["accounts"]}}
+        job.step = None
+        job.kept.pop(key, None)
+    for key in STEPS:  # a step with nothing to read again keeps what the earlier scan read
+        if key not in steps and key in todo:
+            data[key] = base.get(key)
+    return _save_finished(job, data, accounts)
 
 
 # A kill or a reboot at account 300 of 340 must not lose the first 299.
@@ -817,7 +933,9 @@ def _run_inventory(
     return _each_account(job, session, active, caller, read, "inventory", "scanned", span, then)
 
 
-def _run_assurance(job: ScanJob, session, accounts, caller: str, regions_for, tree, known: dict, span) -> dict:
+def _run_assurance(
+    job: ScanJob, session, accounts, caller: str, regions_for, tree, known: dict, span, org: dict | None = None
+) -> dict:
     """The organisation-level controls from the management account, then each active account's checks."""
     p = job.params
     active = [a for a in accounts if a.status in ("ACTIVE", "UNKNOWN")]
@@ -825,7 +943,9 @@ def _run_assurance(job: ScanJob, session, accounts, caller: str, regions_for, tr
     busiest = _busiest_regions(job)
     org_facts: dict = {}
     mgmt = (job.data.get("org") or {}).get("management_account_id")
-    if mgmt and mgmt == caller:
+    if org is not None:  # completing a scan: the organisation's controls were read by the earlier scan
+        org_facts = org.get("org") or {}
+    elif mgmt and mgmt == caller:
         pair = sso.profile_permission_set(p.profile)
         try:
             sso_region = sso._session_config(pair[0]).get("sso_region") if pair else None

@@ -2408,10 +2408,12 @@
     }
     try {
       renderOrCover(r);
+      renderComplete($("#orComplete"));
       renderOrNow(r);
       renderOrSummary(r);
       renderOrMap(r);
       renderOrTop(r);
+      renderOrOwners(r);
       renderOrCoverageView(r);
       renderOrReviews(r);
       renderOrForm(r);
@@ -2447,9 +2449,45 @@
     if (s.accounts_full < s.accounts) gaps.push(`${plural(s.accounts - s.accounts_full, "account")} had a check refused or failing, shown in section 8`);
     if (s.accounts_blind) gaps.unshift(`${plural(s.accounts_blind, "account")} could not be measured at all: first in section 8, and left out of the score`);
     if (s.accounts_cut) gaps.push(`${plural(s.accounts_cut, "account")} had more results than could be read, so some measures are missing`);
-    if (s.clusters_read < s.clusters) gaps.push(`${num(s.clusters - s.clusters_read)} of ${plural(s.clusters, "EKS cluster")} could not be read, shown in section 9`);
+    if (s.clusters_read < s.clusters) gaps.push(`${num(s.clusters - s.clusters_read)} of ${plural(s.clusters, "EKS cluster")} could not be read, shown in section 10`);
     $("#orCoverage").hidden = !gaps.length;
     $("#orCoverage").textContent = gaps.length ? `Not everything was measured: ${gaps.join("; ")}. What was not measured is not a pass.` : "";
+  }
+
+  // Complete the scan: read again only the accounts it could not read, or read with a failed check, and keep
+  // the rest. A new scan, so the partial one stays in the history.
+  async function renderComplete(box) {
+    box.hidden = true;
+    const id = state.scanId;
+    if (!id || PRINT) return;
+    let c;
+    try { c = await api(`/api/scans/${encodeURIComponent(id)}/incomplete`); } catch { return; }
+    if (state.scanId !== id || (!c.accounts && !c.eks)) return;
+    const t = Object.values(c.steps).reduce((n, v) => ({ missing: n.missing + v.missing, failed: n.failed + v.failed }), { missing: 0, failed: 0 });
+    const what = [t.missing && `the ${plural(t.missing, "account")} not read`, t.failed && `the ${plural(t.failed, "account")} with a check that failed`].filter(Boolean).join(" and ");
+    box.innerHTML = `<p><strong>Complete this scan.</strong> ${what ? `Read ${what} again` : "Nothing is missing"}, and keep everything else it read. Saved as a new scan; this one stays in the history.</p>
+      ${c.eks ? `<label class="check"><input type="checkbox" id="cmpEks"${c.accounts ? "" : " checked"}> Also read again the ${plural(c.eks, "account")} with an EKS cluster that could not be read (do this once those clusters give your sign-in an access entry, see section 10)</label>` : ""}
+      <p><button type="button" class="btn primary" id="btnComplete">Complete the scan</button> <span class="muted small" id="cmpMsg"></span></p>`;
+    box.hidden = false;
+    $("#btnComplete").addEventListener("click", async () => {
+      const eks = !!$("#cmpEks")?.checked;
+      $("#btnComplete").disabled = true;
+      $("#cmpMsg").textContent = "Starting…";
+      try {
+        const job = await api(`/api/scans/${encodeURIComponent(id)}/complete`, { method: "POST", body: { eks } });
+        state.runningScan = job.id;
+        $("#scanError").textContent = "";
+        $("#scanBar").style.width = "2%";
+        $("#scanMsg").textContent = "Completing the scan…";
+        showScanRunning();
+        if (!$("#scanDialog").open) $("#scanDialog").showModal();
+        pollScan(job.id);
+        $("#cmpMsg").textContent = "Running: the top bar shows its progress.";
+      } catch (e) {
+        $("#btnComplete").disabled = false;
+        $("#cmpMsg").textContent = e.status === 401 ? `${e.message} Use Sign in at the top.` : e.message;
+      }
+    });
   }
 
   function renderOrSummary(r) {
@@ -2701,21 +2739,35 @@
     const isoDay = (t) => t.replace(/\d{4}-\d{2}-\d{2}/, (d) => orDate(d));
     const tone = (w) => (/^(Failing|At or past|Failed)/.test(w) ? "var(--sev-critical)" : /^Near/.test(w) ? "var(--sev-error)" : "var(--sev-warning)");
     if (!m.total) {
-      $("#orNowLead").textContent = "Nothing in production needs attention today: nothing is at its limit, failing, filling before the peak or about to be changed by AWS.";
+      $("#orNowLead").textContent = "Nothing in production needs attention today: nothing is failing, has failed recently, is at its limit or fills before the peak.";
       $("#orNow").innerHTML = "";
       $("#orNowMore").textContent = "";
       return;
     }
     const today = new Date().toISOString().slice(0, 10);
-    $("#orNowLead").textContent = `${plural(m.total, "risk")} in production need${m.total === 1 ? "s" : ""} someone now, on ${plural(m.resources, "resource")} in ${plural(m.accounts, "account")}.`;
+    $("#orNowLead").textContent = `${plural(m.total, "risk")} in production ${m.total === 1 ? "is" : "are"} likely to cause an outage if nobody acts, on ${plural(m.resources, "resource")} in ${plural(m.accounts, "account")}.`;
     $("#orNow").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Why now</th><th>What is wrong</th><th>Account and owner</th><th>What to do</th><th>Do by</th></tr></thead><tbody>${m.rows.map((f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${pill(null, isoDay(f.when), tone(f.when))}</td><td><strong>${esc(f.title)}</strong>${f.why ? `<div class="small">${esc(isoDay(f.why))}</div>` : ""}<div class="small mono">${esc(f.res)}${f.more ? ` <span class="muted">and ${num(f.more)} more</span>` : ""}</div><div class="muted small">${esc([f.service, f.region].filter(Boolean).join(" · "))}</div></td><td><button type="button" class="link-btn" data-or-acct="${esc(f.account)}">${esc(f.account)}</button><div class="small ${f.owner ? "" : "muted"}">${f.owner ? esc(f.owner) : "No owner tag"}</div></td><td class="small">${esc(f.fix)}</td><td class="small nowrap">${f.do_by <= today ? "<strong>Today</strong>" : esc(orDate(f.do_by))}</td></tr>`).join("")}</tbody>`;
-    $("#orNowMore").textContent = m.total > m.rows.length ? `The first ${num(m.rows.length)} of ${num(m.total)}; the rest are in Findings (section 7).` : "";
+    $("#orNowMore").textContent = m.total > m.rows.length ? `The ${num(m.rows.length)} most likely of ${num(m.total)}; the rest are in Top risks (section 3) and Findings (section 7).` : "";
   }
 
   function renderOrTop(r) {
     const crit = r.top_risks.filter((f) => f.severity === "critical").length;
     $("#orTopTitle").textContent = crit > 50 ? `Top risks: all ${num(crit)} critical, then the worst to 50` : `Top ${num(r.top_risks.length)} risks`;
     $("#orTop").innerHTML = `<thead><tr><th class="num-cell">#</th><th>Severity</th><th>What is wrong</th><th>Account</th><th class="num-cell">Now → peak</th><th>What to do</th><th>Start by</th></tr></thead><tbody>${r.top_risks.map((f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${orSev(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small mono">${esc(f.res)}${f.more ? ` <span class="muted">and ${num(f.more)} more</span>` : ""}</div>${f.why ? `<div class="small">${esc(f.why)}</div>` : ""}${f.service ? `<div class="muted small">${esc(f.service)}</div>` : ""}</td><td><button type="button" class="link-btn" data-or-acct="${esc(f.account)}">${esc(f.account)}</button>${f.production ? "" : ' <span class="muted small">non-prod</span>'}</td><td class="num-cell">${f.pct != null ? `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}` : EMPTY}</td><td class="small">${esc(f.fix)}</td><td class="small">${esc(orDate(f.start_by))}${f.late ? '<div class="warn-text">already late</div>' : ""}</td></tr>`).join("")}</tbody>`;
+  }
+
+  function renderOrOwners(r) {
+    const b = r.by_owner;
+    if (!b || !b.owners.length) {
+      $("#orOwnLead").textContent = "No production critical or high findings, so no owner has an action.";
+      $("#orOwners").innerHTML = "";
+      return;
+    }
+    const tagged = b.owners.filter((o) => o.tagged).length;
+    $("#orOwnLead").textContent = `${plural(tagged, "owner")} with actions${b.untagged_accounts ? `, and ${plural(b.untagged_accounts, "account")} with no owner tag` : ""}.`;
+    $("#orOwners").innerHTML = b.owners.map((o) => `<div class="owner-block"><h3>${esc(o.owner)} <span class="muted small">${num(o.critical)} critical, ${num(o.high)} high · ${plural(o.accounts.length, "account")}</span></h3>
+      <p class="small">${o.accounts.map((a) => `<button type="button" class="link-btn" data-or-acct="${esc(a)}">${esc(a)}</button>`).join(", ")}</p>
+      <div class="table-wrap"><table class="data compact"><thead><tr><th>Severity</th><th>Action</th><th class="num-cell">Resources</th><th>Accounts</th><th>What to do</th><th>Start by</th></tr></thead><tbody>${o.actions.map((x) => `<tr><td>${orSev(x.severity)}</td><td><strong>${esc(x.title)}</strong><div class="small mono">${esc(x.example)}</div>${x.why ? `<div class="small">${esc(x.why)}</div>` : ""}${x.service ? `<div class="muted small">${esc(x.service)}</div>` : ""}</td><td class="num-cell">${num(x.resources)}</td><td class="small">${x.accounts.length > 3 ? `${esc(x.accounts.slice(0, 3).join(", "))} <span class="muted">and ${num(x.accounts.length - 3)} more</span>` : esc(x.accounts.join(", "))}</td><td class="small">${esc(x.fix)}</td><td class="small nowrap">${esc(orDate(x.start_by))}${x.late ? '<div class="warn-text">already late</div>' : ""}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
   }
 
   // ---- Coverage and the service reviews
@@ -4170,6 +4222,22 @@
       setTimeout(() => window.print(), 300);
     });
     window.addEventListener("afterprint", () => { if (params.get("onepage") !== "1") document.body.classList.remove("onepage"); });
+    // "Export table to PDF": print one section alone. Everything beside it, at each level up to the page, is hidden.
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-pdf-section]");
+      if (!btn) return;
+      const target = document.getElementById(btn.dataset.pdfSection);
+      if (!target) return;
+      for (let el = target; el && el !== document.body; el = el.parentElement)
+        for (const sib of el.parentElement.children) if (sib !== el) sib.classList.add("print-off");
+      document.body.classList.add("print-one");
+      toast("Choose “Save as PDF” in the print dialog", 5000);
+      setTimeout(() => window.print(), 300);
+    });
+    window.addEventListener("afterprint", () => {
+      document.body.classList.remove("print-one");
+      for (const el of document.querySelectorAll(".print-off")) el.classList.remove("print-off");
+    });
     // Top-bar menus (Export PDF, Settings): one open at a time; Escape or a click outside closes.
     const menus = [...document.querySelectorAll(".menu")];
     const closeMenus = (except) => {

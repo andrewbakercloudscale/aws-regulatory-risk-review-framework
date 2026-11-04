@@ -47,7 +47,7 @@ from .logging_config import configure_logging, get_logger, tail_log
 from .multiregion import MultiRegionAnswers, build_multiregion
 from .outage import OutageAnswers, build_outage, findings_csv
 from .outage import catalog as outage_catalog
-from .scanner import ScanParams, get_job, running_scans, start_scan
+from .scanner import ScanParams, get_job, incomplete_accounts, running_scans, start_scan
 from .scoring import build_report
 
 log = get_logger("server")
@@ -104,6 +104,10 @@ class ScanRequest(BaseModel):
     target: str = Field("azure", pattern=TARGET_PATTERN)
     # Set to run the AI review on the finished scan, with the report as the console will show it.
     ai_review: AIAfterScanRequest | None = None
+
+
+class CompleteRequest(BaseModel):
+    eks: bool = False  # also read again the accounts with an EKS cluster that could not be read
 
 
 class SSOSessionRequest(BaseModel):
@@ -485,6 +489,47 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             except Exception as exc:
                 log.exception("AI %s after scan %s could not start", kind, scan_id)
                 give_up(f"could not start: {exc}")
+
+    @app.get("/api/scans/{scan_id}/incomplete")
+    def scan_incomplete(scan_id: str):
+        """What completing this scan would read again, per step: accounts not read, and read with a failure."""
+        try:
+            s = store.load_scan(scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        if s.get("mode") != "live":
+            return {"steps": {}, "accounts": 0}
+        steps = incomplete_accounts(s)
+        ids = {a for v in steps.values() for a in (*v["missing"], *v["failed"])}  # without "eks": optional
+        return {
+            "steps": {k: {n: len(v[n]) for n in ("missing", "failed", "eks")} for k, v in steps.items()},
+            "accounts": len(ids),
+            "eks": len({a for v in steps.values() for a in v["eks"]}),
+        }
+
+    @app.post("/api/scans/{scan_id}/complete")
+    def complete_scan(scan_id: str, req: CompleteRequest):
+        """A new scan that reads only what this one could not, and keeps the rest."""
+        try:
+            s = store.load_scan(scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        if s.get("mode") != "live":
+            raise HTTPException(400, "only a live scan can be completed")
+        if not any(v["missing"] or v["failed"] or (req.eks and v["eks"]) for v in incomplete_accounts(s).values()):
+            raise HTTPException(409, "this scan has nothing left to read")
+        fields = ScanParams.__dataclass_fields__
+        params = {k: v for k, v in (s.get("params") or {}).items() if k in fields and not k.startswith("completes")}
+        pair = sso.profile_permission_set(params.get("profile"))
+        if pair and not sso.load_token(pair[0]):
+            raise HTTPException(401, f"Your AWS sign-in ({pair[0]}) has ended. Sign in again, then complete the scan.")
+        label = (s.get("label") or "").strip()
+        params["label"] = (f"{label} (completed)" if label else f"Completes {scan_id}")[:120]
+        try:
+            job = start_scan(ScanParams(**params, completes=scan_id, completes_eks=req.eks))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return job.snapshot()
 
     @app.post("/api/scans/{scan_id}/cancel")
     def cancel_scan(scan_id: str):

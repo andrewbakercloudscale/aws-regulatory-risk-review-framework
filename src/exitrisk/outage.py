@@ -377,6 +377,8 @@ DLQ = re.compile(r"dlq|dead[-_ ]?letter|(?<![a-z0-9])dl(?![a-z0-9])", re.I)
 SHORT_RETENTION = re.compile(
     r"deleted after 0 hours"
 )  # a queue that keeps messages under an hour drops them on purpose
+# A queue that holds messages rejected as invalid or failed, kept for a person to look at: like a dead-letter queue
+SINK_QUEUE = re.compile(r"(?<![a-z0-9])(invalid|errors?|rejects?|rejected|failed)(?![a-z0-9])", re.I)
 READ_API = re.compile(r"\b(Describe|List|Get|Search)[A-Z]\w*|describe .* information rate", re.I)
 NO_FREEABLE = ("oracle", "sqlserver", "db2")  # these engines allocate their memory up front
 BUFFER_POOL = ("aurora", "mysql", "mariadb")  # these give about 3/4 of memory to their cache at start
@@ -460,6 +462,12 @@ STATIC_QUOTA = re.compile(
     r"domains|tracking server|serverless endpoints|apps running|notebook|spaces|user profiles",
     re.I,
 )
+# Amazon Connect API rates. The calls that set up users, queues and hierarchies come from admin or sync tooling;
+# the rest follow the contact centre's staff, which is fixed, so the peak multiplier does not apply to them.
+CONNECT_RATE = re.compile(r"^connect: Rate of (\w+) API", re.I)
+ADMIN_API = re.compile(
+    r"^(Update|Create|Delete|Associate|Disassociate|Put|Tag|Untag|Batch|Import|Replicate|Claim|Release)"
+)
 ANALYST_QUOTA = re.compile(r"^(sagemaker|athena|glue|quicksight|databrew|emr-serverless|bedrock): ", re.I)
 # Build, CI and housekeeping tooling: when it stops, delivery waits, but customers are not hit.
 TOOLING = re.compile(
@@ -524,6 +532,18 @@ def _temper(f: dict, row: dict, profiles: dict) -> None:
             "medium",
             "insufficient evidence: CPU was not read, and capacity used alone does not show the ceiling is near",
         )
+    elif rule in QUOTA_RULES and CONNECT_RATE.search(res) and ADMIN_API.match(CONNECT_RATE.search(res).group(1)):
+        _lower_to(f, "medium", "an admin API called by setup or sync tooling that retries, not by agents or customers")
+    elif rule in QUOTA_RULES and CONNECT_RATE.search(res) and not READ_API.search(res):
+        f["at_peak"] = f["pct"]  # staff-bound: the busiest day is about as busy as today
+        if (f["pct"] or 0) >= 100:
+            _lower_to(
+                f,
+                "high",
+                "judged on today, not at 2x: the contact centre's staff is fixed; past the rate, calls are refused",
+            )
+        else:
+            _lower_to(f, "medium", "judged on today, not at 2x: the contact centre's staff is fixed, so volume is too")
     elif rule in QUOTA_RULES and READ_API.search(res) and row.get("load"):
         _lower_to(f, "medium", "a read API, usually called by tooling that retries, not by customers")
     elif rule in QUOTA_RULES and ANALYST_QUOTA.search(res):
@@ -576,6 +596,27 @@ def _temper(f: dict, row: dict, profiles: dict) -> None:
             _lower_to(f, "medium", "no errors recorded, so no run was cut off yet")
         elif rare := _rare(prof, "Errors", "Invocations"):
             _lower_to(f, "medium", rare)
+    elif rule == "sqs_backlog" and SINK_QUEUE.search(res.replace("_", "-")):
+        _lower_to(f, "medium", "a queue of invalid or failed messages, kept to be looked at: check why they fail")
+    elif rule == "sqs_backlog" and row.get("received") == 0:
+        sent = row.get("sent") or 0
+        if sent:
+            _lower_to(
+                f,
+                "medium",
+                f"nobody reads this queue: {sent:,} messages sent in the window and none received, so each expires "
+                "unread. Not an outage risk at the peak, it is already so: check whether anything should read it "
+                "(if so, data is being lost now) or remove what sends to it",
+            )
+        else:
+            _lower_to(f, "low", "an idle queue: nothing sent or read in the window, so its old messages expire")
+    elif rule == "sqs_backlog" and row.get("received") and (row.get("age_now_pct") or 0) < 50:
+        _lower_to(
+            f,
+            "medium",
+            f"its consumers read it and have caught up (oldest message now {row['age_now_pct']:.0f}% of its expiry); "
+            "it reached its expiry at the busiest time in the window, so check the consumers scale for the peak",
+        )
     elif rule == "sqs_backlog":
         waiting = _stat(profiles.get(("sqs", res)), "Messages waiting").get("peak") or 0
         if waiting < SQS_BACKLOG:

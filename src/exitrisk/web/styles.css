@@ -384,6 +384,9 @@ table.catalog .targets { font-size: 12px; color: var(--ink-2); }
 .coverage { margin: 12px 0 4px; padding: 12px 16px; border-radius: 8px; border-left: 4px solid var(--t4);
   background: color-mix(in srgb, var(--t4) 12%, var(--surface)); color: var(--ink); }
 .coverage p { margin: 4px 0; }
+.complete-scan { margin: 8px 0 4px; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); }
+.complete-scan p { margin: 4px 0; }
+.complete-scan .check { display: block; margin: 6px 0; }
 #estBody { display: contents; }
 #estBody[hidden] { display: none; }
 
@@ -912,3 +915,15 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 .or-fix { margin-top: 4px; }
 
 .or-issues > div + div { margin-top: 6px; }
+
+/* Export table to PDF: only the chosen section prints */
+.table-pdf { margin: 0 0 8px; text-align: right; }
+@page wide { size: A4 landscape; margin: 12mm; }
+@media print {
+  body.print-one .print-off { display: none !important; }
+  body.print-one .section { page: wide; }
+  body.print-one .table-wrap { overflow: visible; }
+}
+.owner-block { margin: 18px 0 0; }
+.owner-block h3 { margin: 0 0 4px; font-size: 15px; }
+@media print { .owner-block { break-inside: auto; } .owner-block h3 { break-after: avoid; } }
