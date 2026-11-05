@@ -409,6 +409,7 @@
     state.orAccount = "";
     if (state.view === "outage") loadOutage();
     state.cp = null;
+    state.cpPicking = false;
     if (state.view === "compromise") loadCompromise();
     return true;
   }
@@ -2383,7 +2384,6 @@
       const r = await api("/api/compromise", { method: "POST", body: { scan_id: state.scanId, answers: cpAnswers() } });
       if (seq !== state.cpSeq) return;
       state.cp = r;
-      state.cpPicking = false;
     } catch (e) {
       if (seq !== state.cpSeq) return;
       console.error("compromise failed", e);
@@ -2489,6 +2489,13 @@
       toast(`The report could not be drawn: ${e.message}`, 8000);
     }
     if (state.view === "compromise") document.body.dataset.ready = "1";
+  }
+
+  function openCpPicker() {
+    state.cpPicking = true;
+    setView("compromise");
+    if (!state.cp) { loadCompromise().then(() => $("#cpPick").scrollIntoView({ block: "start" })); return; }
+    $("#cpPick").scrollIntoView({ block: "start" });
   }
 
   function renderCpPicker(r) {
@@ -3084,7 +3091,7 @@
       for (const a of state.cp?.accounts_to_pick || []) if (a.suggested) state.cpChosen.add(a.id);
       state.cpDraw?.();
     });
-    $("#btnCpChange").addEventListener("click", () => { state.cpPicking = true; setView("compromise"); $("#cpPick").scrollIntoView({ block: "start" }); });
+    $("#btnCpChange").addEventListener("click", () => openCpPicker());
     $("#btnCpRun").addEventListener("click", async () => {
       const accounts = [...state.cpChosen];
       $("#btnCpRun").disabled = true;
@@ -4492,7 +4499,14 @@
       chartDefaults();
       if (state.report) render();
     });
-    $("#btnNewScan").addEventListener("click", () => openScanDialog());
+    $("#btnNewScan").addEventListener("click", () => (state.view === "compromise" && state.cp ? openCpPicker() : openScanDialog()));
+    $("#sCompromise").addEventListener("change", (e) => {
+      if (!e.target.checked) return;
+      e.target.checked = false;
+      if (!state.scanId) { $("#scanError").textContent = "Run or open a scan of the organisation first: the developer compromise checks run on its accounts."; return; }
+      $("#scanDialog").close();
+      openCpPicker();
+    });
     $("#btnScanRunning").addEventListener("click", () => openScanDialog());
     $("#btnStopScan").addEventListener("click", stopScan);
     $("#btnSso").addEventListener("click", openSsoDialog);
