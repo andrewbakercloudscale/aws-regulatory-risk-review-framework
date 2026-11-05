@@ -30,7 +30,7 @@ BOTO_CONFIG = Config(
     # One pool per AWS endpoint, shared by every account's clients (ClientCache), so it needs room for
     # the calls of several accounts at once.
     max_pool_connections=64,
-    user_agent_extra="aws-regulatory-risk-review-framework",
+    user_agent_extra="aws-org-level-risk-framework-reporting",
 )
 
 

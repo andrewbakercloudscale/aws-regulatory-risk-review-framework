@@ -133,8 +133,8 @@ operational criticality) and the readiness of each critical account.
 **1. Install** (Python 3.10+; one command, no virtual environment to manage):
 
 ```bash
-uv tool install git+https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework
-# or: pipx install git+https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework
+uv tool install git+https://github.com/andrewbakercloudscale/aws-org-level-risk-framework-reporting
+# or: pipx install git+https://github.com/andrewbakercloudscale/aws-org-level-risk-framework-reporting
 exitrisk serve              # opens http://127.0.0.1:8740
 ```
 

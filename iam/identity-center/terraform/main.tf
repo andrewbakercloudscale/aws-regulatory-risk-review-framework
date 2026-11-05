@@ -1,4 +1,4 @@
-# IAM Identity Center permission set for aws-regulatory-risk-review-framework.
+# IAM Identity Center permission set for aws-org-level-risk-framework-reporting.
 # Apply in the Identity Center administration account (the management account or its delegated
 # administrator). It creates a read-only permission set and, if principal_id is given, assigns it
 # in the management account so the user can pick it in the console's "AWS sign-in".

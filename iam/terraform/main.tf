@@ -1,4 +1,4 @@
-# List-only role for aws-regulatory-risk-review-framework deep scans.
+# List-only role for aws-org-level-risk-framework-reporting deep scans.
 # Apply once per member account (e.g. from your account-vending pipeline with a provider
 # alias per account), or use iam/cloudformation/member-role-stackset.yaml with StackSets.
 

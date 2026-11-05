@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  IAM Identity Center permission set for aws-regulatory-risk-review-framework (read-only:
+  IAM Identity Center permission set for aws-org-level-risk-framework-reporting (read-only:
   Organizations structure and Cost Explorer spend). Deploy in the Identity Center
   administration account. Optionally assigns it to a user or group in the management account.
 

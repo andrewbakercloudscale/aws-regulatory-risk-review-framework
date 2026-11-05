@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aws-regulatory-risk-review-framework"
+name = "aws-org-level-risk-framework-reporting"
 version = "0.30.0"
 description = "Web console that scores how hard it is to exit AWS for an Organizational Unit, weighted by spend, with a migration cost and time estimate."
 readme = "README.md"
@@ -33,7 +33,7 @@ dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5", "playwright>=1.44"]
 exitrisk = "exitrisk.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework"
+Homepage = "https://github.com/andrewbakercloudscale/aws-org-level-risk-framework-reporting"
 
 [tool.setuptools.packages.find]
 where = ["src"]

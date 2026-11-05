@@ -327,7 +327,7 @@ def _pdf(args) -> int:
         from playwright.sync_api import sync_playwright
     except ImportError:
         log.error(
-            "PDF export needs Playwright: pip install 'aws-regulatory-risk-review-framework[pdf]' "
+            "PDF export needs Playwright: pip install 'aws-org-level-risk-framework-reporting[pdf]' "
             "&& playwright install chromium"
         )
         return 2

@@ -445,7 +445,7 @@
       if (PRINT) { document.body.dataset.error = msg; document.body.dataset.ready = "1"; }
       return;
     }
-    $("#footer").textContent = `Generated ${new Date(r.meta.generated_at).toLocaleString()} by aws-regulatory-risk-review-framework v${r.meta.tool_version} · catalog ${r.meta.catalog_version} · scan ${r.meta.scan_id}`;
+    $("#footer").textContent = `Generated ${new Date(r.meta.generated_at).toLocaleString()} by aws-org-level-risk-framework-reporting v${r.meta.tool_version} · catalog ${r.meta.catalog_version} · scan ${r.meta.scan_id}`;
     if (state.view === "exit") document.body.dataset.ready = "1";
   }
 
@@ -598,7 +598,7 @@
     $("#briefConfWhy").textContent = x.confidence_reasons.join(" ");
     // Each reason confidence is not High, with the step (and the console control) that removes it.
     const steps = x.confidence_steps || [];
-    const iamDoc = "https://github.com/andrewbakercloudscale/aws-regulatory-risk-review-framework/blob/main/docs/IAM_PERMISSIONS.md#2-deep-scan-member-accounts";
+    const iamDoc = "https://github.com/andrewbakercloudscale/aws-org-level-risk-framework-reporting/blob/main/docs/IAM_PERMISSIONS.md#2-deep-scan-member-accounts";
     const btnLabel = { model: "Answer the questions", scan: "New scan", deep: "New deep scan" };
     $("#briefConfSteps").hidden = !steps.length;
     $("#briefConfSteps").innerHTML = steps.length ? `<h4>To raise confidence</h4><ol>${steps.map((st) => `<li><span>${esc(st.fix).replace("IAM_PERMISSIONS.md", `<a href="${iamDoc}" target="_blank" rel="noopener noreferrer">IAM_PERMISSIONS.md</a>`)}</span>${st.action ? ` <button type="button" class="btn sm no-print" data-conf-action="${esc(st.action)}">${btnLabel[st.action]}</button>` : ""}</li>`).join("")}</ol>` : "";
@@ -1350,7 +1350,7 @@
     $("#opAccounts").innerHTML = `<thead><tr><th>Account</th>${showOwner ? "<th>Owner</th>" : ""}<th class="num-cell">Per month</th><th>Risk</th><th class="num-cell">Spend at risk / month</th><th>Main lock-in</th></tr></thead><tbody>` +
       top.map((a) => `<tr><td><strong>${esc(a.name)}</strong></td>${showOwner ? `<td class="nowrap">${esc(a.owner || a.executive || EMPTY)}</td>` : ""}<td class="num-cell">${money(a.monthly_spend)}</td><td><span class="tier-pill" style="--dot:${tierColor(RATING_TIER[a.rating])}">${esc(a.rating)} · ${Math.round(a.score)}</span></td><td class="num-cell">${money(a.spend_at_risk)}</td><td>${esc(a.top_lockin.slice(0, showOwner ? 2 : 3).map((v) => v.service).join(", ") || "none")}</td></tr>`).join("") + "</tbody>";
     renderOnePagerOwners(o);
-    $("#opFoot").textContent = `Confidence: ${x.confidence}. ${x.confidence_reasons.join(" ")} Cost and time are ranges for a planning decision, not a delivery quote. Generated ${new Date(m.generated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} by aws-regulatory-risk-review-framework v${m.tool_version}, scan ${m.scan_id}. The full report has the method, every account and the data gaps.`;
+    $("#opFoot").textContent = `Confidence: ${x.confidence}. ${x.confidence_reasons.join(" ")} Cost and time are ranges for a planning decision, not a delivery quote. Generated ${new Date(m.generated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} by aws-org-level-risk-framework-reporting v${m.tool_version}, scan ${m.scan_id}. The full report has the method, every account and the data gaps.`;
   }
 
   // The executives to talk to: the top four by spend at risk, and how much spend has no owner tag.
@@ -2237,7 +2237,7 @@
     const areas = state.asCatalog?.areas || {};
     $("#asRuleList").innerHTML = `<thead><tr><th>Rule</th><th>Area</th><th>Severity</th><th>Applies to</th><th class="num-cell">Fail</th><th class="num-cell">Pass</th><th class="num-cell">Not measured</th><th class="num-cell">N/A</th><th>References</th></tr></thead><tbody>${
       r.rules.map((x) => `<tr><td>${esc(x.title)}<div class="muted small mono">${esc(x.id)}</div></td><td class="small">${esc(areas[x.area]?.label || x.area)}</td><td>${sevPill(x.severity)}</td><td class="small">${esc(AS_SCOPE[x.scope] || x.scope)}</td><td class="num-cell">${num(x.fail)}</td><td class="num-cell">${num(x.pass)}</td><td class="num-cell">${num(x.unknown)}</td><td class="num-cell">${num(x.na)}</td><td class="small">${esc(x.refs.join(", ") || EMPTY)}</td></tr>`).join("")}</tbody>`;
-    $("#asFooter").textContent = `Generated ${new Date().toLocaleString()} by aws-regulatory-risk-review-framework · Cloud Assurance Framework catalogue v${r.catalog_version} · scan ${r.scan_id}`;
+    $("#asFooter").textContent = `Generated ${new Date().toLocaleString()} by aws-org-level-risk-framework-reporting · Cloud Assurance Framework catalogue v${r.catalog_version} · scan ${r.scan_id}`;
   }
 
   function bindAssurance() {
@@ -3128,7 +3128,7 @@
       <li><strong>S3 request rates</strong> need request metrics on the bucket, and compare the whole bucket against the rate per prefix: well spread keys have more room than shown.</li>
       <li><strong>Not measured:</strong> load test results, runbooks, DNS and conntrack limits on instances, and anything inside a cluster that could not be read. Regional dependence is in the Multi-Region Report; controls are in the Cloud Assurance Report.</li>
       <li>Measures under 30% are counted, not kept. A scan is a point in time: scan again after changes, and before the freeze.</li></ul>`;
-    $("#orFooter").textContent = `Generated ${new Date().toLocaleString()} by aws-regulatory-risk-review-framework · outage rules v${r.catalog_version} · scan ${r.scan_id}`;
+    $("#orFooter").textContent = `Generated ${new Date().toLocaleString()} by aws-org-level-risk-framework-reporting · outage rules v${r.catalog_version} · scan ${r.scan_id}`;
   }
 
   function bindOutage() {

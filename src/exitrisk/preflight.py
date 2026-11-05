@@ -906,7 +906,7 @@ def admin_request(result: dict) -> str:
         "Hi,",
         "",
         "I'm running the AWS exit-risk review (https://github.com/andrewbakercloudscale/"
-        "aws-regulatory-risk-review-framework). It is read-only: it reads the account list and Cost Explorer "
+        "aws-org-level-risk-framework-reporting). It is read-only: it reads the account list and Cost Explorer "
         "spend by account and service. It changes nothing and reads no data inside accounts.",
         "",
     ]

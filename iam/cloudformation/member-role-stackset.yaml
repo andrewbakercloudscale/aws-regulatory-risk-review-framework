@@ -2,7 +2,7 @@
 # want to deep-scan. Creates a list-only role the exit-risk scanner assumes from the
 # management account. It cannot read data, only count resources.
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Read-only role for aws-regulatory-risk-review-framework deep scans
+Description: Read-only role for aws-org-level-risk-framework-reporting deep scans
 Parameters:
   ScannerAccountId:
     Type: String
