@@ -121,6 +121,7 @@
       <button type="button" class="vtab" data-view="multiregion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg><span><b>Multi-Region Report</b><small>A second AWS region: cost, people, RTO</small></span></button>
       <button type="button" class="vtab" data-view="assurance" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span><b>Cloud Assurance Report</b><small>Controls and governance by account</small></span></button>
       <button type="button" class="vtab" data-view="outage" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19z"/><path d="M12 10v5"/><path d="M12 17.5v.5"/></svg><span><b>Outage Risk Report</b><small>What fails at peak, and where to start</small></span></button>
+      <button type="button" class="vtab" data-view="compromise" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/><path d="M12 8v3"/><path d="M12 13.5v.5"/></svg><span><b>Developer Compromise</b><small>What a stolen laptop could change</small></span></button>
     </nav>
     <button type="button" id="btnJumpAi" class="btn ai-jump" title="Go to the AI review (section 2)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>AI review<span id="aiDot" class="dot" hidden></span></button>
     <div class="menu">
@@ -868,6 +869,108 @@
       <div class="card small" id="orMethod"></div>
     </section>
     <p id="orFooter" class="muted small"></p>
+  </div>
+
+  <!-- ================================================================ Developer Compromise view -->
+  <div id="cpError" class="card mr-error no-print" role="alert" hidden>
+    <h2>The Developer Compromise Report could not be built</h2>
+    <p id="cpErrorText" class="error-text"></p>
+    <p><button type="button" class="btn primary" id="btnCpRetry">Try again</button></p>
+  </div>
+  <div id="cpEmpty" class="card as-empty no-print" hidden>
+    <h2>Developer Compromise checks</h2>
+    <p>The premise: developers' laptops and the pipelines are already compromised, as in the Binance attack. So no money-moving flow may rest on trusting who changes it: each must be immutable, or every change must be recorded and raise an alert. Pick the payment and channel accounts; the checks apply strict rules to those only.</p>
+    <p class="muted small">Read only. Every path is decided by AWS's own policy simulator, after permission boundaries, organisation guardrails (SCPs) and the resource's own policy, so a finding names who, which call and which policy allows it. Each account takes a few minutes. Your sign-in needs iam:SimulatePrincipalPolicy: Check access tests it.</p>
+    <p id="cpEmptyText" class="muted"></p>
+  </div>
+  <div id="cpPick" class="card cp-pick no-print" hidden>
+    <h3>Accounts to check</h3>
+    <p class="muted small">Ticked to start with: production accounts whose names look like payment or channel accounts. Up to 40.</p>
+    <div class="row"><input type="search" id="cpFilter" placeholder="Filter accounts" aria-label="Filter accounts"> <button type="button" class="btn" id="btnCpNone">Clear</button> <button type="button" class="btn" id="btnCpSuggested">Suggested</button> <span id="cpCount" class="muted small"></span></div>
+    <div id="cpList" class="cp-list" role="group" aria-label="Accounts"></div>
+    <p><button type="button" class="btn primary" id="btnCpRun">Run the checks</button> <span id="cpMsg" class="muted small"></span></p>
+  </div>
+  <div id="cpContent" hidden>
+    <section class="cover">
+      <div class="eyebrow">Developer compromise</div>
+      <h1>Developer Compromise Report</h1>
+      <p class="muted">Assumes developers' laptops and the pipelines are already compromised. For every money-moving flow in the chosen accounts: who could change it, whether the change is prevented (immutable), and whether it is recorded and alerted (observable).</p>
+      <div id="cpCoverage" class="coverage" role="alert" hidden></div>
+      <dl id="cpMeta" class="meta"></dl>
+      <p class="no-print"><button type="button" class="btn" id="btnCpChange">Change the accounts</button></p>
+    </section>
+
+    <section class="section" id="cp-summary">
+      <h2><span class="num">1</span>Bottom line</h2>
+      <div class="card brief">
+        <p class="brief-headline" id="cpHeadline"></p>
+        <div class="brief-cols">
+          <div><h3>What we found</h3><ul class="leads" id="cpFindings"></ul></div>
+          <div><h3>What to do first</h3><ol class="leads" id="cpActions"></ol></div>
+        </div>
+      </div>
+      <div class="tiles" id="cpTiles"></div>
+    </section>
+
+    <section class="section" id="cp-flows">
+      <h2><span class="num">2</span>Money-moving resources: immutable or observed?</h2>
+      <div class="card">
+        <p class="brief-headline" id="cpFlowLead"></p>
+        <p class="muted small">Each money-moving resource and its main change: who could make it (people and pipelines, all assumed compromised), whether the resource itself prevents or undoes it, and whether CloudTrail records it and an alert in this account fires. "Neither" is the gap to close first.</p>
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-flows">Export table to PDF</button></p>
+        <div class="table-wrap"><table class="data compact" id="cpFlows"></table></div>
+        <p id="cpFlowMore" class="muted small"></p>
+      </div>
+    </section>
+
+    <section class="section" id="cp-top">
+      <h2><span class="num">3</span>Findings, worst first</h2>
+      <div class="card">
+        <p class="muted small">Each line is a change a compromised person or pipeline could make, or a gap that would hide it. Severity starts high for money-moving resources, drops one level when CloudTrail records the action and two when an alert in the account fires on it, and one more when the path works only from certain networks.</p>
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-top">Export table to PDF</button></p>
+        <div class="table-wrap"><table class="data compact" id="cpTop"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="cp-areas">
+      <h2><span class="num">4</span>By control area</h2>
+      <div class="card"><div class="table-wrap"><table class="data compact" id="cpAreas"></table></div></div>
+    </section>
+
+    <section class="section" id="cp-accounts">
+      <h2><span class="num">5</span>By account</h2>
+      <div class="card"><div class="table-wrap"><table class="data compact" id="cpAccounts"></table></div></div>
+    </section>
+
+    <section class="section" id="cp-people">
+      <h2><span class="num">6</span>Who can act</h2>
+      <div class="card">
+        <p class="muted small">Permission sets, IAM users, pipeline roles and the roles a person can switch into. "Can change" counts the resources each can change or read by hand; "blocked by a guardrail" counts what an SCP stops.</p>
+        <div class="table-wrap"><table class="data compact" id="cpPeople"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="cp-changes">
+      <h2><span class="num">7</span>Changes people made by hand, last 30 days</h2>
+      <div class="card">
+        <p class="muted small">Writes by people's own sign-ins, from CloudTrail. A change from a laptop's CLI, SDK or Terraform is what a stolen session looks like: each one should have a reason.</p>
+        <div class="table-wrap"><table class="data compact" id="cpChanges"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="cp-all">
+      <h2><span class="num">8</span>Every finding</h2>
+      <div class="card">
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-all">Export table to PDF</button></p>
+        <div class="table-wrap"><table class="data compact" id="cpAll"></table></div>
+      </div>
+    </section>
+
+    <section class="section" id="cp-blind">
+      <h2><span class="num">9</span>What this cannot see from AWS</h2>
+      <div class="card"><ul class="leads" id="cpBlind"></ul></div>
+    </section>
+    <p id="cpFooter" class="muted small"></p>
   </div>
 
   <!-- ================================================================ Cloud Assurance Framework view -->

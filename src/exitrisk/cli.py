@@ -305,6 +305,10 @@ def _report(args) -> int:
         from .outage import OutageAnswers, build_outage
 
         report = build_outage(scan, flt, OutageAnswers(**(_answers(args.outage, "outage answers") or {})))
+    elif args.view == "compromise":
+        from .compromise import build_compromise
+
+        report = build_compromise(scan)
     else:
         report = build_report(scan, flt, q, weighting=args.weighting)
     text = json.dumps(report, indent=2, default=str)
@@ -337,6 +341,8 @@ def _pdf(args) -> int:
         args.out = "cloud-assurance-report.pdf"
     if args.view == "outage" and args.out == "exit-risk-report.pdf":
         args.out = "outage-risk-report.pdf"
+    if args.view == "compromise" and args.out == "exit-risk-report.pdf":
+        args.out = "developer-compromise-report.pdf"
     if args.onepage and args.out == "exit-risk-report.pdf":
         args.out = "exit-risk-summary.pdf"
 
@@ -524,10 +530,11 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument(
             "--view",
             default="exit",
-            choices=["exit", "multiregion", "assurance", "outage"],
+            choices=["exit", "multiregion", "assurance", "outage", "compromise"],
             help="exit = the exit-risk report (default); multiregion = the cost of running a second region; "
             "assurance = the Cloud Assurance Framework Report (needs a scan with --assurance); "
-            "outage = the Outage Risk Report (needs a scan with --outage)",
+            "outage = the Outage Risk Report (needs a scan with --outage); "
+            "compromise = the Developer Compromise Report (run its checks from the console first)",
         )
         p.add_argument(
             "--outage",

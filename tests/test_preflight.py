@@ -27,7 +27,12 @@ def _assurance_probes_allowed(monkeypatch):
     real = preflight.probe_actions
 
     def probe(session, account_id, probes):
-        if probes in (preflight.ASSURANCE_PROBES, preflight.ASSURANCE_ORG_PROBES, preflight.OUTAGE_PROBES):
+        if probes in (
+            preflight.ASSURANCE_PROBES,
+            preflight.ASSURANCE_ORG_PROBES,
+            preflight.OUTAGE_PROBES,
+            preflight.COMPROMISE_PROBES,
+        ):
             return [], []
         return real(session, account_id, probes)
 
@@ -128,7 +133,7 @@ def test_management_account_with_full_access_is_ready(monkeypatch):
     assert [c["id"] for c in r["checks"]] == [cid for cid, _ in preflight.STEPS]
     # The organisation-level assurance reads are tested in the management account; the deep scan
     # (and the member assurance reads) and the AI review are not set up.
-    assert [c["status"] for c in r["checks"]] == ["ok"] * 8 + ["skip"] * 7
+    assert [c["status"] for c in r["checks"]] == ["ok"] * 8 + ["skip"] * 8
     assert probed == [preflight.ASSURANCE_ORG_PROBES]
     cost = next(c for c in r["checks"] if c["id"] == "cost")
     assert "40 accounts in 1 region " in cost["detail"]  # one call proves the multi-region data too
@@ -148,7 +153,8 @@ def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):
     assert status == {
         "identity": "ok", "organization": "warn", "ou_tree": "fail", "accounts": "skip", "account_tags": "skip",
         "cost": "warn", "commitments": "ok", "assurance_org": "skip", "deep_scan": "skip", "inventory_reads": "skip",
-        "dependency_reads": "skip", "assurance_reads": "skip", "outage_reads": "skip", "assignments": "skip",
+        "dependency_reads": "skip", "assurance_reads": "skip", "outage_reads": "skip", "compromise_reads": "skip",
+        "assignments": "skip",
         "ai": "skip",
     }  # fmt: skip
     org = next(c for c in r["checks"] if c["id"] == "organization")
@@ -358,6 +364,7 @@ def test_the_member_checks_are_reported_before_the_slow_count_of_every_account(m
         "dependency_reads",
         "assurance_reads",
         "outage_reads",
+        "compromise_reads",
     }
     assert ctx["count_assignments"] is True and not counted.done()
 
@@ -367,12 +374,15 @@ MEMBER_SETS = (
     preflight.DEPENDENCY_PROBES,
     preflight.ASSURANCE_PROBES,
     preflight.OUTAGE_PROBES,
+    preflight.COMPROMISE_PROBES,
 )
 # Calls a scan makes that no probe makes, and why.
 NOT_PROBED = {
     ("apigateway", "get_stages"): "apigateway:GET, probed",
     ("apigateway", "get_resources"): "apigateway:GET, probed",
     ("apigatewayv2", "get_integrations"): "apigateway:GET, probed",
+    ("apigatewayv2", "get_routes"): "apigateway:GET, probed",
+    ("apigatewayv2", "get_stages"): "apigateway:GET, probed",
     ("elb", "describe_load_balancers"): "the same elasticloadbalancing action as the probed elbv2 call",
     ("elb", "describe_load_balancer_attributes"): "the same elasticloadbalancing action as the probed elbv2 call",
     ("macie2", "get_macie_session"): "refused when Macie is off, so a probe cannot tell",
@@ -427,7 +437,7 @@ def _api_calls(path):
 
 def test_the_access_check_makes_every_call_a_scan_makes_in_a_member_account():
     src = ROOT / "src/exitrisk/collectors"
-    names = ("inventory", "dependencies", "baseline", "assurance", "outage", "outage_services")
+    names = ("inventory", "dependencies", "baseline", "assurance", "outage", "outage_services", "compromise")
     made = set().union(*(_api_calls(src / f"{n}.py") for n in names))
     probed = {(c, m) for probes in MEMBER_SETS for _, c, m, _ in probes}
     assert len(made) > 120  # the walk found the calls

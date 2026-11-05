@@ -931,3 +931,12 @@ body[data-view="outage"] #btnJumpAi { display: none; }
 .owner-block { margin: 18px 0 0; }
 .owner-block h3 { margin: 0 0 4px; font-size: 15px; }
 @media print { .owner-block { break-inside: auto; } .owner-block h3 { break-after: avoid; } }
+
+/* Developer Compromise */
+body[data-view="compromise"] #btnJumpAi { display: none; }
+.cp-pick .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.cp-pick input[type=search] { min-width: 240px; }
+.cp-list { max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px; columns: 2 280px; }
+.cp-list label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; break-inside: avoid; }
+.cp-list .muted { font-size: 12px; }
+.cp-who { font-size: 12px; }

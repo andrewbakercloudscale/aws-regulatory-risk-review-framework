@@ -81,6 +81,20 @@ Resources:
                   - mq:ListBrokers
                   - fsx:DescribeFileSystems
                   - ec2:DescribeTransitGateways
+                  - iam:SimulatePrincipalPolicy
+                  - iam:ListRoles
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                  - lambda:ListFunctionUrlConfigs
+                  - lambda:GetFunctionCodeSigningConfig
+                  - lambda:GetPolicy
+                  - ecr:DescribeRepositories
+                  - ecr:GetRepositoryPolicy
+                  - ecs:DescribeTaskDefinition
+                  - secretsmanager:GetResourcePolicy
+                  - kms:GetKeyPolicy
+                  - dynamodb:GetResourcePolicy
+                  - s3:GetBucketNotification
                   - ec2:DescribeTransitGatewayAttachments
                   - ec2:DescribeTransitGatewayVpcAttachments
                   - ec2:DescribeTransitGatewayRouteTables

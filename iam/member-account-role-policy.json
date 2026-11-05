@@ -233,6 +233,27 @@
         "acm-pca:ListCertificateAuthorities"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "ExitRiskDeveloperCompromise",
+      "Effect": "Allow",
+      "Action": [
+        "iam:SimulatePrincipalPolicy",
+        "iam:ListRoles",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "lambda:ListFunctionUrlConfigs",
+        "lambda:GetFunctionCodeSigningConfig",
+        "lambda:GetPolicy",
+        "ecr:DescribeRepositories",
+        "ecr:GetRepositoryPolicy",
+        "ecs:DescribeTaskDefinition",
+        "secretsmanager:GetResourcePolicy",
+        "kms:GetKeyPolicy",
+        "dynamodb:GetResourcePolicy",
+        "s3:GetBucketNotification"
+      ],
+      "Resource": "*"
     }
   ]
 }

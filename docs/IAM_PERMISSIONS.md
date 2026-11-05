@@ -162,6 +162,17 @@ Only for **Run the outage risk checks** (`--outage`). All reads.
 - **Cost**: CloudWatch bills `GetMetricData` at about US$0.01 per 1,000 metrics requested, in each
   account. Other reads are free.
 
+
+## 5. Developer compromise checks
+
+Only for the accounts picked in the Developer Compromise report. All reads. The member role's
+`ExitRiskDeveloperCompromise` statement adds what the other statements do not have, chiefly
+`iam:SimulatePrincipalPolicy` (to decide each path with AWS's policy simulator) and
+`iam:GetAccountAuthorizationDetails`, plus resource policies, Object Lock, code signing, function URLs,
+repository policies, key policies and CloudTrail event history. Check access tests them as "Developer
+compromise reads in a member account". The management account's `organizations:ListAccounts`, already
+granted, tells roles trusted by another account of the organisation from those trusted by an outsider.
+
 ## What the tool does not need
 
 No write permissions anywhere, no access to data plane APIs (S3 objects, DynamoDB items, secrets),

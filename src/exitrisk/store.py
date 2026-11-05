@@ -112,6 +112,7 @@ def list_scans() -> list[dict]:
             "target": (s.get("params") or {}).get("target"),
             "assurance": bool(s.get("assurance")),
             "outage": bool(s.get("outage")),
+            "compromise": len((s.get("compromise") or {}).get("accounts") or {}),
         }
         with _summaries_lock:
             _summaries[str(path)] = (stamp, summary)

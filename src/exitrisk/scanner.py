@@ -25,6 +25,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from . import network, procs, sso, store
 from .aws_session import ClientCache, caller_identity, make_session, member_session
 from .collectors import assurance, assurance_org, cost, inventory, organizations
+from .collectors import compromise as compromise_checks
 from .collectors import outage as outage_checks
 from .config import settings
 from .issues import Issue, describe_exception, is_fatal_auth_error
@@ -116,6 +117,9 @@ class ScanParams:
     # keep the rest (its organisation, spend and the accounts it read). Saved as a new scan.
     completes: str | None = None
     completes_eks: bool = False  # also read again the accounts with an EKS cluster the earlier scan could not read
+    # Developer Compromise checks: run on an earlier scan (``completes``) in the accounts picked here only,
+    # keeping everything else the earlier scan read.
+    compromise_accounts: list[str] | None = None
 
     @property
     def ous(self) -> list[str]:
@@ -124,6 +128,11 @@ class ScanParams:
     def validate(self) -> None:
         if self.dependencies:
             self.inventory = True
+        if self.compromise_accounts is not None:
+            if not self.completes:
+                raise ValueError("the developer compromise checks run on an earlier scan")
+            if not self.compromise_accounts or len(self.compromise_accounts) > COMPROMISE_MAX:
+                raise ValueError(f"pick between 1 and {COMPROMISE_MAX} accounts for the developer compromise checks")
         if self.inventory_scope not in INVENTORY_SCOPES:
             raise ValueError(f"inventory_scope must be one of {', '.join(INVENTORY_SCOPES)}")
         if self.region_scope not in REGION_SCOPES:
@@ -441,6 +450,7 @@ def _document(job: ScanJob, data: dict, failed: bool = False, status: str | None
         "inventory": data.get("inventory", {}),
         "assurance": data.get("assurance"),
         "outage": data.get("outage"),
+        "compromise": data.get("compromise"),
         "unavailable": data.get("unavailable", {}),
         "completes": data.get("completes"),
         "org_accounts": data.get("org_accounts"),
@@ -814,6 +824,45 @@ def incomplete_accounts(scan: dict) -> dict[str, dict]:
     return out
 
 
+COMPROMISE_MAX = 40
+
+
+def _compromise(job: ScanJob, session, data: dict, base: dict) -> dict:
+    """The Developer Compromise checks in the picked accounts; every other step is kept from the base scan."""
+    p = job.params
+    for i in base.get("issues") or []:
+        if i.get("category") != "compromise":
+            job.issues.append(Issue(**{k: i.get(k) for k in Issue.__dataclass_fields__ if k in i}))
+    for key in STEPS:
+        data[key] = base.get(key)
+    fields = organizations.Account.__dataclass_fields__
+    accounts = [organizations.Account(**{k: a.get(k, "") for k in fields}) for a in data["accounts"] or []]
+    picked = [a for a in accounts if a.id in set(p.compromise_accounts or [])]
+    if not picked:
+        raise ScanFailed("none of the picked accounts is in this scan")
+    caller = data["identity"]["account_id"]
+    regions_for = _region_picker(job)
+    busiest = _busiest_regions(job)
+    org_ids = {a.id for a in accounts} | set(data.get("org_accounts") or {})
+    try:  # every account in the organisation, so a role trusted by one of them is not taken for an outsider's
+        org = session.client("organizations")
+        org_ids |= {a["Id"] for page in org.get_paginator("list_accounts").paginate() for a in page["Accounts"]}
+    except (ClientError, BotoCoreError) as exc:
+        log.warning("could not list the organisation's accounts: %s", exc)
+    org_ids = sorted(org_ids)
+    org_id = (data.get("org") or {}).get("id", "")
+    job.update("compromise", 58, f"Developer compromise checks in {plural(len(picked), 'account')}")
+
+    def read(workers, sess, account):
+        info = {"home": busiest.get(account.id), "org_ids": org_ids, "org_id": org_id, "name": account.name}
+        return compromise_checks.account_checks(sess, account.id, regions_for(account.id), info)
+
+    got = _each_account(job, session, picked, caller, read, "compromise", "checked", (58, 98))
+    job.step = None
+    data["compromise"] = {"accounts": got, "selected": [a.id for a in picked]}
+    return _save_finished(job, data, accounts)
+
+
 def _complete(job: ScanJob, session, data: dict) -> dict:
     """Read again only what an earlier scan could not read, keep the rest, and save the whole as a new scan."""
     p = job.params
@@ -837,6 +886,9 @@ def _complete(job: ScanJob, session, data: dict) -> dict:
     data["period"] = base.get("period")
     data["unavailable"] = base.get("unavailable") or {}
     data["completes"] = base["id"]
+    data["compromise"] = base.get("compromise")
+    if p.compromise_accounts:
+        return _compromise(job, session, data, base)
     todo = incomplete_accounts(base)
     redo = {
         k: set(v["missing"]) | set(v["failed"]) | (set(v["eks"]) if p.completes_eks else set()) for k, v in todo.items()
@@ -880,7 +932,11 @@ SAVE_EVERY_ACCOUNTS = 25
 SAVE_EVERY_SECONDS = 300
 WAIT_POLL_SECONDS = 2
 STALL_WARN_SECONDS = 600
-STEP_LABELS = {"assurance": "Assurance checks", "outage": "Outage risk checks"}
+STEP_LABELS = {
+    "assurance": "Assurance checks",
+    "outage": "Outage risk checks",
+    "compromise": "Developer compromise checks",
+}
 
 
 def _region_picker(job: ScanJob):

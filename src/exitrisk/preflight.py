@@ -348,6 +348,45 @@ OUTAGE_PROBES = [
      {"CertificateArn": _ARN.format("acm", f"certificate/{_KEY}")}),
     ("acm-pca:ListCertificateAuthorities", "acm-pca", "list_certificate_authorities", {"MaxResults": 1}),
 ]  # fmt: skip
+# The Developer Compromise checks: who can do what (the policy simulator), and the settings it weighs.
+COMPROMISE_PROBES = [
+    ("iam:SimulatePrincipalPolicy", "iam", "simulate_principal_policy",
+     {"PolicySourceArn": "arn:aws:iam::{account}:root", "ActionNames": ["s3:PutObject"]}),
+    ("iam:ListRoles", "iam", "list_roles",
+     {"MaxItems": 1}),
+    ("iam:GetPolicy", "iam", "get_policy",
+     {"PolicyArn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}),
+    ("iam:GetPolicyVersion", "iam", "get_policy_version",
+     {"PolicyArn": "arn:aws:iam::aws:policy/ReadOnlyAccess", "VersionId": "v1"}),
+    ("lambda:ListFunctionUrlConfigs", "lambda", "list_function_url_configs",
+     {"FunctionName": _NO_SUCH}),
+    ("lambda:GetFunctionCodeSigningConfig", "lambda", "get_function_code_signing_config",
+     {"FunctionName": _NO_SUCH}),
+    ("lambda:GetPolicy", "lambda", "get_policy",
+     {"FunctionName": _NO_SUCH}),
+    ("ecr:DescribeRepositories", "ecr", "describe_repositories",
+     {"maxResults": 1}),
+    ("ecr:GetRepositoryPolicy", "ecr", "get_repository_policy",
+     {"repositoryName": _NO_SUCH}),
+    ("ecs:DescribeTaskDefinition", "ecs", "describe_task_definition",
+     {"taskDefinition": _NO_SUCH + ":1"}),
+    ("secretsmanager:ListSecrets", "secretsmanager", "list_secrets",
+     {"MaxResults": 1}),
+    ("secretsmanager:GetResourcePolicy", "secretsmanager", "get_resource_policy",
+     {"SecretId": _NO_SUCH}),
+    ("kms:GetKeyPolicy", "kms", "get_key_policy",
+     {"KeyId": _KEY, "PolicyName": "default"}),
+    ("dynamodb:GetResourcePolicy", "dynamodb", "get_resource_policy",
+     {"ResourceArn": _ARN.format("dynamodb", f"table/{_NO_SUCH}")}),
+    ("s3:GetBucketObjectLockConfiguration", "s3", "get_object_lock_configuration",
+     {"Bucket": _NO_SUCH}),
+    ("s3:GetBucketNotification", "s3", "get_bucket_notification_configuration",
+     {"Bucket": _NO_SUCH}),
+    ("events:ListTargetsByRule", "events", "list_targets_by_rule",
+     {"Rule": _NO_SUCH}),
+    ("cloudtrail:LookupEvents", "cloudtrail", "lookup_events",
+     {"MaxResults": 1}),
+]  # fmt: skip
 # The organisation-level assurance reads, in the management account.
 ASSURANCE_ORG_PROBES = [
     ("organizations:ListPolicies", "organizations", "list_policies",
@@ -641,6 +680,7 @@ DEP_LABEL = "Read integrations in a member account"
 ASSURANCE_LABEL = "Cloud assurance reads in a member account"
 ASSURANCE_ORG_LABEL = "Cloud assurance reads in the management account"
 OUTAGE_LABEL = "Outage risk reads in a member account"
+COMPROMISE_LABEL = "Developer compromise reads in a member account"
 
 
 ASSIGN_LABEL = "Permission set in every account"
@@ -655,7 +695,8 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
 
     def skip_rest(why: str, assignments: str | None = None) -> None:
         for cid, label in (("inventory_reads", INV_LABEL), ("dependency_reads", DEP_LABEL),
-                           ("assurance_reads", ASSURANCE_LABEL), ("outage_reads", OUTAGE_LABEL)):  # fmt: skip
+                           ("assurance_reads", ASSURANCE_LABEL), ("outage_reads", OUTAGE_LABEL),
+                           ("compromise_reads", COMPROMISE_LABEL)):  # fmt: skip
             checks.append(Check(cid, label, "skip", why))
         if assignments is not None:
             checks.append(Check("assignments", ASSIGN_LABEL, "skip", assignments))
@@ -713,13 +754,19 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
         ("dependency_reads", DEP_LABEL, DEPENDENCY_PROBES, "Dependency scans will miss these"),
         ("assurance_reads", ASSURANCE_LABEL, ASSURANCE_PROBES, "The assurance checks will show these as not measured"),
         ("outage_reads", OUTAGE_LABEL, OUTAGE_PROBES, "The outage risk checks will show these as not measured"),
+        (
+            "compromise_reads",
+            COMPROMISE_LABEL,
+            COMPROMISE_PROBES,
+            "The developer compromise checks will show these as not measured",
+        ),
     )
     # The sets at once: every call goes to a different service.
     results = pmap(lambda st: probe_actions(member, member_id, st[2]), sets, workers=len(sets))
     for (cid, label, probes, what), (denied, other) in zip(sets, results, strict=True):
         policy = "iam/member-account-role-policy.json"
         check = _probe_check(cid, label, probes, denied, other, member_id, what, policy)
-        if cid not in ("assurance_reads", "outage_reads") and denied:
+        if cid not in ("assurance_reads", "outage_reads", "compromise_reads") and denied:
             check.fix = f"{what}. Grant them ({policy})."
         checks.append(check)
     if role_name:
@@ -787,12 +834,13 @@ _LATER = [
     ("dependency_reads", DEP_LABEL),
     ("assurance_reads", ASSURANCE_LABEL),
     ("outage_reads", OUTAGE_LABEL),
+    ("compromise_reads", COMPROMISE_LABEL),
     ("assignments", ASSIGN_LABEL),
     ("ai", AI_LABEL),
 ]
 # Checks a quick scan can do without: a failure there is a warning, not "Not ready".
 OPTIONAL = {"account_tags", "commitments", "deep_scan", "inventory_reads", "dependency_reads", "assurance_org",
-            "assurance_reads", "outage_reads", "assignments", "ai"}  # fmt: skip
+            "assurance_reads", "outage_reads", "compromise_reads", "assignments", "ai"}  # fmt: skip
 # Every run reports exactly these checks, in this order (skipped ones included).
 STEPS = [("identity", "Sign in to AWS"), *_LATER]
 

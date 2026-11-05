@@ -190,3 +190,14 @@ def test_new_scan_ticks_only_the_report_on_screen(page):
         "#sAiOr": True,
     }
     assert not page.errors
+
+
+def test_the_developer_compromise_view_draws_its_paths_and_the_account_picker(page):
+    page.locator(".vtab[data-view='compromise']").click()
+    page.wait_for_selector("#cpTop tbody tr")
+    assert "Not recorded" in page.locator("#cpTop").inner_text()
+    page.locator("#btnCpChange").click()
+    assert page.locator("#cpList input:checked").count() == 5
+    page.locator(".vtab[data-view='outage']").click()
+    page.wait_for_selector("#orContent:not([hidden])")
+    assert not page.errors

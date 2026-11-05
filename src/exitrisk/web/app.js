@@ -408,6 +408,8 @@
     state.or = null;
     state.orAccount = "";
     if (state.view === "outage") loadOutage();
+    state.cp = null;
+    if (state.view === "compromise") loadCompromise();
     return true;
   }
 
@@ -2372,6 +2374,117 @@
     renderOr();
   }
 
+  // ---- Developer Compromise: pick accounts, run the checks as a new scan, read the report.
+  async function loadCompromise() {
+    if (!state.scanId) return;
+    const seq = (state.cpSeq = (state.cpSeq || 0) + 1);
+    loading("compromise", true);
+    try {
+      const r = await api("/api/compromise", { method: "POST", body: { scan_id: state.scanId } });
+      if (seq !== state.cpSeq) return;
+      state.cp = r;
+      state.cpPicking = false;
+    } catch (e) {
+      if (seq !== state.cpSeq) return;
+      console.error("compromise failed", e);
+      $("#cpErrorText").textContent = e.message;
+      $("#cpError").hidden = state.view !== "compromise";
+      if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
+      return;
+    } finally {
+      if (seq === state.cpSeq) loading("compromise", false);
+    }
+    $("#cpError").hidden = true;
+    renderCp();
+  }
+
+  const CP_DETECT = { alert: ["Alert fires", "var(--good)"], logged: ["Logged, no alert", "var(--sev-warning)"], "not logged": ["Not recorded", "var(--sev-critical)"], unknown: ["Cannot tell", "var(--t3)"] };
+  const cpDetect = (d) => d ? pill(null, CP_DETECT[d]?.[0] || d, CP_DETECT[d]?.[1]) : "";
+
+  function renderCp() {
+    const r = state.cp;
+    $("#reportBar").hidden = false;
+    $("#empty").hidden = true;
+    renderCpPicker(r);
+    setView(state.view);
+    if (!r.available) {
+      $("#cpEmptyText").textContent = r.reason;
+      if (PRINT) document.body.dataset.ready = "1";
+      return;
+    }
+    try {
+      const s = r.summary;
+      $("#cpMeta").innerHTML = [
+        ["Accounts checked", num(s.accounts)],
+        ["Resources read", `${num(s.assets)} (${num(s.payment_assets)} money-moving)`],
+        ["People and pipelines", num(s.principals)],
+        ["Scanned", r.scan_at ? new Date(r.scan_at).toLocaleString() : EMPTY],
+      ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+      const gaps = r.accounts.filter((a) => a.unknown.length).map((a) => `${a.name} (${a.unknown.join(", ")})`);
+      $("#cpCoverage").hidden = !gaps.length;
+      $("#cpCoverage").textContent = gaps.length ? `Not everything could be read: ${gaps.join("; ")}. What was not read is not a pass.` : "";
+      const crit = r.findings.filter((f) => f.severity === "critical");
+      const fc = r.flow_counts || {};
+      $("#cpHeadline").textContent = `Assuming laptops and pipelines are compromised: ${plural(fc.neither || 0, "money-moving resource")} can be changed with nothing preventing or recording it, and ${num(fc["recorded only"] || 0)} more are recorded but raise no alert. ${plural(s.critical, "critical finding")} and ${num(s.high)} high across ${plural(s.accounts, "account")}.`;
+      const VERDICT = { neither: ["Neither", "var(--sev-critical)"], "recorded only": ["Recorded, no alert", "var(--sev-warning)"], observed: ["Observed", "var(--good)"], protected: ["Immutable", "var(--good)"] };
+      const IMM = { immutable: "Immutable", recoverable: "Can be undone", changeable: "Changeable" };
+      $("#cpFlowLead").textContent = `${num(fc.neither || 0)} neither immutable nor recorded, ${num(fc["recorded only"] || 0)} recorded with no alert, ${num(fc.observed || 0)} observed, ${num(fc.protected || 0)} immutable or out of reach.`;
+      const fl = PRINT ? r.flows.filter((x) => x.verdict !== "protected").slice(0, 200) : r.flows;
+      $("#cpFlows").innerHTML = r.flows.length ? `<thead><tr><th>Verdict</th><th>Resource</th><th>Account</th><th>The change</th><th class="num-cell">People</th><th class="num-cell">Pipelines</th><th>Prevented</th><th>Recorded and alerted</th></tr></thead><tbody>${fl.map((x) => `<tr><td>${pill(null, VERDICT[x.verdict][0], VERDICT[x.verdict][1])}</td><td><strong class="mono small">${esc(x.name)}</strong><div class="muted small">${esc(x.kind)}${x.region && x.region !== "global" ? `, ${esc(x.region)}` : ""}</div></td><td class="small">${esc(x.account)}</td><td class="small">${esc(x.what)}</td><td class="num-cell">${num(x.people)}</td><td class="num-cell">${num(x.pipelines)}</td><td class="small">${esc(IMM[x.immutable] || x.immutable)}${x.immutable_why ? `<div class="muted">${esc(x.immutable_why)}</div>` : ""}</td><td>${cpDetect(x.detect)}<div class="muted small">${esc(x.detect_why)}</div></td></tr>`).join("")}</tbody>` : "<tbody><tr><td>No money-moving resource found in the chosen accounts.</td></tr></tbody>";
+      $("#cpFlowMore").textContent = PRINT && r.flows.length > fl.length ? `The ${num(fl.length)} not yet immutable or observed; the full list is in the console.` : "";
+      const found = [];
+      const byRule = (id) => r.findings.filter((f) => f.rule === id);
+      const pay = byRule("person_payment_write").length, sign = byRule("person_sign").length, db = byRule("person_db").length;
+      if (pay) found.push(`${plural(pay, "payment resource")} a compromised person or pipeline can change with no alert.`);
+      if (sign) found.push(`${plural(sign, "signing key")} a person can sign with.`);
+      if (db) found.push(`${plural(db, "way")} a person can get into a payment database.`);
+      if (byRule("user_keys_write").length) found.push(`${plural(byRule("user_keys_write").length, "IAM user")} with a long-lived access key that can change production.`);
+      if (byRule("pipeline_trust_open").length) found.push(`${plural(byRule("pipeline_trust_open").length, "pipeline role")} that trusts more repositories or branches than it should.`);
+      if (s.laptop_changes) found.push(`${plural(s.laptop_changes, "change")} to production from a laptop's command line in the last 30 days.`);
+      if (byRule("data_events_off").length) found.push(`Writes to payment data are not recorded in ${plural(byRule("data_events_off").length, "account")}.`);
+      if (!found.length) found.push("No person can change a money-moving resource by hand, and nothing found hides a change.");
+      $("#cpFindings").innerHTML = found.map((x) => `<li>${esc(x)}</li>`).join("");
+      $("#cpActions").innerHTML = r.areas.filter((a) => a.critical || a.high).slice(0, 5).map((a) => `<li><strong>${esc(a.label)}.</strong> ${esc(a.action)}</li>`).join("") || "<li>Keep it this way: re-run after every access change.</li>";
+      $("#cpTiles").innerHTML = [
+        tile("Critical findings", num(s.critical), `${num(s.high)} high, ${num(s.medium)} medium`),
+        tile("Neither prevented nor recorded", num(fc.neither || 0), "money-moving resources"),
+        tile("Recorded, no alert", num(fc["recorded only"] || 0), "money-moving resources"),
+        tile("Changes from a laptop", num(s.laptop_changes), "CLI, SDK or Terraform, last 30 days"),
+        tile("Money-moving resources", num(s.payment_assets), `of ${num(s.assets)} read`),
+        tile("Accounts checked", num(s.accounts), crit.length ? `${num(new Set(crit.map((f) => f.account)).size)} with a critical finding` : "none with a critical finding"),
+      ].join("");
+      const rowOf = (f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${orSev(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small"><span class="mono">${esc(f.asset)}</span>${f.asset_kind ? ` <span class="muted">${esc(f.asset_kind)}${f.region ? `, ${esc(f.region)}` : ""}</span>` : ""}</div>${f.what ? `<div class="small">${esc(f.what)}</div>` : ""}${(f.evidence || []).length ? `<div class="muted small">${esc(f.evidence.slice(0, 3).join("; "))}</div>` : ""}${(f.via || []).length ? `<div class="muted small">${esc(f.via.join("; "))}</div>` : ""}</td><td class="small">${esc(f.account)}</td><td class="cp-who">${esc((f.who || []).slice(0, 4).join(", "))}${(f.who || []).length > 4 ? ` <span class="muted">and ${num(f.who.length - 4)} more</span>` : ""}</td><td>${cpDetect(f.detect)}${f.detect_why ? `<div class="muted small">${esc(f.detect_why)}</div>` : ""}${f.network ? '<div class="muted small">only from certain networks</div>' : ""}</td><td class="small">${esc(f.fix)}</td></tr>`;
+      const head = `<thead><tr><th class="num-cell">#</th><th>Severity</th><th>What</th><th>Account</th><th>Who</th><th>Would anyone notice</th><th>What to do</th></tr></thead>`;
+      $("#cpTop").innerHTML = r.top.length ? `${head}<tbody>${r.top.map(rowOf).join("")}</tbody>` : "<tbody><tr><td>No critical or high finding.</td></tr></tbody>";
+      $("#cpAll").innerHTML = `${head}<tbody>${(PRINT ? r.findings.slice(0, 300) : r.findings).map(rowOf).join("")}</tbody>`;
+      $("#cpAreas").innerHTML = `<thead><tr><th>Area</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th>What good looks like</th></tr></thead><tbody>${r.areas.map((a) => `<tr><td><strong>${esc(a.label)}</strong></td><td class="num-cell">${num(a.critical)}</td><td class="num-cell">${num(a.high)}</td><td class="num-cell">${num(a.medium)}</td><td class="small">${esc(a.action)}</td></tr>`).join("")}</tbody>`;
+      $("#cpAccounts").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th class="num-cell">Resources</th><th class="num-cell">Money-moving</th><th class="num-cell">People and pipelines</th><th>Not read</th></tr></thead><tbody>${r.accounts.map((a) => `<tr><td><strong>${esc(a.name)}</strong><div class="muted small">${esc(a.ou_path || a.id)}</div></td><td class="num-cell">${num(a.critical)}</td><td class="num-cell">${num(a.high)}</td><td class="num-cell">${num(a.medium)}</td><td class="num-cell">${num(a.assets)}</td><td class="num-cell">${num(a.payment_assets)}</td><td class="num-cell">${num(a.principals)}</td><td class="small">${esc(a.unknown.join(", ") || EMPTY)}</td></tr>`).join("")}</tbody>`;
+      const KIND = { person: "Person", user: "IAM user", pipeline: "Pipeline", outside: "Outside the organisation", role: "Role people switch into", cross: "Role from another account" };
+      $("#cpPeople").innerHTML = `<thead><tr><th>Who</th><th>Kind</th><th>Account</th><th class="num-cell">Can change</th><th class="num-cell">Of them money-moving</th><th class="num-cell">Blocked by a guardrail</th><th>Notes</th></tr></thead><tbody>${r.people.map((p) => `<tr><td><strong>${esc(p.label)}</strong></td><td class="small">${esc(KIND[p.kind] || p.kind)}</td><td class="small">${esc(p.account)}</td><td class="num-cell">${num(p.can)}</td><td class="num-cell">${num(p.payment)}</td><td class="num-cell">${num(p.guardrail)}</td><td class="small">${esc([p.weak, p.keys ? `${plural(p.keys, "access key")}` : "", p.hours > 4 ? `sessions up to ${p.hours} hours` : "", p.reached_by.length ? `reachable by ${p.reached_by.slice(0, 2).join(", ")}` : ""].filter(Boolean).join("; "))}</td></tr>`).join("")}</tbody>`;
+      $("#cpChanges").innerHTML = r.changes.length ? `<thead><tr><th>Who</th><th>Tool</th><th>Account</th><th>Call</th><th class="num-cell">Times</th><th>Last</th></tr></thead><tbody>${r.changes.map((c) => `<tr><td>${esc(c.who)}</td><td>${c.tool === "Console" ? esc(c.tool) : pill(null, c.tool, "var(--sev-error)")}</td><td class="small">${esc(c.account)}</td><td class="small mono">${esc(c.action)}${c.resource ? `<div class="muted">${esc(c.resource)}</div>` : ""}</td><td class="num-cell">${num(c.count)}</td><td class="small nowrap">${c.last ? esc(new Date(c.last).toLocaleString()) : EMPTY}</td></tr>`).join("")}</tbody>` : "<tbody><tr><td>No change by a person in the last 30 days.</td></tr></tbody>";
+      $("#cpBlind").innerHTML = r.blind_spots.map((b) => `<li><strong>${esc(b.title)}.</strong> ${esc(b.why)}</li>`).join("");
+      $("#cpFooter").textContent = `Scan ${r.scan_id} · rules ${r.catalog_version}`;
+    } catch (e) {
+      console.error("compromise render failed", e);
+      toast(`The report could not be drawn: ${e.message}`, 8000);
+    }
+    if (state.view === "compromise") document.body.dataset.ready = "1";
+  }
+
+  function renderCpPicker(r) {
+    const list = r.accounts_to_pick || [];
+    const chosen = new Set(r.available ? r.selected : list.filter((a) => a.suggested).map((a) => a.id));
+    state.cpChosen = chosen;
+    const draw = () => {
+      const q = $("#cpFilter").value.trim().toLowerCase();
+      $("#cpList").innerHTML = list.filter((a) => !q || a.name.toLowerCase().includes(q) || a.id.includes(q) || (a.ou_path || "").toLowerCase().includes(q)).map((a) => `<label><input type="checkbox" value="${esc(a.id)}"${chosen.has(a.id) ? " checked" : ""}> <span>${esc(a.name)} <span class="muted">${esc(a.id)}${a.suggested ? " · suggested" : ""}</span></span></label>`).join("") || '<p class="muted small">No account matches.</p>';
+      $("#cpCount").textContent = `${plural(chosen.size, "account")} picked`;
+      $("#btnCpRun").disabled = !chosen.size || chosen.size > 40;
+    };
+    state.cpDraw = draw;
+    draw();
+  }
+
   function showOrError(e) {
     console.error("outage risk failed", e);
     const ref = e.requestId ? ` (request ${e.requestId})` : "";
@@ -2932,6 +3045,40 @@
     $("#btnOrOpen").addEventListener("click", (e) => { $("#scanSelect").value = e.currentTarget.dataset.scan; $("#scanSelect").dispatchEvent(new Event("change")); });
     $("#btnOrScan").addEventListener("click", () => { openScanDialog().then(() => { $("#sOutage").checked = true; $("#sOutage").dispatchEvent(new Event("change")); }); });
     $("#btnOrDemo").addEventListener("click", () => $("#btnDemo").click());
+    $("#btnCpRetry").addEventListener("click", () => loadCompromise());
+    $("#cpFilter").addEventListener("input", () => state.cpDraw?.());
+    $("#cpList").addEventListener("change", (e) => {
+      const box = e.target.closest("input[type=checkbox]");
+      if (!box) return;
+      if (box.checked) state.cpChosen.add(box.value); else state.cpChosen.delete(box.value);
+      state.cpDraw?.();
+    });
+    $("#btnCpNone").addEventListener("click", () => { state.cpChosen.clear(); state.cpDraw?.(); });
+    $("#btnCpSuggested").addEventListener("click", () => {
+      state.cpChosen.clear();
+      for (const a of state.cp?.accounts_to_pick || []) if (a.suggested) state.cpChosen.add(a.id);
+      state.cpDraw?.();
+    });
+    $("#btnCpChange").addEventListener("click", () => { state.cpPicking = true; setView("compromise"); $("#cpPick").scrollIntoView({ block: "start" }); });
+    $("#btnCpRun").addEventListener("click", async () => {
+      const accounts = [...state.cpChosen];
+      $("#btnCpRun").disabled = true;
+      $("#cpMsg").textContent = "Starting…";
+      try {
+        const job = await api(`/api/scans/${encodeURIComponent(state.scanId)}/compromise`, { method: "POST", body: { accounts } });
+        state.runningScan = job.id;
+        $("#scanError").textContent = "";
+        $("#scanBar").style.width = "2%";
+        $("#scanMsg").textContent = "Running the developer compromise checks…";
+        showScanRunning();
+        if (!$("#scanDialog").open) $("#scanDialog").showModal();
+        pollScan(job.id);
+        $("#cpMsg").textContent = "Running: the report opens when it finishes.";
+      } catch (e) {
+        $("#btnCpRun").disabled = false;
+        $("#cpMsg").textContent = e.status === 401 ? `${e.message} Use Sign in at the top.` : e.message;
+      }
+    });
     $("#orForm").addEventListener("change", () => { saveOrAnswers(readOrForm()); loadOutage(); });
     $("#orForm").addEventListener("submit", (e) => e.preventDefault());
     for (const id of ["#orArea", "#orService", "#orSev", "#orRule", "#orProd"]) $(id).addEventListener("change", () => renderOrFindings());
@@ -2972,7 +3119,7 @@
     window.addEventListener("beforeprint", () => { if (state.view === "outage") document.querySelectorAll("#orContent details").forEach((d) => { fillOrReview(d); d.open = true; }); });
   }
 
-  const VIEWS = ["exit", "multiregion", "assurance", "outage"];
+  const VIEWS = ["exit", "multiregion", "assurance", "outage", "compromise"];
   function setView(v) {
     state.view = VIEWS.includes(v) ? v : "exit";
     document.body.dataset.view = state.view;
@@ -2987,12 +3134,17 @@
     $("#orContent").hidden = state.view !== "outage" || !state.or?.available;
     $("#orEmpty").hidden = state.view !== "outage" || !state.or || state.or.available;
     if (state.view !== "outage") $("#orError").hidden = true;
+    const cpOn = state.view === "compromise";
+    $("#cpContent").hidden = !cpOn || !state.cp?.available || state.cpPicking;
+    $("#cpEmpty").hidden = !cpOn || !state.cp || state.cp.available;
+    $("#cpPick").hidden = !cpOn || !state.cp || (state.cp.available && !state.cpPicking);
+    if (!cpOn) $("#cpError").hidden = true;
     // Export follows the report on screen; the one-page summary exists only for exit risk.
-    const mr = state.view === "multiregion", as = state.view === "assurance", or = state.view === "outage";
-    $("#btnPdf b").textContent = mr ? "Multi-Region Report" : as ? "Cloud Assurance Report" : or ? "Outage Risk Report" : "Exit Risk Report";
-    $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : as ? "Every assurance section, as on screen" : or ? "Every outage risk section, as on screen" : "Every section and the appendix";
-    $("#btnOnePage").hidden = mr || as || or;
-    $("#btnJumpAi").hidden = mr || as || or; // the AI review belongs to the exit risk report
+    const mr = state.view === "multiregion", as = state.view === "assurance", or = state.view === "outage", cp = cpOn;
+    $("#btnPdf b").textContent = mr ? "Multi-Region Report" : as ? "Cloud Assurance Report" : or ? "Outage Risk Report" : cp ? "Developer Compromise Report" : "Exit Risk Report";
+    $("#btnPdf span").textContent = mr ? "Every multi-region section, as on screen" : as ? "Every assurance section, as on screen" : or ? "Every outage risk section, as on screen" : cp ? "Every section, as on screen" : "Every section and the appendix";
+    $("#btnOnePage").hidden = mr || as || or || cp;
+    $("#btnJumpAi").hidden = mr || as || or || cp; // the AI review belongs to the exit risk report
     if (!PRINT) {
       const url = new URL(location.href);
       if (state.view !== "exit") url.searchParams.set("view", state.view); else url.searchParams.delete("view");
@@ -3001,6 +3153,7 @@
     if (state.view === "multiregion" && !state.mr) loadMultiRegion();
     if (state.view === "assurance" && !state.as) loadAssurance();
     if (state.view === "outage" && !state.or) loadOutage();
+    if (state.view === "compromise" && !state.cp) loadCompromise();
     Object.values(state.charts).forEach((c) => c.resize());
   }
 
@@ -3778,14 +3931,14 @@
 
   // While a report is being built and nothing of it is on screen yet (a refresh, a new scan, a filter
   // change on a view not shown before), say so instead of leaving the page blank.
-  const VIEW_NAMES = { exit: "Exit Risk Report", multiregion: "Multi-Region Report", assurance: "Cloud Assurance Report", outage: "Outage Risk Report" };
+  const VIEW_NAMES = { exit: "Exit Risk Report", multiregion: "Multi-Region Report", assurance: "Cloud Assurance Report", outage: "Outage Risk Report", compromise: "Developer Compromise Report" };
   function loading(view, on) {
     state.loading = { ...(state.loading || {}), [view]: on };
     syncLoading();
   }
   function syncLoading() {
     const v = state.view || "exit";
-    const shown = v === "exit" ? state.report : v === "multiregion" ? state.mr : v === "outage" ? state.or : state.as;
+    const shown = v === "exit" ? state.report : v === "multiregion" ? state.mr : v === "outage" ? state.or : v === "compromise" ? state.cp : state.as;
     const el = $("#viewLoading");
     // Every view waits for the scan's report first.
     const on = !!(state.loading?.[v] || state.loading?.exit) && !shown;

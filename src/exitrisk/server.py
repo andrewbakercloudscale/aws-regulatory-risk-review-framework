@@ -40,6 +40,7 @@ from .build_info import build_info
 from .catalog import load_catalog
 from .collectors import organizations
 from .compare import compare_scans
+from .compromise import build_compromise
 from .demo import create_demo_scan
 from .estimate import CICD_LABELS, DC_FACILITY_LABELS, IAC_LABELS, TARGET_LABELS, TARGET_PATTERN, Questionnaire
 from .filtering import AccountFilter, FilterError
@@ -109,6 +110,14 @@ class ScanRequest(BaseModel):
 
 class CompleteRequest(BaseModel):
     eks: bool = False  # also read again the accounts with an EKS cluster that could not be read
+
+
+class CompromiseRequest(BaseModel):
+    scan_id: str
+
+
+class CompromiseRunRequest(BaseModel):
+    accounts: list[Annotated[str, Field(pattern=r"^\d{12}$")]] = Field(min_length=1, max_length=40)
 
 
 class SSOSessionRequest(BaseModel):
@@ -532,6 +541,42 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return job.snapshot()
+
+    @app.post("/api/scans/{scan_id}/compromise")
+    def run_compromise(scan_id: str, req: CompromiseRunRequest):
+        """A new scan: the Developer Compromise checks in the picked accounts, everything else kept."""
+        try:
+            s = store.load_scan(scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        if s.get("mode") != "live":
+            raise HTTPException(400, "the developer compromise checks need a live scan")
+        known = {a["id"] for a in s.get("accounts") or []}
+        if set(req.accounts) - known:
+            raise HTTPException(400, "pick accounts from this scan")
+        fields = ScanParams.__dataclass_fields__
+        params = {
+            k: v
+            for k, v in (s.get("params") or {}).items()
+            if k in fields and not k.startswith("completes") and k != "compromise_accounts"
+        }
+        pair = sso.profile_permission_set(params.get("profile"))
+        if pair and not sso.load_token(pair[0]):
+            raise HTTPException(401, f"Your AWS sign-in ({pair[0]}) has ended. Sign in again, then run the checks.")
+        params["label"] = f"Developer compromise, {len(req.accounts)} account(s)"[:120]
+        try:
+            job = start_scan(ScanParams(**params, completes=scan_id, compromise_accounts=sorted(set(req.accounts))))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return job.snapshot()
+
+    @app.post("/api/compromise")
+    def compromise_report(req: CompromiseRequest):
+        try:
+            s = store.load_scan(req.scan_id)
+        except store.ScanNotFound as exc:
+            raise HTTPException(404, "scan not found") from exc
+        return build_compromise(s)
 
     @app.post("/api/scans/{scan_id}/cancel")
     def cancel_scan(scan_id: str):

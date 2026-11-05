@@ -326,6 +326,7 @@ Full detail, including the estimate model and its limitations: [docs/METHODOLOGY
 | [METHODOLOGY.md](docs/METHODOLOGY.md) | Scoring, weighting and estimate formulas; assumptions; limitations |
 | [AI_REVIEW.md](docs/AI_REVIEW.md) | The optional AI review: providers, passes, what is sent, keys |
 | [CLOUD_ASSURANCE.md](docs/CLOUD_ASSURANCE.md) | The Cloud Assurance Framework Report: every rule, rulesets, scoring, permissions |
+| [DEVELOPER_COMPROMISE.md](docs/DEVELOPER_COMPROMISE.md) | The Developer Compromise Report: assumes laptops and pipelines are compromised, and checks each money-moving flow is immutable or observed |
 | [OUTAGE_RISK.md](docs/OUTAGE_RISK.md) | The Outage Risk Report: what is checked, how severity is set, the evidence on outage causes, what is not measured |
 | [MULTI_REGION.md](docs/MULTI_REGION.md) | The Multi-Region Report: run and build cost, team growth, recovery time per service, region choice |
 | [SERVICE_CATALOG.md](docs/SERVICE_CATALOG.md) | Every service's tier, rationale, migration path, equivalents, duration |
