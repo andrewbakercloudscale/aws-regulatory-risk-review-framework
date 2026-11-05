@@ -314,8 +314,8 @@ def test_a_database_open_only_to_the_proxy_and_known_ranges_is_not_direct(read):
     }
     r = build_compromise(scan, {"proxy": ["sg-proxy"], "known": ["10.20.0.0/16", "165.225.10.0/24"]})
     assert not [f for f in r["findings"] if f["rule"] == "db_direct"]
-    db = next(x for x in r["flows"] if x["kind"] == "database")
-    assert "proxy sg-proxy" in db["immutable_why"]
+    db = [x for x in r["flows"] if x["kind"] == "database"]
+    assert all("proxy sg-proxy" in x["immutable_why"] for x in db)  # listed only while still a gap
 
 
 def test_every_rule_the_report_uses_is_in_the_catalogue():

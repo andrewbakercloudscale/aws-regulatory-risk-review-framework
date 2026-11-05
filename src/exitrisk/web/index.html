@@ -898,7 +898,9 @@
       <p class="muted">Assumes developers' laptops and the pipelines are already compromised. For every money-moving flow in the chosen accounts: who could change it, whether the change is prevented (immutable), and whether it is recorded and alerted (observable).</p>
       <div id="cpCoverage" class="coverage" role="alert" hidden></div>
       <dl id="cpMeta" class="meta"></dl>
-      <p class="no-print"><button type="button" class="btn" id="btnCpChange">Change the accounts</button></p>
+      <p class="no-print cp-tools"><button type="button" class="btn" id="btnCpChange">Change the accounts</button>
+        <label class="check cp-crit"><input type="checkbox" id="cpOnlyCrit"> Show only critical</label>
+        <span id="cpAcctChip" class="cp-chip" hidden></span></p>
     </section>
 
     <details class="card cp-known no-print" id="cpKnown">
@@ -914,9 +916,11 @@
     </details>
 
     <section class="section" id="cp-summary">
-      <h2><span class="num">1</span>Bottom line</h2>
+      <h2><span class="num">1</span>Executive summary</h2>
       <div class="card brief">
+        <p class="brief-eyebrow">Bottom line</p>
         <p class="brief-headline" id="cpHeadline"></p>
+        <div id="cpExec" class="cp-exec"></div>
         <div class="brief-cols">
           <div><h3>What we found</h3><ul class="leads" id="cpFindings"></ul></div>
           <div><h3>What to do first</h3><ol class="leads" id="cpActions"></ol></div>
@@ -925,11 +929,37 @@
       <div class="tiles" id="cpTiles"></div>
     </section>
 
+    <section class="section" id="cp-focus">
+      <h2><span class="num">2</span>Where to focus</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Accounts by risk</h3>
+          <p class="muted small"><span class="cp-sevnote">Critical, high and medium</span> findings in each account, most first. Select an account to see only its findings and gaps.</p>
+          <div id="cpAccBars" class="or-bars"></div>
+        </div>
+        <div class="card">
+          <h3>Money-moving resources with a gap, by account</h3>
+          <p class="muted small">Red: can be changed unseen. Amber: recorded, but no alert fires.</p>
+          <div id="cpGapAcc" class="or-bars"></div>
+        </div>
+        <div class="card">
+          <h3>Gaps by kind of resource</h3>
+          <p class="muted small">Which flows to fix across accounts: one control often closes many.</p>
+          <div id="cpGapKind" class="or-bars"></div>
+        </div>
+        <div class="card">
+          <h3>Findings by control area</h3>
+          <p class="muted small"><span class="cp-sevnote">Critical, high and medium</span>.</p>
+          <div id="cpAreaBars" class="or-bars"></div>
+        </div>
+      </div>
+    </section>
+
     <section class="section" id="cp-flows">
-      <h2><span class="num">2</span>Money-moving resources: immutable or observed?</h2>
+      <h2><span class="num">3</span>Money-moving resources with a gap</h2>
       <div class="card">
         <p class="brief-headline" id="cpFlowLead"></p>
-        <p class="muted small">Each money-moving resource and its main change: who could make it (people and pipelines, all assumed compromised), whether the resource itself prevents or undoes it, and whether CloudTrail records it and an alert in this account fires. "Neither" is the gap to close first.</p>
+        <p class="muted small">Only resources that need action. <strong>Unseen</strong>: nothing prevents the change (no Object Lock, code signing or immutable tags) and CloudTrail does not record it, so a compromised laptop or pipeline could change it with no trace. <strong>Recorded, no alert</strong>: CloudTrail records it, but no alert fires in this account, so it is found only by someone looking. Resources that are immutable, or whose changes raise an alert, are left out.</p>
         <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-flows">Export table to PDF</button></p>
         <div class="table-wrap"><table class="data compact" id="cpFlows"></table></div>
         <p id="cpFlowMore" class="muted small"></p>
@@ -937,7 +967,7 @@
     </section>
 
     <section class="section" id="cp-top">
-      <h2><span class="num">3</span>Findings, worst first</h2>
+      <h2><span class="num">4</span>Findings, worst first</h2>
       <div class="card">
         <p class="muted small">Each line is a change a compromised person or pipeline could make, or a gap that would hide it. Severity starts high for money-moving resources, drops one level when CloudTrail records the action and two when an alert in the account fires on it, and one more when the path works only from certain networks.</p>
         <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-top">Export table to PDF</button></p>
@@ -946,17 +976,17 @@
     </section>
 
     <section class="section" id="cp-areas">
-      <h2><span class="num">4</span>By control area</h2>
+      <h2><span class="num">5</span>By control area</h2>
       <div class="card"><div class="table-wrap"><table class="data compact" id="cpAreas"></table></div></div>
     </section>
 
     <section class="section" id="cp-accounts">
-      <h2><span class="num">5</span>By account</h2>
+      <h2><span class="num">6</span>By account</h2>
       <div class="card"><div class="table-wrap"><table class="data compact" id="cpAccounts"></table></div></div>
     </section>
 
     <section class="section" id="cp-people">
-      <h2><span class="num">6</span>Who can act</h2>
+      <h2><span class="num">7</span>Who can act</h2>
       <div class="card">
         <p class="muted small">Permission sets, IAM users, pipeline roles and the roles a person can switch into. "Can change" counts the resources each can change or read by hand; "blocked by a guardrail" counts what an SCP stops.</p>
         <div class="table-wrap"><table class="data compact" id="cpPeople"></table></div>
@@ -964,7 +994,7 @@
     </section>
 
     <section class="section" id="cp-changes">
-      <h2><span class="num">7</span>Changes people made by hand, last 30 days</h2>
+      <h2><span class="num">8</span>Changes people made by hand, last 30 days</h2>
       <div class="card">
         <p class="muted small">Writes by people's own sign-ins, from CloudTrail. A change from a laptop's CLI, SDK or Terraform is what a stolen session looks like: each one should have a reason.</p>
         <div class="table-wrap"><table class="data compact" id="cpChanges"></table></div>
@@ -972,7 +1002,7 @@
     </section>
 
     <section class="section" id="cp-all">
-      <h2><span class="num">8</span>Every finding</h2>
+      <h2><span class="num">9</span>Every finding</h2>
       <div class="card">
         <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-all">Export table to PDF</button></p>
         <div class="table-wrap"><table class="data compact" id="cpAll"></table></div>
@@ -980,7 +1010,7 @@
     </section>
 
     <section class="section" id="cp-blind">
-      <h2><span class="num">9</span>What this cannot see from AWS</h2>
+      <h2><span class="num">10</span>What this cannot see from AWS</h2>
       <div class="card"><ul class="leads" id="cpBlind"></ul></div>
     </section>
     <p id="cpFooter" class="muted small"></p>

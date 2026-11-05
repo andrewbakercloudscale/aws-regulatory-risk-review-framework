@@ -6,6 +6,14 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- Developer Compromise: an executive summary; a Where to focus section with accounts by risk, gaps by account, gaps by kind of resource and findings by control area; a Show only critical switch; and selecting an account narrows the report to it.
+
+### Changed
+- Developer Compromise lists only what needs action: resources that are immutable or alerted are counted, not listed. "Neither" is now "Unseen" (nothing prevents the change and nothing records it).
+- Developer Compromise: rules AWS services create for themselves (Inspector, Auto Scaling) no longer count as alerts. They had marked many function changes as observed.
+- Developer Compromise: a simulator call IAM answers empty is retried instead of losing the account's paths.
+
 ## [0.29.1] - 2026-11-05
 
 ### Added

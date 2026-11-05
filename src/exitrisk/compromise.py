@@ -15,7 +15,7 @@ from importlib import resources
 import yaml
 
 from . import zscaler
-from .collectors.compromise import ACTIONS, KEY_DAYS, _data_selector_covers, _management
+from .collectors.compromise import ACTIONS, KEY_DAYS, MANAGED_RULE, _data_selector_covers, _management
 
 SEV = ("critical", "high", "medium", "low")
 LONG_SESSION_HOURS = 4
@@ -44,6 +44,12 @@ def _lower(sev: str, steps: int) -> str:
     return SEV[min(SEV.index(sev) + max(steps, 0), len(SEV) - 1)]
 
 
+def _alert_rules(raw: dict) -> list[dict]:
+    """The account's alert rules, without those an AWS service made for its own use (Inspector's and Auto
+    Scaling's managed rules match API calls too, but alert nobody)."""
+    return [r for r in (raw.get("detect") or {}).get("rules") or [] if not MANAGED_RULE.search(r.get("name", ""))]
+
+
 def _detection(raw: dict, asset: dict, action: str) -> tuple[str, str]:
     """("alert" | "logged" | "not logged" | "unknown", what says so) for one action on one asset."""
     trails = (raw.get("detect") or {}).get("trails") or []
@@ -69,7 +75,7 @@ def _detection(raw: dict, asset: dict, action: str) -> tuple[str, str]:
         return "not logged", f"CloudTrail does not record it: {what}"
     names = {c.split(":")[1] for c in calls}
     service = calls[0].split(":")[0]
-    for r in (raw.get("detect") or {}).get("rules") or []:
+    for r in _alert_rules(raw):
         sources = {s.replace("aws.", "") for s in r["sources"]}
         if asset["kind"] == "bucket" and kind == "data" and "s3" in sources and asset["facts"].get("eventbridge"):
             if not r["types"] or any(t.startswith("Object ") for t in r["types"]):
@@ -491,7 +497,7 @@ def _role_alerts(account: dict, raw: dict, principals: dict, assets: dict, paths
     )
     if not risky:
         return []
-    rules = (raw.get("detect") or {}).get("rules") or []
+    rules = _alert_rules(raw)
     arns = {principals[r]["arn"] for r in risky if r in principals}
     named = {r for rule in rules for r in rule.get("roles") or []}
     general = [
@@ -701,7 +707,7 @@ def _detection_findings(account: dict, raw: dict, assets: dict) -> list[dict]:
                 evidence=[f"S3 protection off in {', '.join(no_s3)}"],
             )
         )
-    rules = d.get("rules") or []
+    rules = _alert_rules(raw)
     if (checks.get("detection") or {}).get("status") != "unknown" and not any(
         r["people"] or "AWS API Call via CloudTrail" in r["types"] for r in rules
     ):
@@ -954,7 +960,7 @@ def build_compromise(scan: dict, answers: dict | None = None) -> dict:
         "people": people[:300],
         "changes": sorted(changes, key=lambda c: (c["tool"] == "Console", -c["count"]))[:200],
         "blind_spots": cat["blind_spots"],
-        "flows": flows[:400],
+        "flows": [f for f in flows if f["verdict"] in ("neither", "recorded only")][:500],
         "known": {
             "proxy": sorted(known["proxy"]) + known["proxy_names"],
             "known": sorted(known["ids"] - known["proxy"]),

@@ -2450,22 +2450,44 @@
       $("#cpCoverage").textContent = gaps.length ? `Not everything could be read: ${gaps.join("; ")}. What was not read is not a pass.` : "";
       const crit = r.findings.filter((f) => f.severity === "critical");
       const fc = r.flow_counts || {};
-      $("#cpHeadline").textContent = `Assuming laptops and pipelines are compromised: ${plural(fc.neither || 0, "money-moving resource")} can be changed with nothing preventing or recording it, and ${num(fc["recorded only"] || 0)} more are recorded but raise no alert. ${plural(s.critical, "critical finding")} and ${num(s.high)} high across ${plural(s.accounts, "account")}.`;
-      const VERDICT = { neither: ["Neither", "var(--sev-critical)"], "recorded only": ["Recorded, no alert", "var(--sev-warning)"], observed: ["Observed", "var(--good)"], protected: ["Immutable", "var(--good)"] };
+      // "Show only critical" and a chosen account narrow every table and chart below the summary.
+      const only = state.cpCrit, acct = state.cpAcct;
+      const keep = (f) => (!only || f.severity === "critical") && (!acct || f.account === acct);
+      const V = {
+        findings: r.findings.filter(keep),
+        flows: r.flows.filter((x) => (!only || x.verdict === "neither") && (!acct || x.account === acct)),
+      };
+      V.top = V.findings.filter((f) => f.severity === "critical" || f.severity === "high").slice(0, 60);
+      $("#cpOnlyCrit").checked = !!only;
+      $("#cpAcctChip").hidden = !acct;
+      $("#cpAcctChip").innerHTML = acct ? `Showing ${esc(acct)} <button type="button" class="link-btn" id="btnCpAllAcct">Show all accounts</button>` : "";
+      const worst = r.accounts.filter((a) => a.critical).slice(0, 3);
+      $("#cpHeadline").textContent = `If a developer's laptop or a pipeline were compromised today, ${plural(fc.neither || 0, "money-moving resource")} could be changed with nothing to stop or record it. ${plural(s.critical, "critical finding")} across ${plural(new Set(crit.map((f) => f.account)).size, "account")} need action.`;
+      const rule = (id) => r.findings.filter((f) => f.rule === id);
+      const dbs = rule("db_direct").reduce((n, f) => n + (f.count || 1), 0);
+      const exec = [
+        `<p><strong>What was checked.</strong> ${plural(s.accounts, "payment and channel account")}, ${num(s.payment_assets)} money-moving resources (payment files, ledgers, databases, functions, images, secrets, signing keys, APIs) and ${num(s.principals)} people, roles and pipelines. Every path is decided by AWS's own policy simulator, so each finding names who can act and which policy allows it.</p>`,
+        `<p><strong>The exposure.</strong> People's own sign-ins and the pipelines can change ${plural((fc.neither || 0) + (fc["recorded only"] || 0), "money-moving resource")} directly. For ${num(fc.neither || 0)} of them nothing would record the change; for ${num(fc["recorded only"] || 0)} it is recorded but nothing alerts.${dbs ? ` ${plural(dbs, "database")} accept connections from address ranges other than the proxy, so a laptop does not need the proxy to insert or delete rows.` : ""}</p>`,
+        worst.length ? `<p><strong>Where to start.</strong> ${worst.map((a) => `${esc(a.name)} (${num(a.critical)} critical)`).join(", ")}${r.accounts.filter((a) => a.critical).length > 3 ? `, then the ${num(r.accounts.filter((a) => a.critical).length - 3)} other accounts with a critical finding` : ""}. Section 2 ranks every account.</p>` : "",
+      ];
+      $("#cpExec").innerHTML = exec.join("");
+      const VERDICT = { neither: ["Unseen", "var(--sev-critical)"], "recorded only": ["Recorded, no alert", "var(--sev-warning)"] };
       const IMM = { immutable: "Immutable", recoverable: "Can be undone", changeable: "Changeable" };
-      $("#cpFlowLead").textContent = `${num(fc.neither || 0)} neither immutable nor recorded, ${num(fc["recorded only"] || 0)} recorded with no alert, ${num(fc.observed || 0)} observed, ${num(fc.protected || 0)} immutable or out of reach.`;
-      const fl = PRINT ? r.flows.filter((x) => x.verdict !== "protected").slice(0, 200) : r.flows;
-      $("#cpFlows").innerHTML = r.flows.length ? `<thead><tr><th>Verdict</th><th>Resource</th><th>Account</th><th>The change</th><th class="num-cell">People</th><th class="num-cell">Pipelines</th><th>Prevented</th><th>Recorded and alerted</th></tr></thead><tbody>${fl.map((x) => `<tr><td>${pill(null, VERDICT[x.verdict][0], VERDICT[x.verdict][1])}</td><td><strong class="mono small">${esc(x.name)}</strong><div class="muted small">${esc(x.kind)}${x.region && x.region !== "global" ? `, ${esc(x.region)}` : ""}</div></td><td class="small">${esc(x.account)}</td><td class="small">${esc(x.what)}</td><td class="num-cell">${num(x.people)}</td><td class="num-cell">${num(x.pipelines)}</td><td class="small">${esc(IMM[x.immutable] || x.immutable)}${x.immutable_why ? `<div class="muted">${esc(x.immutable_why)}</div>` : ""}</td><td>${cpDetect(x.detect)}<div class="muted small">${esc(x.detect_why)}</div></td></tr>`).join("")}</tbody>` : "<tbody><tr><td>No money-moving resource found in the chosen accounts.</td></tr></tbody>";
-      $("#cpFlowMore").textContent = PRINT && r.flows.length > fl.length ? `The ${num(fl.length)} not yet immutable or observed; the full list is in the console.` : "";
+      $("#cpFlowLead").textContent = `${plural(fc.neither || 0, "money-moving resource")} can be changed unseen, and ${num(fc["recorded only"] || 0)} more are recorded but raise no alert. ${num((fc.observed || 0) + (fc.protected || 0))} are immutable or alerted, and are left out.`;
+      const fl = PRINT ? V.flows.slice(0, 200) : V.flows;
+      $("#cpFlows").innerHTML = fl.length ? `<thead><tr><th>Verdict</th><th>Resource</th><th>Account</th><th>The change</th><th class="num-cell">People</th><th class="num-cell">Pipelines</th><th>Prevented</th><th>Recorded and alerted</th></tr></thead><tbody>${fl.map((x) => `<tr><td>${pill(null, VERDICT[x.verdict][0], VERDICT[x.verdict][1])}</td><td><strong class="mono small">${esc(x.name)}</strong><div class="muted small">${esc(x.kind)}${x.region && x.region !== "global" ? `, ${esc(x.region)}` : ""}</div></td><td class="small">${esc(x.account)}</td><td class="small">${esc(x.what)}</td><td class="num-cell">${num(x.people)}</td><td class="num-cell">${num(x.pipelines)}</td><td class="small">${esc(IMM[x.immutable] || x.immutable)}${x.immutable_why ? `<div class="muted">${esc(x.immutable_why)}</div>` : ""}</td><td>${cpDetect(x.detect)}<div class="muted small">${esc(x.detect_why)}</div></td></tr>`).join("")}</tbody>` : "<tbody><tr><td>No money-moving resource found in the chosen accounts.</td></tr></tbody>";
+      $("#cpFlowMore").textContent = V.flows.length > fl.length ? `The first ${num(fl.length)} of ${num(V.flows.length)}; the full list is in the console.` : "";
       const found = [];
       const byRule = (id) => r.findings.filter((f) => f.rule === id);
       const pay = byRule("person_payment_write").length, sign = byRule("person_sign").length, db = byRule("person_db").length;
-      if (pay) found.push(`${plural(pay, "payment resource")} a compromised person or pipeline can change with no alert.`);
+      const nPay = byRule("person_payment_write").reduce((n, f) => n + (f.count || 1), 0);
+      if (pay) found.push(`${plural(nPay, "payment resource")} a compromised person or pipeline can change with no alert.`);
       if (sign) found.push(`${plural(sign, "signing key")} a person can sign with.`);
-      if (db) found.push(`${plural(db, "way")} a person can get into a payment database.`);
-      if (byRule("db_direct").length) found.push(`${plural(byRule("db_direct").length, "database")} reachable directly from sources that are not known paths, so a laptop need not go through the proxy.`);
+      if (db) found.push(`${plural(byRule("person_db").reduce((n, f) => n + (f.count || 1), 0), "payment database")} a person can get into: admin password, password reset, AWS sign-in or the Data API.`);
+      const nDirect = byRule("db_direct").reduce((n, f) => n + (f.count || 1), 0);
+      if (nDirect) found.push(`${plural(nDirect, "database")} reachable directly from sources that are not known paths, so a laptop need not go through the proxy.`);
       if (byRule("user_keys_write").length) found.push(`${plural(byRule("user_keys_write").length, "IAM user")} with a long-lived access key that can change production.`);
-      if (byRule("pipeline_trust_open").length) found.push(`${plural(byRule("pipeline_trust_open").length, "pipeline role")} that trusts more repositories or branches than it should.`);
+      if (byRule("pipeline_trust_open").length) found.push(`${plural(byRule("pipeline_trust_open").length, "pipeline role")} trusting more repositories or branches than they should.`);
       if (s.laptop_changes) found.push(`${plural(s.laptop_changes, "change")} to production from a laptop's command line in the last 30 days.`);
       if (byRule("data_events_off").length) found.push(`Writes to payment data are not recorded in ${plural(byRule("data_events_off").length, "account")}.`);
       if (!found.length) found.push("No person can change a money-moving resource by hand, and nothing found hides a change.");
@@ -2473,7 +2495,7 @@
       $("#cpActions").innerHTML = r.areas.filter((a) => a.critical || a.high).slice(0, 5).map((a) => `<li><strong>${esc(a.label)}.</strong> ${esc(a.action)}</li>`).join("") || "<li>Keep it this way: re-run after every access change.</li>";
       $("#cpTiles").innerHTML = [
         tile("Critical findings", num(s.critical), `${num(s.high)} high, ${num(s.medium)} medium`),
-        tile("Neither prevented nor recorded", num(fc.neither || 0), "money-moving resources"),
+        tile("Can be changed unseen", num(fc.neither || 0), "money-moving resources"),
         tile("Recorded, no alert", num(fc["recorded only"] || 0), "money-moving resources"),
         tile("Changes from a laptop", num(s.laptop_changes), "CLI, SDK or Terraform, last 30 days"),
         tile("Money-moving resources", num(s.payment_assets), `of ${num(s.assets)} read`),
@@ -2481,8 +2503,9 @@
       ].join("");
       const rowOf = (f, i) => `<tr><td class="num-cell">${i + 1}</td><td>${orSev(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small"><span class="mono">${esc(f.asset)}</span>${f.asset_kind ? ` <span class="muted">${esc(f.asset_kind)}${f.region ? `, ${esc(f.region)}` : ""}</span>` : ""}</div>${f.what ? `<div class="small">${esc(f.what)}</div>` : ""}${(f.evidence || []).length ? `<div class="muted small">${esc(f.evidence.slice(0, 3).join("; "))}</div>` : ""}${(f.via || []).length ? `<div class="muted small">${esc(f.via.join("; "))}</div>` : ""}</td><td class="small">${esc(f.account)}</td><td class="cp-who">${esc((f.who || []).slice(0, 4).join(", "))}${(f.who || []).length > 4 ? ` <span class="muted">and ${num(f.who.length - 4)} more</span>` : ""}</td><td>${cpDetect(f.detect)}${f.detect_why ? `<div class="muted small">${esc(f.detect_why)}</div>` : ""}${f.network ? '<div class="muted small">only from certain networks</div>' : ""}</td><td class="small">${esc(f.fix)}</td></tr>`;
       const head = `<thead><tr><th class="num-cell">#</th><th>Severity</th><th>What</th><th>Account</th><th>Who</th><th>Would anyone notice</th><th>What to do</th></tr></thead>`;
-      $("#cpTop").innerHTML = r.top.length ? `${head}<tbody>${r.top.map(rowOf).join("")}</tbody>` : "<tbody><tr><td>No critical or high finding.</td></tr></tbody>";
-      $("#cpAll").innerHTML = `${head}<tbody>${(PRINT ? r.findings.slice(0, 300) : r.findings).map(rowOf).join("")}</tbody>`;
+      $("#cpTop").innerHTML = V.top.length ? `${head}<tbody>${V.top.map(rowOf).join("")}</tbody>` : "<tbody><tr><td>No critical or high finding.</td></tr></tbody>";
+      $("#cpAll").innerHTML = `${head}<tbody>${(PRINT ? V.findings.slice(0, 300) : V.findings).map(rowOf).join("")}</tbody>`;
+      renderCpFocus(r, V);
       $("#cpAreas").innerHTML = `<thead><tr><th>Area</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th>What good looks like</th></tr></thead><tbody>${r.areas.map((a) => `<tr><td><strong>${esc(a.label)}</strong></td><td class="num-cell">${num(a.critical)}</td><td class="num-cell">${num(a.high)}</td><td class="num-cell">${num(a.medium)}</td><td class="small">${esc(a.action)}</td></tr>`).join("")}</tbody>`;
       $("#cpAccounts").innerHTML = `<thead><tr><th>Account</th><th class="num-cell">Critical</th><th class="num-cell">High</th><th class="num-cell">Medium</th><th class="num-cell">Resources</th><th class="num-cell">Money-moving</th><th class="num-cell">People and pipelines</th><th>Not read</th></tr></thead><tbody>${r.accounts.map((a) => `<tr><td><strong>${esc(a.name)}</strong><div class="muted small">${esc(a.ou_path || a.id)}</div></td><td class="num-cell">${num(a.critical)}</td><td class="num-cell">${num(a.high)}</td><td class="num-cell">${num(a.medium)}</td><td class="num-cell">${num(a.assets)}</td><td class="num-cell">${num(a.payment_assets)}</td><td class="num-cell">${num(a.principals)}</td><td class="small">${esc(a.unknown.join(", ") || EMPTY)}</td></tr>`).join("")}</tbody>`;
       const KIND = { person: "Person", user: "IAM user", pipeline: "Pipeline", outside: "Outside the organisation", role: "Role people switch into", cross: "Role from another account" };
@@ -2503,6 +2526,36 @@
     setView("compromise");
     if (!state.cp) { loadCompromise().then(() => $("#cpPick").scrollIntoView({ block: "start" })); return; }
     $("#cpPick").scrollIntoView({ block: "start" });
+  }
+
+  function renderCpFocus(r, V) {
+    const only = state.cpCrit;
+    const sevs = only ? ["critical"] : ["critical", "high", "medium"];
+    for (const el of document.querySelectorAll(".cp-sevnote")) el.textContent = only ? "Critical" : "Critical, high and medium";
+    const stack = (parts, max) => parts.map(([n, color, label]) => (n ? `<i style="width:${((100 * n) / max).toFixed(1)}%;background:${color}" title="${num(n)} ${esc(label)}"></i>` : "")).join("");
+    const bars = (rows, max, note) => rows.map((x) => `<div class="or-bar"><div class="or-bar-name">${x.name}</div><div class="or-bar-track is-stack">${stack(x.parts, max)}</div><div class="or-bar-note small">${note(x)}</div></div>`).join("");
+    const accBtn = (name) => `<button type="button" class="link-btn" data-cp-acct="${esc(name)}">${esc(name)}</button>`;
+    // Accounts by risk: counted from every finding, so the ranking does not change with the account chosen.
+    const per = {};
+    for (const f of r.findings) if (sevs.includes(f.severity)) { const a = (per[f.account] ||= { critical: 0, high: 0, medium: 0 }); a[f.severity] += 1; }
+    const accs = Object.entries(per).map(([name, c]) => ({ name, ...c })).sort((a, b) => b.critical - a.critical || b.high - a.high || b.medium - a.medium).slice(0, 25);
+    const amax = Math.max(1, ...accs.map((a) => sevs.reduce((n, k) => n + a[k], 0)));
+    $("#cpAccBars").innerHTML = accs.length ? bars(accs.map((a) => ({ name: accBtn(a.name), parts: sevs.map((k) => [a[k], OR_SEV_COLOR[k], k]), a })), amax, (x) => sevs.map((k) => num(x.a[k])).join(" / ")) : '<p class="muted small">No finding at this level.</p>';
+    const gap = (key) => {
+      const g = {};
+      for (const x of r.flows) if (!only || x.verdict === "neither") { const e = (g[x[key]] ||= { unseen: 0, recorded: 0 }); e[x.verdict === "neither" ? "unseen" : "recorded"] += 1; }
+      return Object.entries(g).map(([name, c]) => ({ name, ...c })).sort((a, b) => b.unseen - a.unseen || b.recorded - a.recorded);
+    };
+    const ga = gap("account").slice(0, 25), gk = gap("kind");
+    const gmax = (rows) => Math.max(1, ...rows.map((x) => x.unseen + x.recorded));
+    const gparts = (x) => [[x.unseen, "var(--sev-critical)", "unseen"], [x.recorded, "var(--sev-warning)", "recorded, no alert"]];
+    const gnote = (x) => `${num(x.unseen)} unseen${only ? "" : ` · ${num(x.recorded)} no alert`}`;
+    const KINDS = { table: "DynamoDB tables", bucket: "S3 buckets", function: "Lambda functions", secret: "Secrets", database: "Databases", service: "ECS services", repository: "Image repositories", "signing key": "Signing keys", api: "APIs" };
+    $("#cpGapAcc").innerHTML = ga.length ? bars(ga.map((x) => ({ ...x, name: accBtn(x.name), parts: gparts(x) })), gmax(ga), gnote) : '<p class="muted small">No gap.</p>';
+    $("#cpGapKind").innerHTML = gk.length ? bars(gk.map((x) => ({ ...x, name: esc(KINDS[x.name] || x.name), parts: gparts(x) })), gmax(gk), gnote) : '<p class="muted small">No gap.</p>';
+    const areas = r.areas.map((a) => ({ ...a, sum: sevs.reduce((n, k) => n + a[k], 0) })).filter((a) => a.sum).sort((a, b) => b.critical - a.critical || b.sum - a.sum);
+    const armax = Math.max(1, ...areas.map((a) => a.sum));
+    $("#cpAreaBars").innerHTML = areas.length ? bars(areas.map((a) => ({ name: esc(a.label), parts: sevs.map((k) => [a[k], OR_SEV_COLOR[k], k]), a })), armax, (x) => sevs.map((k) => num(x.a[k])).join(" / ")) : '<p class="muted small">No finding at this level.</p>';
   }
 
   function renderCpPicker(r) {
@@ -3082,6 +3135,12 @@
     $("#btnOrScan").addEventListener("click", () => { openScanDialog().then(() => { $("#sOutage").checked = true; $("#sOutage").dispatchEvent(new Event("change")); }); });
     $("#btnOrDemo").addEventListener("click", () => $("#btnDemo").click());
     $("#btnCpRetry").addEventListener("click", () => loadCompromise());
+    $("#cpOnlyCrit").addEventListener("change", (e) => { state.cpCrit = e.target.checked; renderCp(); });
+    document.addEventListener("click", (e) => {
+      const a = e.target.closest("[data-cp-acct]");
+      if (a) { state.cpAcct = a.dataset.cpAcct; renderCp(); $("#cp-flows").scrollIntoView({ block: "start" }); return; }
+      if (e.target.closest("#btnCpAllAcct")) { state.cpAcct = ""; renderCp(); }
+    });
     $("#btnCpOpen").addEventListener("click", (e) => { $("#scanSelect").value = e.currentTarget.dataset.scan; $("#scanSelect").dispatchEvent(new Event("change")); });
     $("#btnCpKnown").addEventListener("click", () => {
       const a = { proxy: cpSplit($("#cpProxy").value), known: cpSplit($("#cpKnownList").value), laptop: cpSplit($("#cpLaptop").value), zscaler: $("#cpZscaler").checked };

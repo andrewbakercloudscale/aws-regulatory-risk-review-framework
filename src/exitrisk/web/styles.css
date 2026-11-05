@@ -957,3 +957,9 @@ body[data-view="compromise"] #btnJumpAi { display: none; }
 .dialog-x:hover, .dialog-x:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); border-color: var(--border); }
 .dialog-x svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 @media print { .dialog-x { display: none; } }
+.cp-tools { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.cp-crit { font-weight: 600; }
+.cp-chip { display: inline-flex; gap: 8px; align-items: center; padding: 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-size: 13px; }
+.cp-exec { margin: 8px 0 14px; display: grid; gap: 6px; }
+.cp-exec p { margin: 0; }
+#cp-focus .grid-2 { gap: 16px; }

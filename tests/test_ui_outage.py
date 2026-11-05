@@ -196,6 +196,11 @@ def test_the_developer_compromise_view_draws_its_paths_and_the_account_picker(pa
     page.locator(".vtab[data-view='compromise']").click()
     page.wait_for_selector("#cpTop tbody tr")
     assert "Not recorded" in page.locator("#cpTop").inner_text()
+    assert page.locator("#cpAccBars .or-bar").count() > 0 and page.locator("#cpExec p").count() >= 2
+    assert "Observed" not in page.locator("#cpFlows").inner_text()  # actions only
+    page.locator("#cpOnlyCrit").check()
+    assert set(page.locator("#cpTop tbody tr td:nth-child(2)").all_inner_texts()) == {"Critical"}
+    page.locator("#cpOnlyCrit").uncheck()
     page.locator("#btnCpChange").click()
     assert page.locator("#cpList input:checked").count() == 0  # already checked: tick only what to add
     assert page.locator("#cpList").inner_text().count("· checked") == 5

@@ -93,6 +93,11 @@ BREAK_GLASS = re.compile(r"break-?glass|emergency|firecall", re.I)
 # Calls a workload makes on the data plane of a service, logged as writes: not someone changing production.
 DATA_PLANE = ("kafka-cluster", "s3-outposts", "execute-api", "rds-data", "dynamodb")
 NOT_A_CHANGE = {"RefreshCheck", "StartQuery", "GenerateDataKey", "Decrypt", "Encrypt"}
+MANAGED_RULE = re.compile(
+    r"^(DO-NOT-DELETE-|AutoScalingManagedRule|aws-controltower-|AWSControlTower|"
+    r"_?Amazon|SSMExplorerManagedRule|Inspector)",
+    re.I,
+)
 CONSOLE_AGENTS = ("console.amazonaws.com", "signin.amazonaws.com", "AWS Internal")
 TOOLS = (
     ("terraform", "Terraform"),
@@ -1052,7 +1057,9 @@ def task_detection(ctx: CompromiseCtx, region: str) -> None:
     ctx.detect["guardduty"][region] = state
     ev = ctx.client("events", region)
     for rule in _pages(ev, "list_rules", "Rules", cap=MAX_ITEMS):
-        if rule.get("State") != "ENABLED" or not rule.get("EventPattern"):
+        if rule.get("State") != "ENABLED" or not rule.get("EventPattern") or rule.get("ManagedBy"):
+            continue  # a rule a service made for itself (Inspector, Auto Scaling) is not an alert to anyone
+        if MANAGED_RULE.search(rule.get("Name", "")):
             continue
         try:
             pattern = json.loads(rule["EventPattern"])
