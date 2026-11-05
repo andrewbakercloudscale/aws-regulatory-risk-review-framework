@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
+from botocore.parsers import ResponseParserError
 
 from ..aws_session import BOTO_CONFIG, ClientCache, with_backoff
 from ..issues import Issue, describe_exception
@@ -53,6 +54,7 @@ WORKERS = 8
 MAX_ITEMS = 300  # resources of one kind read per region
 MAX_PRINCIPALS = 60  # people, pipelines and outside roles simulated per account
 SIM_CHUNK = 50  # resources per simulator call
+SIM_ATTEMPTS = 4  # IAM answers a burst of simulator calls with an empty response now and then
 CHANGE_DAYS = 30
 CHANGE_PAGES = 120  # pages of 50 write events read per region (about 2 a second, so a minute)
 KEY_DAYS = 90  # an access key older than this is a standing credential
@@ -1337,7 +1339,17 @@ def task_simulate(ctx: CompromiseCtx) -> None:
         p, items, policy = job
         actions = sorted({c for e in items for c in e["calls"]})
         by_res = {e["resource"]: e for e in items}
-        got = _simulate(ctx, p, actions, list(by_res), policy, items[0]["region"])
+        got = None
+        for attempt in range(SIM_ATTEMPTS):
+            try:
+                got = _simulate(ctx, p, actions, list(by_res), policy, items[0]["region"])
+                break
+            except (ClientError, BotoCoreError, ResponseParserError) as exc:  # an empty answer under load: ask again
+                if attempt == SIM_ATTEMPTS - 1:
+                    log.warning("simulate %s for %s failed: %s", p["label"], ctx.account_id, exc)
+                    ctx.r.unknown("access", f"{type(exc).__name__} for {p['label']}")
+                    return
+                time.sleep(2 * (attempt + 1))
         best: dict[tuple, dict] = {}
         for g in got:
             e = by_res.get(g["resource"]) or (items[0] if len(items) == 1 else None)
