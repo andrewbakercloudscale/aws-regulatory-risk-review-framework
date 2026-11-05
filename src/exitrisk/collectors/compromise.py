@@ -242,8 +242,30 @@ def may_allow(docs: list[dict], action: str) -> bool:
     return False
 
 
+# Deny statements that only enforce how a call is made (TLS, encryption headers, signature version) never
+# stop a caller who meets them, so they do not change who can act: the resource policy need not be weighed.
+HOW_KEYS = {
+    "aws:securetransport",
+    "s3:tlsversion",
+    "s3:x-amz-server-side-encryption",
+    "s3:x-amz-server-side-encryption-aws-kms-key-id",
+    "s3:signatureversion",
+    "s3:x-amz-acl",
+    "s3:x-amz-content-sha256",
+    "aws:tlsversion",
+}
+
+
 def has_deny(policy: dict | None) -> bool:
-    return any(isinstance(st, dict) and st.get("Effect") == "Deny" for st in _listify((policy or {}).get("Statement")))
+    """A Deny statement that can stop a caller who calls correctly: one with no condition, or a condition on
+    who or where (a principal, an account, a VPC endpoint), not only on how."""
+    for st in _listify((policy or {}).get("Statement")):
+        if not isinstance(st, dict) or st.get("Effect") != "Deny":
+            continue
+        keys = {k.lower() for c in (st.get("Condition") or {}).values() for k in (c or {})}
+        if not keys or keys - HOW_KEYS:
+            return True
+    return False
 
 
 def _principals(st: dict, key: str) -> list[str]:
@@ -1304,13 +1326,12 @@ def task_simulate(ctx: CompromiseCtx) -> None:
                 entry["calls"][c] = t
         groups: dict[tuple, list[dict]] = {}
         for e in per_res.values():
-            if e["policy"]:
-                jobs.append((p, [e], e["policy"]))
-            else:
-                groups.setdefault((e["region"], tuple(sorted(e["calls"]))), []).append(e)
-        for items in groups.values():
+            policy = json.dumps(e["policy"], sort_keys=True) if e["policy"] else ""
+            # Resources under one policy (a bucket and its objects) are one call with that policy.
+            groups.setdefault((e["region"], tuple(sorted(e["calls"])), policy), []).append(e)
+        for (_, _, policy), items in groups.items():
             for at in range(0, len(items), SIM_CHUNK):
-                jobs.append((p, items[at : at + SIM_CHUNK], None))
+                jobs.append((p, items[at : at + SIM_CHUNK], items[0]["policy"] if policy else None))
 
     def run(job):
         p, items, policy = job

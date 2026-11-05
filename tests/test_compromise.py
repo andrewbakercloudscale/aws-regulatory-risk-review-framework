@@ -341,3 +341,11 @@ def test_without_reads_the_report_offers_the_accounts_to_pick():
                                     {"id": "2", "name": "sandbox", "status": "ACTIVE"}]}  # fmt: skip
     r = build_compromise(scan)
     assert not r["available"] and r["accounts_to_pick"][0]["suggested"] and not r["accounts_to_pick"][1]["suggested"]
+
+
+def test_a_deny_that_only_enforces_tls_or_encryption_does_not_need_the_policy_weighed():
+    tls = {"Statement": [{"Effect": "Deny", "Principal": "*", "Action": "s3:*", "Resource": "*",
+                          "Condition": {"Bool": {"aws:SecureTransport": "false"}}}]}  # fmt: skip
+    who = {"Statement": [{"Effect": "Deny", "Principal": "*", "Action": "s3:PutObject", "Resource": "*",
+                          "Condition": {"ArnNotEquals": {"aws:PrincipalArn": "arn:aws:iam::1:role/app"}}}]}  # fmt: skip
+    assert not collector.has_deny(tls) and collector.has_deny(who)
