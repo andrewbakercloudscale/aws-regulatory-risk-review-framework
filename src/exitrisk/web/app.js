@@ -2426,7 +2426,14 @@
     renderCpPicker(r);
     setView(state.view);
     if (!r.available) {
-      $("#cpEmptyText").textContent = r.reason;
+      // The checks are saved as their own scan: point at the newest one that has them.
+      const withChecks = (state.scans || []).filter((s) => s.compromise && s.id !== state.scanId).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+      $("#btnCpOpen").hidden = !withChecks;
+      if (withChecks) {
+        $("#btnCpOpen").textContent = `Open the report: the scan of ${new Date(withChecks.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} with ${plural(withChecks.compromise, "account")} checked`;
+        $("#btnCpOpen").dataset.scan = withChecks.id;
+      }
+      $("#cpEmptyText").textContent = (withChecks ? "This scan has no developer compromise checks yet; they are saved as their own scan. " : "") + r.reason + (state.runningScan ? " A scan is running now; its report opens here when it finishes." : "");
       if (PRINT) document.body.dataset.ready = "1";
       return;
     }
@@ -3075,6 +3082,7 @@
     $("#btnOrScan").addEventListener("click", () => { openScanDialog().then(() => { $("#sOutage").checked = true; $("#sOutage").dispatchEvent(new Event("change")); }); });
     $("#btnOrDemo").addEventListener("click", () => $("#btnDemo").click());
     $("#btnCpRetry").addEventListener("click", () => loadCompromise());
+    $("#btnCpOpen").addEventListener("click", (e) => { $("#scanSelect").value = e.currentTarget.dataset.scan; $("#scanSelect").dispatchEvent(new Event("change")); });
     $("#btnCpKnown").addEventListener("click", () => {
       const a = { proxy: cpSplit($("#cpProxy").value), known: cpSplit($("#cpKnownList").value), laptop: cpSplit($("#cpLaptop").value), zscaler: $("#cpZscaler").checked };
       try { localStorage.setItem(LS_CP, JSON.stringify(a)); } catch { /* ignore */ }

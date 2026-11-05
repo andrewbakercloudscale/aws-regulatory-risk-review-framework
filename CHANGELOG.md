@@ -6,6 +6,18 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-11-05
+
+### Added
+- Every window has an X to close it.
+- Developer Compromise: on a scan without the checks, a button opens the newest scan that has them.
+
+### Changed
+- The scan-running button stands out: its own colour, bold, with a slow pulse (a steady ring with reduced motion).
+- Developer Compromise: picking more accounts adds them to those already checked, which are kept; an account ticked again is read fresh.
+- Developer Compromise: much faster in accounts with many buckets and repositories. A resource policy is weighed only when its Deny can stop a caller (not one that only enforces TLS or encryption), and resources under one policy share one simulator call.
+
+
 ## [0.29.0] - 2026-11-05
 
 ### Added
