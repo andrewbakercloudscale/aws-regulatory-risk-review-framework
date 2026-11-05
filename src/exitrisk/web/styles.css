@@ -840,9 +840,16 @@ table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 
 .as-rule-table select { min-width: 96px; }
 @media print { .as-hide-print { display: none; } .as-bar { width: 60px; } #as-rules .as-ruleset-bar .btn { display: none; } }
 /* Tinted while a scan runs, filled left to right as it progresses (--pct, set from the status). */
-.btn.scan-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 32%, var(--surface)) var(--pct, 0%), color-mix(in srgb, var(--accent) 12%, var(--surface)) var(--pct, 0%)); }
-.btn.scan-running:hover { border-color: var(--accent); }
+.btn.scan-running { --run: #c2410c; color: #fff; font-weight: 700; border: 2px solid color-mix(in srgb, var(--run) 75%, #000);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--run) 78%, #000) var(--pct, 0%), color-mix(in srgb, var(--run) 80%, #fff) var(--pct, 0%));
+  text-shadow: 0 1px 1px rgba(0,0,0,.35); animation: scan-glow 1.6s ease-in-out infinite; }
+.btn.scan-running:hover { border-color: #000; }
+.btn.scan-running #scanRunPct { font-variant-numeric: tabular-nums; }
+@keyframes scan-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 0%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--run) 35%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .btn.scan-running { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--run) 35%, transparent); } }
 /* The scan ETA: its own boxed row under the progress message. */
 .scan-eta { display: flex; flex-wrap: wrap; gap: 4px 18px; width: fit-content; max-width: 100%; box-sizing: border-box; margin: 6px 0 0; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .scan-eta[hidden] { display: none; }
@@ -851,7 +858,7 @@ table.as-accounts tr.as-drill > td { background: var(--surface-2); padding: 4px 
 .scan-eta dd { margin: 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .scan-eta dd small { font-weight: 400; color: var(--ink-2); }
 #scanMsg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.scan-running .spin { border-color: var(--accent); border-top-color: transparent; }
+.scan-running .spin { border-color: #fff; border-top-color: transparent; }
 .mr-form fieldset.teams legend .muted { font-weight: 400; }
 #mrAi, #asAi { margin-top: 16px; }
 .view-loading { max-width: 720px; margin: 32px auto; }
