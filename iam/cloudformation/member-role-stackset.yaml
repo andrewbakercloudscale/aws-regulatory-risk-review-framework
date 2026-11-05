@@ -81,6 +81,9 @@ Resources:
                   - mq:ListBrokers
                   - fsx:DescribeFileSystems
                   - ec2:DescribeTransitGateways
+                  - rds:DescribeDBProxies
+                  - rds:DescribeDBProxyTargets
+                  - ec2:GetManagedPrefixListEntries
                   - iam:SimulatePrincipalPolicy
                   - iam:ListRoles
                   - iam:GetPolicy

@@ -2380,7 +2380,7 @@
     const seq = (state.cpSeq = (state.cpSeq || 0) + 1);
     loading("compromise", true);
     try {
-      const r = await api("/api/compromise", { method: "POST", body: { scan_id: state.scanId } });
+      const r = await api("/api/compromise", { method: "POST", body: { scan_id: state.scanId, answers: cpAnswers() } });
       if (seq !== state.cpSeq) return;
       state.cp = r;
       state.cpPicking = false;
@@ -2396,6 +2396,22 @@
     }
     $("#cpError").hidden = true;
     renderCp();
+  }
+
+  const LS_CP = "exitrisk.compromise.answers";
+  const cpSplit = (v) => (v || "").split(",").map((x) => x.trim()).filter(Boolean);
+  function cpAnswers() {
+    let a = {};
+    try { a = JSON.parse(localStorage.getItem(LS_CP) || "{}"); } catch { /* ignore */ }
+    return { proxy: a.proxy || [], known: a.known || [], laptop: a.laptop || [], zscaler: a.zscaler !== false };
+  }
+  function fillCpKnown() {
+    const a = cpAnswers();
+    $("#cpProxy").value = a.proxy.join(", ");
+    $("#cpKnownList").value = a.known.join(", ");
+    $("#cpLaptop").value = a.laptop.join(", ");
+    $("#cpZscaler").checked = a.zscaler;
+    $("#cpKnownSum").textContent = a.proxy.length ? `proxy ${a.proxy.join(", ")}` : "no proxy set yet";
   }
 
   const CP_DETECT = { alert: ["Alert fires", "var(--good)"], logged: ["Logged, no alert", "var(--sev-warning)"], "not logged": ["Not recorded", "var(--sev-critical)"], unknown: ["Cannot tell", "var(--t3)"] };
@@ -2438,6 +2454,7 @@
       if (pay) found.push(`${plural(pay, "payment resource")} a compromised person or pipeline can change with no alert.`);
       if (sign) found.push(`${plural(sign, "signing key")} a person can sign with.`);
       if (db) found.push(`${plural(db, "way")} a person can get into a payment database.`);
+      if (byRule("db_direct").length) found.push(`${plural(byRule("db_direct").length, "database")} reachable directly from sources that are not known paths, so a laptop need not go through the proxy.`);
       if (byRule("user_keys_write").length) found.push(`${plural(byRule("user_keys_write").length, "IAM user")} with a long-lived access key that can change production.`);
       if (byRule("pipeline_trust_open").length) found.push(`${plural(byRule("pipeline_trust_open").length, "pipeline role")} that trusts more repositories or branches than it should.`);
       if (s.laptop_changes) found.push(`${plural(s.laptop_changes, "change")} to production from a laptop's command line in the last 30 days.`);
@@ -2464,6 +2481,7 @@
       $("#cpChanges").innerHTML = r.changes.length ? `<thead><tr><th>Who</th><th>Tool</th><th>Account</th><th>Call</th><th class="num-cell">Times</th><th>Last</th></tr></thead><tbody>${r.changes.map((c) => `<tr><td>${esc(c.who)}</td><td>${c.tool === "Console" ? esc(c.tool) : pill(null, c.tool, "var(--sev-error)")}</td><td class="small">${esc(c.account)}</td><td class="small mono">${esc(c.action)}${c.resource ? `<div class="muted">${esc(c.resource)}</div>` : ""}</td><td class="num-cell">${num(c.count)}</td><td class="small nowrap">${c.last ? esc(new Date(c.last).toLocaleString()) : EMPTY}</td></tr>`).join("")}</tbody>` : "<tbody><tr><td>No change by a person in the last 30 days.</td></tr></tbody>";
       $("#cpBlind").innerHTML = r.blind_spots.map((b) => `<li><strong>${esc(b.title)}.</strong> ${esc(b.why)}</li>`).join("");
       $("#cpFooter").textContent = `Scan ${r.scan_id} · rules ${r.catalog_version}`;
+      fillCpKnown();
     } catch (e) {
       console.error("compromise render failed", e);
       toast(`The report could not be drawn: ${e.message}`, 8000);
@@ -3046,6 +3064,11 @@
     $("#btnOrScan").addEventListener("click", () => { openScanDialog().then(() => { $("#sOutage").checked = true; $("#sOutage").dispatchEvent(new Event("change")); }); });
     $("#btnOrDemo").addEventListener("click", () => $("#btnDemo").click());
     $("#btnCpRetry").addEventListener("click", () => loadCompromise());
+    $("#btnCpKnown").addEventListener("click", () => {
+      const a = { proxy: cpSplit($("#cpProxy").value), known: cpSplit($("#cpKnownList").value), laptop: cpSplit($("#cpLaptop").value), zscaler: $("#cpZscaler").checked };
+      try { localStorage.setItem(LS_CP, JSON.stringify(a)); } catch { /* ignore */ }
+      loadCompromise();
+    });
     $("#cpFilter").addEventListener("input", () => state.cpDraw?.());
     $("#cpList").addEventListener("change", (e) => {
       const box = e.target.closest("input[type=checkbox]");

@@ -940,3 +940,7 @@ body[data-view="compromise"] #btnJumpAi { display: none; }
 .cp-list label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; break-inside: avoid; }
 .cp-list .muted { font-size: 12px; }
 .cp-who { font-size: 12px; }
+.cp-known .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin: 10px 0; }
+.cp-known label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+.cp-known label.check { flex-direction: row; align-items: center; font-weight: 400; }
+@media (max-width: 700px) { .cp-known .form-grid { grid-template-columns: 1fr; } }

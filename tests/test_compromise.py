@@ -92,7 +92,21 @@ ANSWERS = {
         "describe_db_instances": {"DBInstances": [
             {"DBInstanceIdentifier": "payments-db", "DBInstanceArn": f"arn:aws:rds:eu-west-1:{ACCT}:db:payments-db",
              "Engine": "postgres", "DbiResourceId": "db-ABC", "IAMDatabaseAuthenticationEnabled": True,
-             "PubliclyAccessible": True, "MasterUserSecret": {"SecretArn": f"arn:aws:secretsmanager:eu-west-1:{ACCT}:secret:rds!db-1"}},
+             "PubliclyAccessible": True, "Endpoint": {"Port": 5432},
+             "VpcSecurityGroups": [{"VpcSecurityGroupId": "sg-db", "Status": "active"}], "MasterUserSecret": {"SecretArn": f"arn:aws:secretsmanager:eu-west-1:{ACCT}:secret:rds!db-1"}},
+        ]},
+    },
+    "ec2": {
+        "describe_security_groups": {"SecurityGroups": [
+            {"GroupId": "sg-db", "GroupName": "payments-db", "OwnerId": ACCT, "IpPermissions": [
+                {"IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432,
+                 "IpRanges": [{"CidrIp": "165.225.10.0/24", "Description": "zscaler"}, {"CidrIp": "10.20.0.0/16"}],
+                 "UserIdGroupPairs": [{"GroupId": "sg-app", "UserId": ACCT}, {"GroupId": "sg-proxy", "UserId": ACCT}]},
+            ]},
+        ]},
+        "describe_network_interfaces": {"NetworkInterfaces": [
+            {"NetworkInterfaceId": "eni-1", "InterfaceType": "lambda", "Groups": [{"GroupId": "sg-app"}]},
+            {"NetworkInterfaceId": "eni-2", "Attachment": {"InstanceId": "i-1"}, "Groups": [{"GroupId": "sg-proxy"}]},
         ]},
     },
     "lambda": {
@@ -286,6 +300,22 @@ def test_the_report_names_who_can_change_what_and_whether_anyone_would_see(read)
     assert "pipeline role github-deploy (GitHub)" in write["who"]
     flows = {(x["kind"], x["name"]): x for x in r["flows"]}
     assert flows[("bucket", "payments-outbound")]["verdict"] == "neither"
+    direct = by["db_direct"][0]
+    assert direct["severity"] == "critical" and len(direct["evidence"]) == 2  # Zscaler and the /16, not the groups
+    assert any("laptop range" in e for e in direct["evidence"])
+
+
+def test_a_database_open_only_to_the_proxy_and_known_ranges_is_not_direct(read):
+    out, _, _ = read
+    scan = {
+        "id": "s",
+        "accounts": [{"id": ACCT, "name": "prd-payments", "status": "ACTIVE"}],
+        "compromise": {"accounts": {ACCT: out}},
+    }
+    r = build_compromise(scan, {"proxy": ["sg-proxy"], "known": ["10.20.0.0/16", "165.225.10.0/24"]})
+    assert not [f for f in r["findings"] if f["rule"] == "db_direct"]
+    db = next(x for x in r["flows"] if x["kind"] == "database")
+    assert "proxy sg-proxy" in db["immutable_why"]
 
 
 def test_every_rule_the_report_uses_is_in_the_catalogue():

@@ -18,6 +18,14 @@ def _online(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_zscaler_feed(monkeypatch):
+    """Zscaler's published ranges come from the internet: tests give their own."""
+    from exitrisk import zscaler
+
+    monkeypatch.setattr(zscaler, "ranges", lambda: ["165.225.0.0/17"])
+
+
+@pytest.fixture(autouse=True)
 def _fresh_ou_tree_cache():
     """The OU tree cache lives for the process; one test's fake organisation must not leak into the next."""
     from exitrisk.collectors import organizations

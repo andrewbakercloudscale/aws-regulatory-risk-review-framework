@@ -14,6 +14,7 @@ from importlib import resources
 
 import yaml
 
+from . import zscaler
 from .collectors.compromise import ACTIONS, KEY_DAYS, _data_selector_covers, _management
 
 SEV = ("critical", "high", "medium", "low")
@@ -96,7 +97,67 @@ def _finding(rule: str, account: dict, sev: str | None = None, **kw) -> dict:
     }
 
 
-def _account_findings(account: dict, raw: dict) -> tuple[list[dict], dict]:
+def db_sources(a: dict, known: dict) -> list[dict]:
+    """Each source that can reach a database's port, judged: "proxy" (the database proxy), "known" (a workload
+    of this account, the database's own group, or a source the analyst listed as known) or "unknown" (an
+    address range, a prefix list, or a group with nothing known behind it). Unknown is treated as a laptop:
+    it must go through the proxy."""
+    out = []
+    for src in a["facts"].get("ingress") or []:
+        label = src.get("cidr") or src.get("pl") or src.get("sg")
+        name = src.get("name") or ""
+        if src.get("sg"):
+            if src["sg"] in known["ids"] or any(p and p.lower() in name.lower() for p in known["proxy_names"]):
+                verdict, why = (
+                    (
+                        "proxy"
+                        if src["sg"] in known["proxy"]
+                        or any(p and p.lower() in name.lower() for p in known["proxy_names"])
+                        else "known"
+                    ),
+                    "listed as known",
+                )
+            elif src.get("self"):
+                verdict, why = "known", "the database's own group"
+            elif src.get("account") and src["account"] != a.get("account_id", src["account"]):
+                verdict, why = "unknown", f"a group in account {src['account']}"
+            elif src.get("attached"):
+                kinds = ", ".join(f"{n} {k}" for k, n in sorted(src["attached"].items()))
+                verdict, why = "known", f"used by {kinds}"
+            else:
+                verdict, why = "unknown", "a group nothing in this account uses"
+            label = f"{src['sg']} ({name})" if name else src["sg"]
+        else:
+            cidrs = [src["cidr"]] if src.get("cidr") else src.get("cidrs") or []
+            if label in known["ids"] or (cidrs and all(zscaler.overlaps(c, known["nets"]) for c in cidrs)):
+                verdict, why = "known", "listed as known"
+            else:
+                laptop = [c for c in cidrs if zscaler.overlaps(c, known["laptop"])]
+                verdict = "unknown"
+                why = "a laptop range (Zscaler or VPN)" if laptop else "an address range: anything in it can connect"
+        out.append(
+            {"source": label, "verdict": verdict, "why": why, "note": src.get("note", ""), "via": src.get("via")}
+        )
+    return out
+
+
+def _known(answers: dict | None) -> dict:
+    a = answers or {}
+    items = [x.strip() for x in a.get("known") or [] if x and x.strip()]
+    proxy = [x.strip() for x in a.get("proxy") or [] if x and x.strip()]
+    ids = {x for x in items + proxy if x.startswith(("sg-", "pl-"))}
+    laptop = zscaler.networks(list(a.get("laptop") or []) + (zscaler.ranges() if a.get("zscaler", True) else []))
+    return {
+        "ids": ids,
+        "proxy": {x for x in proxy if x.startswith("sg-")},
+        "proxy_names": [x for x in proxy if not x.startswith("sg-")],
+        "nets": zscaler.networks([x for x in items if "/" in x]),
+        "laptop": laptop,
+    }
+
+
+def _account_findings(account: dict, raw: dict, known: dict | None = None) -> tuple[list[dict], dict]:
+    known = known or _known(None)
     out: list[dict] = []
     assets = {a["id"]: a for a in raw.get("assets") or []}
     principals = {p["label"]: p for p in raw.get("principals") or []}
@@ -143,6 +204,9 @@ def _account_findings(account: dict, raw: dict) -> tuple[list[dict], dict]:
         steps = {"alert": 2, "logged": 1}.get(level, 0)
         if all(x["decision"] in ("network", "depends") for x in found):
             steps += 1
+        reach = db_sources(a, known) if a["kind"] == "database" else []
+        if reach and action in ("db_iam", "db_secret") and all(r["verdict"] != "unknown" for r in reach):
+            steps += 1  # the port is open only to the proxy and known workloads
         who = sorted({x["principal"] for x in people}) + sorted({x["principal"] for x in pipes})
         via = [_via(principals.get(x["principal"])) for x in people]
         out.append(
@@ -364,6 +428,28 @@ def _account_findings(account: dict, raw: dict) -> tuple[list[dict], dict]:
                     region=a["region"],
                     payment=True,
                     evidence=[f"{f.get('engine')}: no activity stream"],
+                )
+            )
+    for a in assets.values():
+        if a["kind"] != "database" or "ingress" not in a["facts"]:
+            continue
+        reach = db_sources(a, known)
+        bad = [r for r in reach if r["verdict"] == "unknown"]
+        if bad:
+            laptop = any("laptop" in r["why"] for r in bad)
+            out.append(
+                _finding(
+                    "db_direct",
+                    account,
+                    "critical" if a["payment"] else "high",
+                    asset=a["name"],
+                    asset_kind="database",
+                    region=a["region"],
+                    payment=a["payment"],
+                    what=f"port {a['facts'].get('port') or 'any'} open to {len(bad)} source(s) not known"
+                    + (", including a laptop range" if laptop else ""),
+                    evidence=[f"{r['source']}: {r['why']}" + (f" ({r['note']})" if r["note"] else "") for r in bad][:8],
+                    proxy=sorted({r["source"] for r in reach if r["verdict"] == "proxy"}),
                 )
             )
     out += _detection_findings(account, raw, assets)
@@ -699,7 +785,7 @@ def _immutable(a: dict) -> tuple[str, str]:
     return "changeable", ""
 
 
-def _flows(account: dict, raw: dict) -> list[dict]:
+def _flows(account: dict, raw: dict, known: dict | None = None) -> list[dict]:
     """Each money-moving resource: who could change it, and whether the change is prevented, recorded or
     alerted. With laptops and pipelines assumed compromised, each must be immutable or observed."""
     paths = raw.get("paths") or []
@@ -717,6 +803,16 @@ def _flows(account: dict, raw: dict) -> list[dict]:
         pipes = {w for w in who if (principals.get(w) or {}).get("kind") in ("pipeline", "outside")}
         state, why = _immutable(a)
         level, said = _detection(raw, a, action)
+        if a["kind"] == "database" and "ingress" in a["facts"]:
+            reach = db_sources(a, known or _known(None))
+            unknown = [r for r in reach if r["verdict"] == "unknown"]
+            via = sorted({r["source"] for r in reach if r["verdict"] == "proxy"})
+            why = (
+                f"port open to {len(unknown)} unknown source(s)"
+                if unknown
+                else "only the proxy and known workloads reach it" + (f" (proxy {', '.join(via)})" if via else "")
+            )
+            state = "changeable" if unknown else "recoverable"
         if state == "immutable" or not who:
             verdict = "protected"
         elif level == "alert":
@@ -745,7 +841,7 @@ def _flows(account: dict, raw: dict) -> list[dict]:
     return sorted(out, key=lambda x: (order[x["verdict"]], x["account"], x["kind"], x["name"]))
 
 
-def build_compromise(scan: dict) -> dict:
+def build_compromise(scan: dict, answers: dict | None = None) -> dict:
     """The report for the accounts read, or {"available": False, "reason": ...}."""
     data = scan.get("compromise") or {}
     reads = data.get("accounts") or {}
@@ -770,13 +866,16 @@ def build_compromise(scan: dict) -> dict:
             "reason": "Pick the payment and channel accounts to check, then run the checks.",
         }
     cat = catalog()
+    known = _known(answers)
     findings, rows, people, changes, flows = [], [], [], [], []
     totals = Counter()
     for acct_id, raw in reads.items():
         acct = names.get(acct_id) or {"id": acct_id, "name": acct_id}
         account = {"id": acct_id, "name": acct.get("name", acct_id)}
-        got, stats = _account_findings(account, raw)
-        flows += _flows(account, raw)
+        for a in raw.get("assets") or []:
+            a.setdefault("account_id", acct_id)
+        got, stats = _account_findings(account, raw, known)
+        flows += _flows(account, raw, known)
         findings += got
         totals.update(stats)
         sev = Counter(f["severity"] for f in got)
@@ -856,6 +955,11 @@ def build_compromise(scan: dict) -> dict:
         "changes": sorted(changes, key=lambda c: (c["tool"] == "Console", -c["count"]))[:200],
         "blind_spots": cat["blind_spots"],
         "flows": flows[:400],
+        "known": {
+            "proxy": sorted(known["proxy"]) + known["proxy_names"],
+            "known": sorted(known["ids"] - known["proxy"]),
+            "laptop_ranges": len(known["laptop"]),
+        },
         "flow_counts": dict(Counter(f["verdict"] for f in flows)),
         "catalog_version": cat["version"],
     }

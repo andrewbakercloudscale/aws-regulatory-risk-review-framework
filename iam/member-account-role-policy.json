@@ -251,7 +251,10 @@
         "secretsmanager:GetResourcePolicy",
         "kms:GetKeyPolicy",
         "dynamodb:GetResourcePolicy",
-        "s3:GetBucketNotification"
+        "s3:GetBucketNotification",
+        "rds:DescribeDBProxies",
+        "rds:DescribeDBProxyTargets",
+        "ec2:GetManagedPrefixListEntries"
       ],
       "Resource": "*"
     }

@@ -54,6 +54,23 @@ SCP that names them is weighed. An organisation trail cannot be changed from a m
 wallet, signer and similar), with the account's own name taken out first. Every resource in a picked
 account is checked; money-moving raises the severity. Access logs and Athena results are left out.
 
+## Databases: the proxy and the known paths
+
+Only known paths may reach a database directly; everything else is treated like a laptop and must go
+through the database proxy. For each database the scan reads every source its security groups let reach
+its port:
+
+- a security group used by this account's workloads (Lambda, ECS tasks, EC2 instances) is a **known** path;
+- the proxy's security group, named in the report's settings, is the **proxy**;
+- every address range (a CIDR or a prefix list), a group in another account, or a group nothing here uses is
+  **unknown**: anything behind it, laptops through Zscaler or the VPN included, can connect directly. A range
+  can be listed as known in the settings, with its reason.
+
+Zscaler's published egress ranges (from config.zscaler.com, cached for a day) and any dedicated ranges you
+add label an unknown range as a laptop range. An open port to an unknown source on a payment database is
+critical. When a database is reachable only by the proxy and known workloads, a person's IAM or password
+path to it is lowered one level.
+
 ## How severity is set
 
 The rule's severity (data/compromise.yaml) is lowered one level when CloudTrail records the action, two when

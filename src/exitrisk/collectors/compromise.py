@@ -88,6 +88,9 @@ PLATFORM = re.compile(
     re.I,
 )
 BREAK_GLASS = re.compile(r"break-?glass|emergency|firecall", re.I)
+# Calls a workload makes on the data plane of a service, logged as writes: not someone changing production.
+DATA_PLANE = ("kafka-cluster", "s3-outposts", "execute-api", "rds-data", "dynamodb")
+NOT_A_CHANGE = {"RefreshCheck", "StartQuery", "GenerateDataKey", "Decrypt", "Encrypt"}
 CONSOLE_AGENTS = ("console.amazonaws.com", "signin.amazonaws.com", "AWS Internal")
 TOOLS = (
     ("terraform", "Terraform"),
@@ -570,6 +573,8 @@ def task_databases(ctx: CompromiseCtx, region: str) -> None:
             data_api=bool(c.get("HttpEndpointEnabled")),
             activity_stream=c.get("ActivityStreamStatus") in ("started", "starting"),
             public=False,
+            port=c.get("Port"),
+            groups=[g["VpcSecurityGroupId"] for g in c.get("VpcSecurityGroups") or []],
         )
         _database_targets(
             ctx,
@@ -596,6 +601,8 @@ def task_databases(ctx: CompromiseCtx, region: str) -> None:
             data_api=False,
             activity_stream=d.get("ActivityStreamStatus") in ("started", "starting"),
             public=bool(d.get("PubliclyAccessible")),
+            port=(d.get("Endpoint") or {}).get("Port") or d.get("DbInstancePort"),
+            groups=[g["VpcSecurityGroupId"] for g in d.get("VpcSecurityGroups") or []],
         )
         _database_targets(
             ctx,
@@ -609,7 +616,120 @@ def task_databases(ctx: CompromiseCtx, region: str) -> None:
         )
         if d.get("PubliclyAccessible"):
             ctx.expose("db_public", a, "the database has a public address")
+    mine = [a for a in ctx.assets if a["kind"] == "database" and a["region"] == region]
+    if mine:
+        _database_network(ctx, region, mine, rds)
     ctx.r.ok("databases")
+
+
+def _sources(perm: dict) -> list[dict]:
+    out = [{"cidr": r["CidrIp"], "note": r.get("Description", "")} for r in perm.get("IpRanges") or []]
+    out += [{"cidr": r["CidrIpv6"], "note": r.get("Description", "")} for r in perm.get("Ipv6Ranges") or []]
+    out += [{"pl": r["PrefixListId"], "note": r.get("Description", "")} for r in perm.get("PrefixListIds") or []]
+    out += [
+        {"sg": r["GroupId"], "owner": r.get("UserId", ""), "note": r.get("Description", "")}
+        for r in perm.get("UserIdGroupPairs") or []
+    ]
+    return out
+
+
+def _covers_port(perm: dict, port: int | None) -> bool:
+    if perm.get("IpProtocol") == "-1" or port is None:
+        return True
+    lo, hi = perm.get("FromPort"), perm.get("ToPort")
+    return lo is not None and hi is not None and lo <= port <= hi
+
+
+def _eni_kind(eni: dict) -> str:
+    kind = eni.get("InterfaceType") or ""
+    desc = eni.get("Description") or ""
+    if kind == "lambda" or desc.startswith("AWS Lambda VPC ENI"):
+        return "Lambda function"
+    if "arn:aws:ecs" in desc or kind == "branch":
+        return "ECS task"
+    if desc.startswith("RDSNetworkInterface"):
+        return "RDS"
+    if kind == "vpc_endpoint" or desc.startswith("VPC Endpoint"):
+        return "VPC endpoint"
+    if desc.startswith("ELB "):
+        return "load balancer"
+    if (eni.get("Attachment") or {}).get("InstanceId"):
+        return "EC2 instance"
+    return kind or "network interface"
+
+
+def _database_network(ctx: CompromiseCtx, region: str, dbs: list[dict], rds) -> None:
+    """Who can reach each database's port: every source in its security groups. A security group used by this
+    account's workloads is a known path; an address range (a CIDR or a prefix list) is not, because anything
+    behind it, laptops through Zscaler or the VPN included, can connect directly."""
+    ec2 = ctx.client("ec2", region)
+    ids = sorted({g for a in dbs for g in a["facts"].get("groups") or []})
+    groups = {
+        g["GroupId"]: g
+        for at in range(0, len(ids), 100)
+        for g in _pages(ec2, "describe_security_groups", "SecurityGroups", GroupIds=ids[at : at + 100])
+    }
+    refs = set()
+    for a in dbs:
+        found = []
+        for gid in a["facts"].get("groups") or []:
+            for perm in (groups.get(gid) or {}).get("IpPermissions") or []:
+                if _covers_port(perm, a["facts"].get("port")):
+                    for src in _sources(perm):
+                        found.append({**src, "via": gid})
+                        if src.get("sg"):
+                            refs.add(src["sg"])
+        a["facts"]["ingress"] = found[:60]
+    names, used = {}, {}
+    local = sorted(r for r in refs if r not in groups)
+    for at in range(0, len(local), 100):
+        try:
+            for g in _pages(ec2, "describe_security_groups", "SecurityGroups", GroupIds=local[at : at + 100]):
+                groups[g["GroupId"]] = g
+        except ClientError:
+            pass  # a group in another account
+    for gid in refs:
+        names[gid] = (groups.get(gid) or {}).get("GroupName", "")
+    ref_list = sorted(refs)
+    for at in range(0, len(ref_list), 150):
+        for eni in _pages(
+            ec2,
+            "describe_network_interfaces",
+            "NetworkInterfaces",
+            cap=2000,
+            Filters=[{"Name": "group-id", "Values": ref_list[at : at + 150]}],
+        ):
+            kind = _eni_kind(eni)
+            for g in eni.get("Groups") or []:
+                if g["GroupId"] in refs:
+                    used.setdefault(g["GroupId"], Counter())[kind] += 1
+    pls = sorted({s["pl"] for a in dbs for s in a["facts"]["ingress"] if s.get("pl")})
+    entries = {}
+    for pl in pls:
+        try:
+            entries[pl] = [
+                e["Cidr"] for e in _pages(ec2, "get_managed_prefix_list_entries", "Entries", PrefixListId=pl)
+            ][:200]
+        except ClientError:
+            entries[pl] = []
+    proxied: dict[str, list[str]] = {}
+    try:
+        for px in _pages(rds, "describe_db_proxies", "DBProxies", cap=MAX_ITEMS):
+            for t in _pages(rds, "describe_db_proxy_targets", "Targets", DBProxyName=px["DBProxyName"]):
+                proxied.setdefault(t.get("RdsResourceId") or "", []).append(px["DBProxyName"])
+    except ClientError as exc:
+        if _code(exc) not in ("AccessDenied", "AccessDeniedException"):
+            raise
+    for a in dbs:
+        for src in a["facts"]["ingress"]:
+            if src.get("sg"):
+                src["name"] = names.get(src["sg"], "")
+                src["attached"] = dict(used.get(src["sg"]) or {})
+                src["self"] = src["sg"] in (a["facts"].get("groups") or [])
+                src["account"] = src.get("owner") or ctx.account_id
+            if src.get("pl"):
+                src["cidrs"] = entries.get(src["pl"], [])
+        a["facts"]["rds_proxy"] = proxied.get(a["name"], [])
 
 
 def _database_targets(ctx, a, secret, arn, resource_id, iam_auth, data_api, region) -> None:
@@ -936,7 +1056,9 @@ def task_detection(ctx: CompromiseCtx, region: str) -> None:
 # ---------------------------------------------------------------------------------- what people changed
 def _tool(agent: str) -> str:
     low = (agent or "").lower()
-    if any(c.lower() in low for c in CONSOLE_AGENTS) or not low:
+    if not low or low == "aws internal":
+        return ""  # an AWS service acting, not a person at a keyboard
+    if any(c.lower() in low for c in CONSOLE_AGENTS) or "mozilla" in low:
         return "Console"
     return next((label for key, label in TOOLS if key in low), "Other tool")
 
@@ -956,7 +1078,7 @@ def task_changes(ctx: CompromiseCtx, region: str) -> None:
         page = with_backoff(ct.lookup_events, **kwargs)
         for e in page.get("Events") or []:
             name, source = e.get("EventName", ""), e.get("EventSource", "")
-            if name in NOT_CHANGES or source.startswith(NOT_CHANGE_SOURCES):
+            if name in NOT_CHANGES or name in NOT_A_CHANGE or source.startswith(NOT_CHANGE_SOURCES):
                 continue
             try:
                 raw = json.loads(e.get("CloudTrailEvent") or "{}")
@@ -978,6 +1100,8 @@ def task_changes(ctx: CompromiseCtx, region: str) -> None:
             if raw.get("errorCode"):
                 continue
             tool = _tool(raw.get("userAgent", ""))
+            if not tool or source.startswith(DATA_PLANE):
+                continue
             what = f"{source.split('.')[0]}:{name}"
             key = (who, tool, what, region)
             with ctx._lock:

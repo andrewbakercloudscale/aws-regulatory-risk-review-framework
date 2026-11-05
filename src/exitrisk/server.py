@@ -112,8 +112,16 @@ class CompleteRequest(BaseModel):
     eks: bool = False  # also read again the accounts with an EKS cluster that could not be read
 
 
+class CompromiseAnswers(BaseModel):
+    proxy: list[Annotated[str, Field(max_length=200)]] = Field(default_factory=list, max_length=50)
+    known: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=200)
+    laptop: list[Annotated[str, Field(max_length=50)]] = Field(default_factory=list, max_length=200)
+    zscaler: bool = True
+
+
 class CompromiseRequest(BaseModel):
     scan_id: str
+    answers: CompromiseAnswers = CompromiseAnswers()
 
 
 class CompromiseRunRequest(BaseModel):
@@ -576,7 +584,7 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             s = store.load_scan(req.scan_id)
         except store.ScanNotFound as exc:
             raise HTTPException(404, "scan not found") from exc
-        return build_compromise(s)
+        return build_compromise(s, req.answers.model_dump())
 
     @app.post("/api/scans/{scan_id}/cancel")
     def cancel_scan(scan_id: str):
