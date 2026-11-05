@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-05
+
 ### Added
 - Developer Compromise: an executive summary; a Where to focus section with accounts by risk, gaps by account, gaps by kind of resource and findings by control area; a Show only critical switch; and selecting an account narrows the report to it.
 
