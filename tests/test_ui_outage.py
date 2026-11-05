@@ -197,7 +197,8 @@ def test_the_developer_compromise_view_draws_its_paths_and_the_account_picker(pa
     page.wait_for_selector("#cpTop tbody tr")
     assert "Not recorded" in page.locator("#cpTop").inner_text()
     page.locator("#btnCpChange").click()
-    assert page.locator("#cpList input:checked").count() == 5
+    assert page.locator("#cpList input:checked").count() == 0  # already checked: tick only what to add
+    assert page.locator("#cpList").inner_text().count("· checked") == 5
     page.locator(".vtab[data-view='outage']").click()
     page.wait_for_selector("#orContent:not([hidden])")
     assert not page.errors

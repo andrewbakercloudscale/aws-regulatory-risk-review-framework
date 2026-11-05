@@ -2500,11 +2500,13 @@
 
   function renderCpPicker(r) {
     const list = r.accounts_to_pick || [];
-    const chosen = new Set(r.available ? r.selected : list.filter((a) => a.suggested).map((a) => a.id));
+    // With checks already in the scan, nothing is ticked: what you tick is read (again), the rest is kept.
+    const chosen = new Set(r.available ? [] : list.filter((a) => a.suggested).map((a) => a.id));
+    const done = new Set(r.available ? r.selected : []);
     state.cpChosen = chosen;
     const draw = () => {
       const q = $("#cpFilter").value.trim().toLowerCase();
-      $("#cpList").innerHTML = list.filter((a) => !q || a.name.toLowerCase().includes(q) || a.id.includes(q) || (a.ou_path || "").toLowerCase().includes(q)).map((a) => `<label><input type="checkbox" value="${esc(a.id)}"${chosen.has(a.id) ? " checked" : ""}> <span>${esc(a.name)} <span class="muted">${esc(a.id)}${a.suggested ? " · suggested" : ""}</span></span></label>`).join("") || '<p class="muted small">No account matches.</p>';
+      $("#cpList").innerHTML = list.filter((a) => !q || a.name.toLowerCase().includes(q) || a.id.includes(q) || (a.ou_path || "").toLowerCase().includes(q)).map((a) => `<label><input type="checkbox" value="${esc(a.id)}"${chosen.has(a.id) ? " checked" : ""}> <span>${esc(a.name)} <span class="muted">${esc(a.id)}${done.has(a.id) ? " · checked" : a.suggested ? " · suggested" : ""}</span></span></label>`).join("") || '<p class="muted small">No account matches.</p>';
       $("#cpCount").textContent = `${plural(chosen.size, "account")} picked`;
       $("#btnCpRun").disabled = !chosen.size || chosen.size > 40;
     };

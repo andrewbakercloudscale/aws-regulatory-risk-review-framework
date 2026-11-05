@@ -830,8 +830,9 @@ COMPROMISE_MAX = 40
 def _compromise(job: ScanJob, session, data: dict, base: dict) -> dict:
     """The Developer Compromise checks in the picked accounts; every other step is kept from the base scan."""
     p = job.params
+    redo = set(p.compromise_accounts or [])
     for i in base.get("issues") or []:
-        if i.get("category") != "compromise":
+        if i.get("category") != "compromise" or i.get("account_id") not in redo:
             job.issues.append(Issue(**{k: i.get(k) for k in Issue.__dataclass_fields__ if k in i}))
     for key in STEPS:
         data[key] = base.get(key)
@@ -859,7 +860,10 @@ def _compromise(job: ScanJob, session, data: dict, base: dict) -> dict:
 
     got = _each_account(job, session, picked, caller, read, "compromise", "checked", (58, 98))
     job.step = None
-    data["compromise"] = {"accounts": got, "selected": [a.id for a in picked]}
+    # Accounts the earlier scan already checked stay: picking a few more adds them, picking one again reads it fresh.
+    kept = {k: v for k, v in ((base.get("compromise") or {}).get("accounts") or {}).items() if k not in got}
+    merged = {**kept, **got}
+    data["compromise"] = {"accounts": merged, "selected": sorted(merged)}
     return _save_finished(job, data, accounts)
 
 
