@@ -4505,6 +4505,17 @@
       chartDefaults();
       if (state.report) render();
     });
+    // Every window has an X in its corner; closing never stops a scan.
+    for (const dlg of document.querySelectorAll("dialog.dialog")) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "dialog-x";
+      x.setAttribute("aria-label", "Close");
+      x.title = dlg.id === "scanDialog" ? "Close (a running scan keeps running)" : "Close";
+      x.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+      x.addEventListener("click", () => dlg.close());
+      dlg.prepend(x);
+    }
     $("#btnNewScan").addEventListener("click", () => (state.view === "compromise" && state.cp ? openCpPicker() : openScanDialog()));
     $("#sCompromise").addEventListener("change", (e) => {
       if (!e.target.checked) return;
