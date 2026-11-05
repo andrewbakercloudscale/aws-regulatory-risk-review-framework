@@ -2387,7 +2387,9 @@
     } catch (e) {
       if (seq !== state.cpSeq) return;
       console.error("compromise failed", e);
-      $("#cpErrorText").textContent = e.message;
+      $("#cpErrorText").textContent = e.status === 404 && !e.hint
+        ? "This console is running older code than the page: restart it (exitrisk serve --replace) and reload."
+        : e.message;
       $("#cpError").hidden = state.view !== "compromise";
       if (PRINT) { document.body.dataset.error = e.message; document.body.dataset.ready = "1"; }
       return;
