@@ -2560,14 +2560,17 @@
 
   function renderCpPicker(r) {
     const list = r.accounts_to_pick || [];
-    // With checks already in the scan, nothing is ticked: what you tick is read (again), the rest is kept.
-    const chosen = new Set(r.available ? [] : list.filter((a) => a.suggested).map((a) => a.id));
+    // With checks already in the scan, the accounts checked last time are ticked, to read them again with
+    // what has changed since; untick any to keep its earlier result, tick more to add them.
+    const chosen = new Set(r.available ? r.selected : list.filter((a) => a.suggested).map((a) => a.id));
     const done = new Set(r.available ? r.selected : []);
     state.cpChosen = chosen;
     const draw = () => {
       const q = $("#cpFilter").value.trim().toLowerCase();
       $("#cpList").innerHTML = list.filter((a) => !q || a.name.toLowerCase().includes(q) || a.id.includes(q) || (a.ou_path || "").toLowerCase().includes(q)).map((a) => `<label><input type="checkbox" value="${esc(a.id)}"${chosen.has(a.id) ? " checked" : ""}> <span>${esc(a.name)} <span class="muted">${esc(a.id)}${done.has(a.id) ? " · checked" : a.suggested ? " · suggested" : ""}</span></span></label>`).join("") || '<p class="muted small">No account matches.</p>';
-      $("#cpCount").textContent = `${plural(chosen.size, "account")} picked`;
+      const again = [...chosen].filter((id) => done.has(id)).length;
+      $("#cpCount").textContent = done.size ? `${plural(chosen.size, "account")} picked: ${num(again)} to read again, ${num(chosen.size - again)} new; ${num(done.size - again)} kept as they are` : `${plural(chosen.size, "account")} picked`;
+      $("#btnCpBack").hidden = !state.cp?.available;
       $("#btnCpRun").disabled = !chosen.size || chosen.size > 40;
     };
     state.cpDraw = draw;
@@ -3161,6 +3164,7 @@
       state.cpDraw?.();
     });
     $("#btnCpChange").addEventListener("click", () => openCpPicker());
+    $("#btnCpBack").addEventListener("click", () => { state.cpPicking = false; setView("compromise"); window.scrollTo({ top: 0 }); });
     $("#btnCpRun").addEventListener("click", async () => {
       const accounts = [...state.cpChosen];
       $("#btnCpRun").disabled = true;

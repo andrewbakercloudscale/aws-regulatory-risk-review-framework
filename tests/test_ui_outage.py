@@ -202,7 +202,10 @@ def test_the_developer_compromise_view_draws_its_paths_and_the_account_picker(pa
     assert set(page.locator("#cpTop tbody tr td:nth-child(2)").all_inner_texts()) == {"Critical"}
     page.locator("#cpOnlyCrit").uncheck()
     page.locator("#btnCpChange").click()
-    assert page.locator("#cpList input:checked").count() == 0  # already checked: tick only what to add
+    assert page.locator("#cpList input:checked").count() == 5  # checked last time: ticked to read again
+    page.click("#btnCpNone")
+    assert page.locator("#cpList input:checked").count() == 0  # Clear all
+    page.click("#btnCpSuggested")
     assert page.locator("#cpList").inner_text().count("· checked") == 5
     page.locator(".vtab[data-view='outage']").click()
     page.wait_for_selector("#orContent:not([hidden])")

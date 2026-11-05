@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+- Developer Compromise: picking accounts again pre-ticks the accounts checked last time, so Run reads them all again; "Clear all" unticks every account; the count shows how many are read again, new and kept; "Back to the report" leaves the picker.
+
 ## [0.30.0] - 2026-11-05
 
 ### Added

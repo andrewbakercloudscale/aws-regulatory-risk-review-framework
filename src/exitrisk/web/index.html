@@ -886,10 +886,10 @@
   </div>
   <div id="cpPick" class="card cp-pick no-print" hidden>
     <h3>Accounts to check</h3>
-    <p class="muted small">Ticked to start with: production accounts whose names look like payment or channel accounts. Up to 40 at a time. When some are already checked, tick only those to add or read again; the others are kept.</p>
-    <div class="row"><input type="search" id="cpFilter" placeholder="Filter accounts" aria-label="Filter accounts"> <button type="button" class="btn" id="btnCpNone">Clear</button> <button type="button" class="btn" id="btnCpSuggested">Suggested</button> <span id="cpCount" class="muted small"></span></div>
+    <p class="muted small">Ticked to start with: production accounts whose names look like payment or channel accounts. Up to 40 at a time. The accounts checked last time are ticked, to read them again; untick any to keep its earlier result, and tick more to add them.</p>
+    <div class="row"><input type="search" id="cpFilter" placeholder="Filter accounts" aria-label="Filter accounts"> <button type="button" class="btn" id="btnCpNone">Clear all</button> <button type="button" class="btn" id="btnCpSuggested">Suggested</button> <span id="cpCount" class="muted small"></span></div>
     <div id="cpList" class="cp-list" role="group" aria-label="Accounts"></div>
-    <p><button type="button" class="btn primary" id="btnCpRun">Run the checks</button> <span id="cpMsg" class="muted small"></span></p>
+    <p><button type="button" class="btn primary" id="btnCpRun">Run the checks</button> <button type="button" class="btn" id="btnCpBack" hidden>Back to the report</button> <span id="cpMsg" class="muted small"></span></p>
   </div>
   <div id="cpContent" hidden>
     <section class="cover">
