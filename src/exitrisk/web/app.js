@@ -3099,6 +3099,7 @@
       try {
         const job = await api(`/api/scans/${encodeURIComponent(state.scanId)}/compromise`, { method: "POST", body: { accounts } });
         state.runningScan = job.id;
+        state.runningLabel = `Developer Compromise checks in ${plural(accounts.length, "account")}, added to the scan you had open. The report opens when it finishes.`;
         $("#scanError").textContent = "";
         $("#scanBar").style.width = "2%";
         $("#scanMsg").textContent = "Running the developer compromise checks…";
@@ -3795,6 +3796,9 @@
     $("#btnScanClose").textContent = on ? "Hide (scan keeps running)" : "Cancel";
     $("#btnScanClose").title = on ? "Hide this window; the scan carries on, and the top bar shows its progress" : "Close this window; no scan starts";
     $("#scanTitle").textContent = on ? "Scan running" : "New scan";
+    // While a scan runs the form only invites edits that would do nothing: show what is running instead.
+    $("#scanForm .fd-body").hidden = on;
+    $("#scanWhat").textContent = on ? (state.runningLabel || "") : "";
     if (on) $("#scanProgress").hidden = false;
     else if (!$("#scanError").textContent) $("#scanProgress").hidden = true;
   }
@@ -3873,6 +3877,7 @@
         }
         if (s.status === "running") { state.pollTimer = setTimeout(tick, 1000); return; }
         state.runningScan = null;
+        state.runningLabel = "";
         showScanRunning();
         if (s.status === "cancelled") { toast(s.message || "Scan stopped."); return; }
         if (s.status === "failed") {
@@ -3890,6 +3895,7 @@
           ? "The console restarted while this scan was running, so it was lost. Start the scan again."
           : e.message;
         state.runningScan = null;
+        state.runningLabel = "";
         showScanRunning();
       }
     };
