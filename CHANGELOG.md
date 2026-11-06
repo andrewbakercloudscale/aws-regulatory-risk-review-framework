@@ -6,6 +6,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-11-06
+
+- README opens with a one paste install script: it clones, sets up a virtual environment and starts the console, and updates an existing install when run again.
 - Outage Risk reads Service Quotas 100 to a page instead of 20, and retries a throttled page on its own instead of restarting the whole list. Same values, about a fifth of the calls; the quota task was the slowest part of each account.
 
 ## [0.32.0] - 2026-11-06
