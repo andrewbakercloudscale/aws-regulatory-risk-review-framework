@@ -1,5 +1,42 @@
 # AWS Org Level Risk Framework Reporting
 
+## Install in one paste
+
+Copy the whole block into a macOS or Linux terminal. It needs `git` and Python 3.10 or newer, installs
+into `~/aws-org-level-risk-framework-reporting` (set `EXITRISK_DIR` to change it), and opens the console
+at http://127.0.0.1:8740. Running it again updates an existing install.
+
+```bash
+cat > install-exitrisk.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+REPO="https://github.com/andrewbakercloudscale/aws-org-level-risk-framework-reporting.git"
+DIR="${EXITRISK_DIR:-$HOME/aws-org-level-risk-framework-reporting}"
+
+command -v git >/dev/null || { echo "Please install git first."; exit 1; }
+PY=""
+for c in python3.14 python3.13 python3.12 python3.11 python3.10 python3; do
+  if command -v "$c" >/dev/null && "$c" -c 'import sys; sys.exit(sys.version_info < (3, 10))'; then PY="$c"; break; fi
+done
+[ -n "$PY" ] || { echo "Please install Python 3.10 or newer (macOS: brew install python)."; exit 1; }
+
+if [ -d "$DIR/.git" ]; then
+  echo "Updating $DIR"; git -C "$DIR" pull --ff-only -q
+else
+  echo "Installing into $DIR"; git clone -q "$REPO" "$DIR"
+fi
+cd "$DIR"
+[ -x .venv/bin/python ] || "$PY" -m venv .venv
+.venv/bin/python -m pip install -q --upgrade pip
+.venv/bin/python -m pip install -q -e .
+echo "Installed $(.venv/bin/exitrisk --version 2>/dev/null || echo exitrisk)."
+echo "Start it again later with: $DIR/.venv/bin/exitrisk serve"
+exec .venv/bin/exitrisk serve
+EOF
+chmod +x install-exitrisk.sh
+./install-exitrisk.sh
+```
+
 The console is **AWS Cloud Risk Review**: five separate reports for different audiences, from one scan of an
 AWS Organization. They are never merged into one score.
 
