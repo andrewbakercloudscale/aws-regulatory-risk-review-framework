@@ -124,6 +124,19 @@ def test_risk_by_owner_comes_first_and_draws_its_owners(page):
     assert not page.errors
 
 
+def test_a_service_review_table_exports_alone(page):
+    page.evaluate("window.print = () => { window.printed = true; }")
+    review = page.locator("#orReviews details").first
+    review.locator("summary").click()
+    block = review.locator(".pdf-block").first
+    block.locator("[data-pdf-section='']").click()
+    page.wait_for_function("window.printed === true")
+    assert page.evaluate("!document.querySelector('#orReviews .pdf-block').classList.contains('print-off')")
+    assert page.evaluate("document.querySelector('#orReviews .pdf-block ~ *')?.classList.contains('print-off') ?? true")
+    assert page.evaluate("document.querySelector('#orReviews details summary').classList.contains('print-off')")
+    assert not page.errors
+
+
 def test_the_other_tabs_hide_it(page):
     page.locator(".vtab[data-view='exit']").click()
     assert page.locator("#orContent").is_hidden()
