@@ -369,3 +369,24 @@ def test_a_cluster_operation_explains_the_partition_trouble_inside_it():
 def test_a_function_that_keeps_load_balancer_targets_current_is_routine():
     assert hc.is_routine("DeregisterTargets", "nlb-role (shop-update-targets)")
     assert not hc.is_routine("DeregisterTargets", "deployer")
+
+
+def test_a_count_at_its_usual_level_is_not_an_outage_lead():
+    import datetime as dt
+
+    probe = {
+        "id": "x",
+        "kind": "count",
+        "at": 10,
+        "sev": "high",
+        "title": "{r} fails",
+        "area": "x",
+        "svc": "x",
+        "next": "x",
+        "ns": "x",
+        "metric": "x",
+    }
+    t0 = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+    pts = [(t0 + dt.timedelta(hours=h), 100.0) for h in range(6)]
+    out = hc.judge(probe, {"a": pts}, {"a": pts}, 300, {"a": pts})
+    assert out and out[0]["severity"] == "medium" and out[0]["chronic"]

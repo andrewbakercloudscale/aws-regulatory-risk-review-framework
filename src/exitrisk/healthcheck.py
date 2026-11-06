@@ -541,6 +541,8 @@ def _change_causes(changes: list[dict]) -> list[dict]:
     """Changes as candidate causes: one per (account, region, event, resource), first time kept."""
     groups: dict[tuple, dict] = {}
     for c in changes:
+        if c.get("routine"):  # controllers doing their normal job are context, not suspects
+            continue
         k = (c["account"], c["region"], c["event"], c["resource"])
         g = groups.get(k)
         if g is None or c["time"] < g["started"]:

@@ -1056,8 +1056,9 @@ def judge(probe: dict, now: dict, base: dict, period: int, week: dict | None = N
                 zero = [ts for ts, v in pts if v >= 1 and healthy.get(ts, 1) < 1]
                 bfirst, *_ = _runs(base["n"].get(label, []), lambda v: v >= 1, SUSTAIN)
                 worst = max(v for _, v in pts)
+                steady = bfirst is not None and hits >= 0.9 * len(pts)  # down all window and the day before
                 sig = {
-                    "severity": "critical" if zero else "high",
+                    "severity": "medium" if steady else "critical" if zero else "high",
                     "started": first,
                     "chronic": bfirst is not None,
                     "evidence": f"up to {worst:.0f} unhealthy for {hits * period // 60} min"
@@ -1074,8 +1075,10 @@ def judge(probe: dict, now: dict, base: dict, period: int, week: dict | None = N
                 mean = btotal / max(len(base.get(label, [])), 1)
                 onset = next((ts for ts, v in pts if v > max(0.0, 3 * mean)), None)
                 chronic = any(b >= probe["at"] and total < 3 * b for b in (btotal, wtotal))
+                # the same level a day and a week earlier is how it always runs: kept, but not as an outage lead
+                steady = label in week and all(b >= probe["at"] and total < 1.5 * b for b in (btotal, wtotal))
                 sig = {
-                    "severity": probe["sev"],
+                    "severity": "medium" if steady and probe["sev"] in ("high", "critical") else probe["sev"],
                     "started": onset,
                     "chronic": chronic,
                     "evidence": f"{total:,.0f} in the window; {btotal:,.0f} in the same hours a day earlier"
@@ -1834,6 +1837,8 @@ def check_target_health(ctx: Ctx, region: str) -> None:
                     )
                     sig["next"] = ("Re-register the targets with the current IPs (or let the controller that owns them "
                                    "do it), or remove the target group if the service is retired.")  # fmt: skip
+                    if sig.get("chronic") and len(gone) == len(bad_ips):
+                        sig["severity"] = "low"  # failing a day earlier too, at addresses nothing holds: leftover
                 for name in sorted(lbs)[:2]:
                     inner = _inner_lb(elb, name)
                     if inner:
