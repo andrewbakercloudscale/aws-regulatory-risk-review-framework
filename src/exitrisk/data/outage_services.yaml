@@ -13,7 +13,7 @@
 #   not_seen  what a review from these calls cannot see. Shown in the review, never as a pass
 #   checks    the scan's checks for it: one unread in an account marks the service not read there
 #   options   a design that removes a class of outage. Nothing here is a price or a recommendation
-version: "2026.11.5"
+version: "2026.11.6"
 always_not_seen:
   - Infrastructure as code. Live settings are not compared with Terraform or CloudFormation, so drift is not shown.
   - The prices of other designs.
@@ -33,11 +33,11 @@ services:
   - id: msk
     label: Amazon MSK (Kafka)
     impact: shared
-    checks: [msk]
+    checks: [msk, eol_msk]
     level: deep
     billed: ["Amazon Managed Streaming for Apache Kafka"]
     quota: [kafka]
-    rules: [msk_disk, msk_no_autoscale, msk_burstable, msk_cpu, msk_partitions, msk_imbalance, msk_unclean_leader, msk_low_replication, msk_under_replicated, msk_offline]
+    rules: [msk_disk, msk_no_autoscale, msk_burstable, msk_cpu, msk_partitions, msk_imbalance, msk_unclean_leader, msk_low_replication, msk_under_replicated, msk_offline, msk_eol]
     reads: [Broker type count and zones, Kafka version, Storage and its autoscaling, Monitoring level and client authentication, "Cluster defaults for replication, in-sync replicas, unclean leader election and retention", "Disk, CPU, partitions and traffic: peak, average and trend", Date partitions reach AWS's guidance, Alarm on broker disk]
     not_seen: ["Topics, retention per topic, empty topics and consumer groups: these need Kafka admin access, which the scan does not have", "Topic overrides of the cluster defaults", "Bytes in and out where the monitoring level does not publish them"]
     options:
@@ -49,11 +49,11 @@ services:
   - id: rds
     label: Amazon RDS and Aurora
     impact: data
-    checks: [rds, fixed, storage]
+    checks: [rds, fixed, storage, eol_db]
     level: deep
     billed: ["Amazon Relational Database Service", "Amazon RDS Optimize CPU License Included Third Party Fees", "Amazon DocumentDB (with MongoDB compatibility)", "Amazon Neptune"]
     quota: [rds]
-    rules: [rds_cpu, aurora_acu, rds_burstable, rds_iops, rds_storage, rds_burst, rds_replica_mismatch, rds_single_az, rds_connections, rds_memory, rds_replica_lag, rds_maintenance, aurora_no_reader, rds_busy_window, pg_autovacuum_off, pg_xid_age, pg_slot_lag, rds_old_gen, aurora_one_az]
+    rules: [rds_cpu, aurora_acu, rds_burstable, rds_iops, rds_storage, rds_burst, rds_replica_mismatch, rds_single_az, rds_connections, rds_memory, rds_replica_lag, rds_maintenance, aurora_no_reader, rds_busy_window, pg_autovacuum_off, pg_xid_age, pg_slot_lag, rds_old_gen, aurora_one_az, db_eol, aurora_acu_ceiling]
     reads: [Engine version and class, "Burstable classes: busiest hour against baseline and credit balance", "IOPS against provisioned IOPS", Multi-AZ and readers, Storage and its ceiling, "Connections against max_connections from the parameter group", "CPU, memory, free storage and replica lag: peak and average", Maintenance AWS will apply by the peak, "Maintenance and backup windows against busy hours", "PostgreSQL: autovacuum and track_counts, from the instance and cluster parameter groups", "Old-generation (Xen) classes", "Zones of an Aurora cluster's instances", "PostgreSQL: oldest transaction ID age (wraparound) and write-ahead log held by replication slots", Alarm on free storage]
     not_seen: ["Slow queries and locks", "Table bloat, vacuum progress, long-running and idle-in-transaction sessions: these need a database login", "Maintenance jobs run inside the database (pg_cron) or by applications and batch schedulers", "A max_connections formula using log(): shown as not compared", "Connection pool settings in applications"]
     options:
@@ -64,11 +64,11 @@ services:
   - id: eks
     label: Amazon EKS
     impact: shared
-    checks: [eks]
+    checks: [eks, eol_eks]
     level: deep
     billed: ["Amazon Elastic Container Service for Kubernetes", "Amazon Elastic Kubernetes Service"]
     quota: [eks]
-    rules: [eks_single_replica, eks_fixed_replicas, eks_hpa_max, eks_low_cpu, eks_low_memory, eks_no_memory_limit, eks_oom, eks_memory_pressure, eks_cpu_pressure, eks_pending, eks_coredns, eks_nodegroup_max, eks_not_read, eks_subnet_ips, eks_no_pdb, eks_no_readiness]
+    rules: [eks_single_replica, eks_fixed_replicas, eks_hpa_max, eks_low_cpu, eks_low_memory, eks_no_memory_limit, eks_oom, eks_memory_pressure, eks_cpu_pressure, eks_pending, eks_coredns, eks_nodegroup_max, eks_not_read, eks_subnet_ips, eks_no_pdb, eks_no_readiness, eks_eol, eks_al2_nodes, image_registry_outside, image_pull_always, image_pull_failing]
     reads: [Kubernetes version, Node groups against their maximum, "Replicas, autoscalers, requests and limits of each workload", "OOM kills, Pending pods, CoreDNS, disruption budgets and readiness probes", Subnet addresses, Memory and CPU against limits where Container Insights is on]
     not_seen: ["Anything in a cluster with no access entry or no network path: listed as not read", "KEDA and Karpenter settings", "Live CPU and memory use without Container Insights"]
     docs:
@@ -76,11 +76,11 @@ services:
   - id: elasticache
     label: Amazon ElastiCache
     impact: data
-    checks: [elasticache, fixed]
+    checks: [elasticache, fixed, eol_cache]
     level: deep
     billed: ["Amazon ElastiCache"]
     quota: [elasticache]
-    rules: [cache_cpu, cache_memory, cache_burstable, cache_evictions, cache_connections, cache_no_failover, cache_no_multi_az, cache_old_gen]
+    rules: [cache_cpu, cache_memory, cache_burstable, cache_evictions, cache_connections, cache_no_failover, cache_no_multi_az, cache_old_gen, cache_eol]
     reads: [Node type shards and replicas, "Burstable nodes: busiest hour against baseline and credit balance", Failover and Multi-AZ, "Engine CPU, memory, connections and hit rate: peak and average", Evictions, Alarm on memory]
     not_seen: ["Key sizes and hot keys", "Memcached connection settings", "Serverless caches"]
     options:
@@ -162,21 +162,21 @@ services:
   - id: ec2
     label: Amazon EC2, EBS and Auto Scaling
     impact: workload
-    checks: [fixed, storage]
+    checks: [fixed, storage, eol_os]
     level: deep
     billed: ["Amazon Elastic Compute Cloud - Compute", "EC2 - Other"]
     quota: [ec2, ebs, autoscaling]
-    rules: [ec2_cpu, ec2_credits, ec2_burstable, ec2_net_allowance, ec2_dns_allowance, asg_near_max, asg_fixed, asg_one_az, ebs_instance_mismatch, ebs_burst, ebs_exceeded, ebs_iops_use, ec2_ebs_burst, disk_full, ec2_old_gen, ec2_event]
+    rules: [ec2_cpu, ec2_credits, ec2_burstable, ec2_net_allowance, ec2_dns_allowance, asg_near_max, asg_fixed, asg_one_az, ebs_instance_mismatch, ebs_burst, ebs_exceeded, ebs_iops_use, ec2_ebs_burst, disk_full, ec2_old_gen, ec2_event, os_eol]
     reads: ["CPU of instances outside an Auto Scaling group", "Burstable sizes: busiest hour against baseline, credit balance and credit mode", Auto Scaling groups against their maximum and zones, "Volumes against what the instance can deliver", "gp2 burst; IOPS and throughput used against what gp3, io1 and io2 volumes are provisioned for; instance EBS burst balance", Disk use where the CloudWatch agent is installed, "Old-generation (Xen, pre-Nitro) instance families", "Reboots, stops and retirements AWS has scheduled"]
     not_seen: ["Memory, unless the CloudWatch agent reports it", "Network allowances (bandwidth, packets a second, connection tracking, DNS) where the CloudWatch agent does not publish its ethtool counters", "Capacity for the instance type in the zone at the moment it is needed", "What runs on each instance"]
   - id: ecs
     label: Amazon ECS and Fargate
     impact: workload
-    checks: [fixed]
+    checks: [fixed, images]
     level: deep
     billed: ["Amazon Elastic Container Service"]
     quota: [ecs, fargate]
-    rules: [ecs_util, ecs_near_max, ecs_single_task, ecs_no_circuit_breaker, ecs_below_desired]
+    rules: [ecs_util, ecs_near_max, ecs_single_task, ecs_no_circuit_breaker, ecs_below_desired, image_registry_outside, image_pull_failing]
     reads: [Services with no autoscaling and their use, Services against their scaling maximum, One-task services, Running against desired, Deployment rollback setting]
     not_seen: ["Capacity providers", "Task-level memory kills"]
   - id: connect

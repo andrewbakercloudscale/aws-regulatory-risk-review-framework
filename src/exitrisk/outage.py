@@ -223,7 +223,7 @@ def _judge(row: dict, rule: dict, a: OutageAnswers, peak: date, days_to_peak: in
         if rule["id"] == "eks_nodegroup_max" and row.get("min") is not None and row.get("min") == row.get("limit"):
             sev, why = "medium", f"fixed at {row['limit']} node(s): minimum and maximum are the same"
     else:
-        sev, why = rule["severity"], row.get("note", "")
+        sev, why = row.get("sev") or rule["severity"], row.get("note", "")  # a row may know better
         if rule["id"] in BURSTABLE_RULES:
             sev, why = judge_burstable(row, a)
         elif rule["id"] in ("rds_maintenance", "ec2_event"):
@@ -275,6 +275,8 @@ def workload_rows(cluster: dict, a: OutageAnswers) -> list[dict]:
         {"rule": rule, "res": f"{name}/{w['ns']}/{w['name']}", "region": region, "note": note, **kw}
     )
     # The usual way to scale DNS is the proportional autoscaler, a workload of its own and not an HPA.
+    registries: dict[str, list[dict]] = {}  # images from outside ECR, by registry
+    always: list[dict] = []  # ... pulled again on every pod start
     dns_scaled = any("dns" in w["name"] and "autoscaler" in w["name"] for w in cluster.get("workloads") or [])
     for w in cluster.get("workloads") or []:
         n = w["replicas"]
@@ -308,6 +310,24 @@ def workload_rows(cluster: dict, a: OutageAnswers) -> list[dict]:
             add("eks_no_readiness", w, "at least one container has none")
         if w.get("oom"):
             add("eks_oom", w, f"{w['oom']} container(s) last ended OOMKilled")
+        if w.get("pull_failed"):
+            add("image_pull_failing", w, f"{w['pull_failed']} container(s) waiting on an image pull that failed")
+        for host in w.get("registries") or []:
+            registries.setdefault(host, []).append(w)
+        if w.get("pull_always"):
+            always.append(w)
+    for host, found in sorted(registries.items(), key=lambda x: -len(x[1])):
+        shown = ", ".join(f"{w['ns']}/{w['name']}" for w in found[:5]) + (
+            f" and {len(found) - 5:,} more" if len(found) > 5 else ""
+        )
+        rows.append({"rule": "image_registry_outside", "res": f"{name} from {host}", "region": region,
+                     "used": len(found), "unit": "workloads", "note": shown})  # fmt: skip
+    if always:
+        shown = ", ".join(f"{w['ns']}/{w['name']}" for w in always[:5]) + (
+            f" and {len(always) - 5:,} more" if len(always) > 5 else ""
+        )
+        rows.append({"rule": "image_pull_always", "res": name, "region": region, "used": len(always),
+                     "unit": "workloads", "note": shown})  # fmt: skip
     if cluster.get("pending"):
         rows.append(
             {

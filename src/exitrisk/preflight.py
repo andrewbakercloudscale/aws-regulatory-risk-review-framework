@@ -287,6 +287,14 @@ OUTAGE_PROBES = [
     ("elasticloadbalancing:DescribeAccountLimits", "elbv2", "describe_account_limits", {"PageSize": 1}),
     ("lambda:GetAccountSettings", "lambda", "get_account_settings", {}),
     ("lambda:GetFunctionConcurrency", "lambda", "get_function_concurrency", {"FunctionName": _NO_SUCH}),
+    ("cloudwatch:ListMetrics", "cloudwatch", "list_metrics", {"Namespace": "AWS/EC2", "MetricName": _NO_SUCH}),
+    # End of life and container images.
+    ("rds:DescribeDBMajorEngineVersions", "rds", "describe_db_major_engine_versions",
+     {"Engine": "postgres", "MaxRecords": 20}),
+    ("eks:DescribeClusterVersions", "eks", "describe_cluster_versions", {"maxResults": 1}),
+    ("kafka:ListKafkaVersions", "kafka", "list_kafka_versions", {"MaxResults": 1}),
+    ("ecs:ListTasks", "ecs", "list_tasks", {"cluster": _NO_SUCH, "maxResults": 1}),
+    ("ecs:DescribeTasks", "ecs", "describe_tasks", {"cluster": _NO_SUCH, "tasks": [_NO_SUCH]}),
     # The per-service reviews.
     ("cloudwatch:DescribeAlarms", "cloudwatch", "describe_alarms", {"MaxRecords": 1}),
     ("rds:DescribeDBParameters", "rds", "describe_db_parameters", {"DBParameterGroupName": _NO_SUCH}),

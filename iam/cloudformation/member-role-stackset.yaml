@@ -69,6 +69,12 @@ Resources:
               - Effect: Allow
                 Action:
                   - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - rds:DescribeDBMajorEngineVersions
+                  - eks:DescribeClusterVersions
+                  - kafka:ListKafkaVersions
+                  - ecs:ListTasks
+                  - ecs:DescribeTasks
                   - cloudwatch:DescribeAlarms
                   - kafka:DescribeConfigurationRevision
                   - rds:DescribeDBParameters

@@ -55,6 +55,8 @@ K8S_TIMEOUT = 8
 CERT_DAYS = 120
 RENEWAL_DAYS = 60  # ACM starts renewing this long before expiry: a renewal still not done by then has stalled
 METRIC_BATCH = 100
+METRIC_SERIES_MAX = 500  # time series one GetMetricData call returns, across its searches
+LISTED_MAX = 5000  # series of one metric read by name, when one search has more than a call returns
 MIB, GIB = 1024**2, 1024**3
 EFS_BURST_MAX = 2.31 * 1024**4  # a file system starts with, and can bank, 2.31 TiB of credits
 
@@ -162,10 +164,12 @@ SYSTEM_ACCESS = (401, 403)
 class Series:
     """A metric's maximum, minimum, latest value, total and trend, without keeping its datapoints."""
 
-    __slots__ = ("high", "last", "low", "n", "sx", "sxx", "sxy", "sy", "total")
+    __slots__ = ("high", "hot", "last", "low", "n", "sx", "sxx", "sxy", "sy", "total")
+    HOT = 95.0  # a percentage at or above this counts as an hour at the limit
 
     def __init__(self) -> None:
         self.n = 0
+        self.hot = 0
         self.high = float("-inf")
         self.low = float("inf")
         self.last = 0.0
@@ -175,6 +179,8 @@ class Series:
     def add(self, when: datetime, value: float) -> None:
         day = when.timestamp() / 86400
         self.n += 1
+        if value >= self.HOT:
+            self.hot += 1
         self.high = max(self.high, value)
         self.low = min(self.low, value)
         self.last = value
@@ -487,12 +493,100 @@ def _read_metrics(ctx: OutageCtx, region: str) -> dict[str, dict[str, Series]]:
     end = ctx.now
     start = end - timedelta(days=LOOKBACK_DAYS)
     for at in range(0, len(queries), METRIC_BATCH):
-        _gather(cw, queries[at : at + METRIC_BATCH], start, end, ids, out, ctx, region)
+        _gather_split(cw, queries[at : at + METRIC_BATCH], start, end, ids, out, ctx, region)
     return out
 
 
-def _gather(cw, queries: list[dict], start, end, ids: dict, out: dict, ctx: OutageCtx, region: str) -> None:
+def _gather_split(cw, queries: list[dict], start, end, ids: dict, out: dict, ctx: OutageCtx, region: str) -> None:
+    """Read the queries, splitting the batch in two while it passes the limit. GetMetricData returns at
+    most METRIC_SERIES_MAX time series in one call, across all its searches, and the searches past it
+    return nothing: in a busy account the database and cache metrics read last came back empty."""
+    got: dict[str, dict[str, Series]] = {}
+    if not _gather(cw, queries, start, end, ids, got, ctx, region) or len(queries) == 1:
+        if len(queries) == 1 and "_cut" in got and ids.get(queries[0]["Id"]) in METRICS:
+            # One search with more series than a call returns: list them, then read them by name.
+            listed: dict[str, dict[str, Series]] = {}
+            try:
+                if not _gather_listed(
+                    cw, queries[0]["Id"], ids[queries[0]["Id"]], start, end, ids, listed, ctx, region
+                ):
+                    got = listed  # every series read
+            except ClientError as exc:  # no cloudwatch:ListMetrics: keep the first series, shown as cut
+                log.info("outage %s %s: listing metrics failed: %s", ctx.account_id, region, _code(exc))
+        if len(queries) == 1 and "_cut" in got:
+            ctx.r.fact("metrics_cut", True)
+            # Loud, not a quiet note: the check shows as not fully measured, and Complete the scan reads it again.
+            ctx.r.unknown("fixed", f"{ids.get(queries[0]['Id'])} in {region} has more series than one read returns")
+            log.info(
+                "outage %s %s: metric %s has more series than one read returns",
+                ctx.account_id,
+                region,
+                ids.get(queries[0]["Id"]),
+            )
+        for key, series in got.items():
+            if key != "_cut":
+                out[key].update(series)
+        return
+    half = len(queries) // 2
+    _gather_split(cw, queries[:half], start, end, ids, out, ctx, region)
+    _gather_split(cw, queries[half:], start, end, ids, out, ctx, region)
+
+
+_LIVE = {
+    "VolumeId": ("describe_volumes", "Volumes", "VolumeId", {}),
+    "InstanceId": ("describe_instances", "Reservations", None,
+                   {"Filters": [{"Name": "instance-state-name", "Values": ["pending", "running", "stopping"]}]}),
+}  # fmt: skip
+
+
+def _live_ids(ctx: OutageCtx, region: str, dims: tuple[str, ...]) -> set[str] | None:
+    """The EC2 instances or EBS volumes that exist now, read once per region; None for other metrics."""
+    if len(dims) != 1 or dims[0] not in _LIVE:
+        return None
+    cache = ctx.__dict__.setdefault("_live", {})
+    if (region, dims[0]) not in cache:
+        op, key, field, kwargs = _LIVE[dims[0]]
+        found = _pages(ctx.client("ec2", region), op, key, **kwargs)
+        if field is None:  # reservations hold the instances
+            cache[(region, dims[0])] = {i["InstanceId"] for r in found for i in r.get("Instances") or []}
+        else:
+            cache[(region, dims[0])] = {v[field] for v in found}
+    return cache[(region, dims[0])]
+
+
+def _gather_listed(cw, qid: str, key: str, start, end, ids: dict, out: dict, ctx: OutageCtx, region: str) -> bool:
+    """Read every series of one metric by name, METRIC_SERIES_MAX at a time. True if some still could not be read."""
+    ns, dims, metric, stat, _ = METRICS[key]
+    found = []
+    # Only what reported in the last three hours: a busy cluster leaves tens of thousands of volumes behind it.
+    for page in cw.get_paginator("list_metrics").paginate(
+        Namespace=ns, MetricName=metric, Dimensions=[{"Name": d} for d in dims], RecentlyActive="PT3H"
+    ):
+        for m in page.get("Metrics") or []:
+            got = {d["Name"]: d["Value"] for d in m.get("Dimensions") or []}
+            if set(got) == set(dims):  # the same dimensions as the search, no more
+                found.append(got)
+    live = _live_ids(ctx, region, dims)
+    if live is not None:  # read only what exists now: a volume deleted last week is no outage risk
+        found = [got for got in found if got[dims[0]] in live]
+    cut = len(found) > LISTED_MAX
+    found = found[:LISTED_MAX]
+    for at in range(0, len(found), METRIC_SERIES_MAX):
+        queries = []
+        for i, got in enumerate(found[at : at + METRIC_SERIES_MAX]):
+            stat_q = {"Metric": {"Namespace": ns, "MetricName": metric,
+                                 "Dimensions": [{"Name": d, "Value": got[d]} for d in dims]},
+                      "Period": PERIOD, "Stat": stat}  # fmt: skip
+            label = "|".join(got[d] for d in dims)
+            queries.append({"Id": f"l{i}", "MetricStat": stat_q, "Label": f"{qid}~{label}", "ReturnData": True})
+        cut = _gather(cw, queries, start, end, ids, out, ctx, region) or cut
+    return cut
+
+
+def _gather(cw, queries: list[dict], start, end, ids: dict, out: dict, ctx: OutageCtx, region: str) -> bool:
+    """Read one batch into ``out``; True when it passed the series limit, so some searches were cut."""
     token = None
+    cut = False
     while True:
         kwargs = {"MetricDataQueries": queries, "StartTime": start, "EndTime": end, "ScanBy": "TimestampAscending"}
         if token:
@@ -505,17 +599,18 @@ def _gather(cw, queries: list[dict], start, end, ids: dict, out: dict, ctx: Outa
                 continue
             if r.get("StatusCode") in ("InternalError", "Forbidden"):
                 ctx.r.fact("metrics_cut", True)
+                ctx.r.unknown("fixed", f"{key} in {region} answered {r['StatusCode']}")
                 log.warning("outage %s %s: metric %s answered %s", ctx.account_id, region, key, r["StatusCode"])
-            series = out[key].setdefault(res, Series())
+            series = out.setdefault(key, {}).setdefault(res, Series())
             for when, value in zip(r.get("Timestamps") or [], r.get("Values") or [], strict=False):
                 series.add(when, value)
-        for m in resp.get("Messages") or []:
-            if m.get("Code") == "MaxMetricsExceeded":
-                ctx.r.fact("metrics_cut", True)
-                log.info("outage %s %s: a metric search was cut at its limit", ctx.account_id, region)
+        if any(m.get("Code") == "MaxMetricsExceeded" for m in resp.get("Messages") or []):
+            cut = True
         token = resp.get("NextToken")
         if not token:
-            return
+            if cut:
+                out["_cut"] = {}
+            return cut
 
 
 def _short(arn_or_id: str) -> str:
@@ -1748,23 +1843,22 @@ def read_workloads(list_items) -> dict:
         ns = (h.get("metadata") or {}).get("namespace")
         scalers[(ns, ref.get("kind"), ref.get("name"))] = h
     oom: dict[tuple, int] = {}
+    pull_failed: dict[tuple, int] = {}
     pending = 0
     for p in pods:
         status = p.get("status") or {}
         meta = p.get("metadata") or {}
         if status.get("phase") == "Pending":
             pending += 1
-        for c in status.get("containerStatuses") or []:
+        owner_ref = (meta.get("ownerReferences") or [{}])[0]
+        owner = owner_ref.get("name") or meta.get("name") or ""
+        key = (meta.get("namespace"), _POD_HASH.sub("", owner) if owner_ref.get("kind") == "ReplicaSet" else owner)
+        for c in (status.get("containerStatuses") or []) + (status.get("initContainerStatuses") or []):
             last = (c.get("lastState") or {}).get("terminated") or {}
             if last.get("reason") == "OOMKilled":
-                owner = (meta.get("ownerReferences") or [{}])[0].get("name") or meta.get("name") or ""
-                name = (
-                    _POD_HASH.sub("", owner)
-                    if (meta.get("ownerReferences") or [{}])[0].get("kind") == "ReplicaSet"
-                    else owner
-                )
-                key = (meta.get("namespace"), name)
                 oom[key] = oom.get(key, 0) + 1
+            if ((c.get("state") or {}).get("waiting") or {}).get("reason") in outage_lifecycle.PULL_FAILED:
+                pull_failed[key] = pull_failed.get(key, 0) + 1
     rows = []
     for kind, found in (("Deployment", deployments), ("StatefulSet", stateful)):
         for w in found:
@@ -1784,6 +1878,19 @@ def read_workloads(list_items) -> dict:
                 row["current"] = (h.get("status") or {}).get("currentReplicas") or replicas
             if oom.get((ns, name)):
                 row["oom"] = oom[(ns, name)]
+            if pull_failed.get((ns, name)):
+                row["pull_failed"] = pull_failed[(ns, name)]
+            pod_spec = template.get("spec") or {}
+            images = (pod_spec.get("containers") or []) + (pod_spec.get("initContainers") or [])
+            outside = [(outage_lifecycle.registry(c.get("image") or ""), c) for c in images]
+            outside = [(h, c) for h, c in outside if not outage_lifecycle.is_ecr(h)]
+            if outside:
+                row["registries"] = sorted({h for h, _ in outside})
+                if any(
+                    outage_lifecycle.pulls_every_start(c.get("image") or "", c.get("imagePullPolicy"))
+                    for _, c in outside
+                ):
+                    row["pull_always"] = True
             rows.append(row)
     return {
         "workloads": rows[:MAX_WORKLOADS],
@@ -1982,4 +2089,4 @@ def account_checks(
 
 
 # The per-service reviews add their metrics and tasks to the ones above. Last, as they use this module.
-from . import outage_services  # noqa: E402
+from . import outage_lifecycle, outage_services  # noqa: E402, F401

@@ -152,6 +152,12 @@
       "Effect": "Allow",
       "Action": [
         "cloudwatch:GetMetricData",
+        "cloudwatch:ListMetrics",
+        "rds:DescribeDBMajorEngineVersions",
+        "eks:DescribeClusterVersions",
+        "kafka:ListKafkaVersions",
+        "ecs:ListTasks",
+        "ecs:DescribeTasks",
         "servicequotas:ListServiceQuotas",
         "servicequotas:ListAWSDefaultServiceQuotas",
         "application-autoscaling:DescribeScalableTargets",

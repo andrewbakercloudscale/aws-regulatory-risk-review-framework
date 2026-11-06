@@ -12,7 +12,7 @@
 #   severity  for event and config rules. Lowered one level outside production.
 #   prod_only reported only in production accounts
 #   fix       what to do about it
-version: "2026.11.8"
+version: "2026.11.9"
 points: {critical: 40, high: 15, medium: 5, low: 1}
 
 areas:
@@ -48,6 +48,14 @@ areas:
     label: Old hardware
     action: Move what runs on pre-Nitro (Xen) instance families to a current generation. It usually costs the same or less, and is the cheapest risk to remove before the peak.
     lead_days: 10
+  lifecycle:
+    label: End of life software
+    action: Plan the upgrades of databases, Kubernetes and operating systems that are out of support or soon will be, before AWS or the vendor forces them on its own date.
+    lead_days: 30
+  images:
+    label: Container images
+    action: Mirror the images production pulls into ECR (a pull through cache or replication), pin them by tag or digest, and stop pulling on every start.
+    lead_days: 14
   network:
     label: Network capacity
     action: Add subnets or CIDR ranges before pods and nodes run out of addresses; split NAT traffic that exhausts ports.
@@ -237,6 +245,19 @@ rules:
   - {id: ecs_below_desired, area: fixed, kind: event, severity: high, title: ECS service below its desired count, why: "Fewer tasks were running than wanted when read: something stops them starting.", fix: "Check the service events."}
   - {id: eks_no_pdb, area: eks, kind: config, severity: medium, prod_only: true, title: No pod disruption budget, why: "A node upgrade or scale-in can stop every replica at once.", fix: "Add a PodDisruptionBudget."}
   - {id: eks_no_readiness, area: eks, kind: config, severity: low, prod_only: true, title: No readiness probe, why: "Traffic reaches pods before they can serve, or stays on pods that stopped serving.", fix: "Add a readiness probe."}
+
+  # ---- end of life software
+  - {id: db_eol, area: lifecycle, kind: config, severity: medium, title: Database engine out of support or soon to be, why: "AWS's published support dates for the engine's major version, read from RDS. Past standard support it runs on paid RDS Extended Support, and on the end date AWS upgrades it to a new major version whether the application is ready or not. Older PostgreSQL majors also lack later vacuum, replication and planner improvements, so bloat and wraparound are harder to keep ahead of.", fix: "Test and run the major version upgrade (blue/green deployments make it reversible) before the date, outside the change freeze."}
+  - {id: cache_eol, area: lifecycle, kind: config, severity: medium, title: ElastiCache engine in Extended Support, why: "Redis OSS 4 and 5 are in paid ElastiCache Extended Support, after which AWS upgrades them.", fix: "Upgrade to Valkey or a current Redis OSS version, testing the client libraries first."}
+  - {id: msk_eol, area: lifecycle, kind: config, severity: medium, title: MSK on a deprecated Kafka version, why: "AWS has marked the cluster's Kafka version deprecated: it gets no fixes and will be upgraded.", fix: "Upgrade the cluster to a supported Kafka version, testing the clients first."}
+  - {id: eks_eol, area: lifecycle, kind: config, severity: medium, title: EKS Kubernetes version out of standard support or soon to be, why: "AWS's published dates for the cluster's Kubernetes version. Past standard support the cluster runs on paid Extended Support; at its end, or at the end of standard support with upgrade policy STANDARD, AWS upgrades the control plane itself.", fix: "Upgrade the cluster one minor version at a time, with its addons and nodes, before the date."}
+  - {id: eks_al2_nodes, area: lifecycle, kind: config, severity: medium, title: EKS nodes on Amazon Linux 2, why: "Amazon Linux 2 support ended on 30 June 2026, and EKS publishes no Amazon Linux 2 node images for Kubernetes 1.33 and later, so these nodes block the next cluster upgrade.", fix: "Move the node group to Amazon Linux 2023 or Bottlerocket images."}
+  - {id: os_eol, area: lifecycle, kind: config, severity: medium, title: Operating system out of support or soon to be, why: "The operating system Systems Manager reports, against the vendor's published end of support. Past it there are no security fixes, and drivers, agents and software stop supporting it. Paid extended support (Windows ESU, RHEL ELS, Ubuntu Pro) can run later and is not seen here. Instances Systems Manager does not manage are counted, not guessed at.", fix: "Rebuild on a supported version, or confirm paid extended support covers it until a dated move."}
+  # ---- container images
+  - {id: image_registry_outside, area: images, kind: config, severity: medium, prod_only: true, title: Images pulled from a registry other than ECR, why: "Every new pod, scale out and node replacement pulls from this registry. While it, its credentials or the path to it is down, the workloads cannot restart or grow, and a node failure becomes an outage.", fix: "Mirror the images into ECR with a pull through cache or replication, or run the registry with the same resilience as production."}
+  - {id: image_pull_always, area: images, kind: config, severity: medium, prod_only: true, title: Images pulled again on every start, why: "With imagePullPolicy Always, or an image tagged latest or not tagged at all, a pod restart goes back to the registry even when the node already has the image, so a registry outage stops restarts too.", fix: "Pin images by version tag or digest and use imagePullPolicy IfNotPresent."}
+  - {id: image_pull_failing, area: images, kind: event, severity: high, title: Image pulls failing, why: "Containers were waiting on a failed image pull (ImagePullBackOff or ErrImagePull) when read, or ECS stopped tasks because the image could not be pulled.", fix: "Check the registry, its credentials and the network path to it, and the image name and tag."}
+  - {id: aurora_acu_ceiling, area: fixed, kind: event, severity: medium, title: Aurora Serverless reaching its maximum ACUs, why: "The hourly maximum of capacity used reached the configured maximum ACUs for many hours. The hourly average hides these bursts, and at the ceiling it stops scaling, so queries queue and slow.", fix: "Raise the maximum ACUs, or find what drives the bursts."}
 
 # Published evidence behind the ranking. Figures are quoted from the source named, with its limits.
 # The order is a judgement for a bank's peak event, not a published ranking. Keep figures to what the

@@ -209,6 +209,18 @@ def _review_rows(rng: random.Random, name: str, region: str, prod: bool) -> tupl
         rows.append(
             {"rule": "rds_maintenance", "res": res, "region": region, "ends": "2026-11-29", "note": "system-update"}
         )
+    if len(name) % 3 == 0:  # end of life and images, chosen without the random stream so the rest stays put
+        rows += [
+            {"rule": "db_eol", "res": res, "region": region, "sev": "medium",
+             "note": "postgres 13.20: standard support ended 2026-02-28; in paid RDS Extended Support, and AWS "
+                     "upgrades it to a new major version on 2029-02-28 whether it is ready or not"},
+            {"rule": "os_eol", "res": "Amazon Linux 2 (3 instances)", "region": region, "sev": "medium", "used": 3,
+             "unit": "instances", "note": f"AWS support for Amazon Linux 2 ended 2026-06-30: {name}-batch-1, "
+                                          f"{name}-batch-2, {name}-jump"},
+            {"rule": "aurora_acu_ceiling", "res": f"{name}-ledger-inst-1", "region": region, "sev": "high",
+             "note": "at its maximum ACUs in 412 of 840 hours (hourly maximum); CPU at the limit in 31 of them, "
+                     "so it ran out of capacity, not just reached it"},
+        ]  # fmt: skip
     if rng.random() < 0.2:
         rows.append(
             {
