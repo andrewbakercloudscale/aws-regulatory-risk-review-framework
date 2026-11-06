@@ -223,3 +223,20 @@ def test_old_runs_drop_kafka_reads_logged_under_an_iam_action():
 def test_old_target_group_titles_name_the_load_balancer_kind():
     sig = _sig(title="Target group targetgroup/web-tg/abc123 has unhealthy targets", check="nlb_unhealthy")
     assert healthcheck._legacy_title(sig)["title"] == "NLB target group web-tg has unhealthy targets"
+
+
+def test_accounts_carry_owner_tags_from_the_newest_scan(monkeypatch):
+    from exitrisk import store
+
+    scans = {
+        "new": {"accounts": [{"id": "111111111111", "tags": {"Owner": "Ann", "Executive": "Bo"}}]},
+        "old": {"accounts": [{"id": "111111111111", "tags": {"Owner": "Old"}},
+                             {"id": "222222222222", "tags": {"owner": "Cy"}}]},
+    }  # fmt: skip
+    monkeypatch.setattr(store, "list_scans", lambda: [{"id": "new", "accounts": 1}, {"id": "old", "accounts": 2}])
+    monkeypatch.setattr(store, "load_scan", lambda i: scans[i])
+    healthcheck._owner_cache["key"] = None
+    got = healthcheck._with_owners([{"id": "111111111111"}, {"id": "222222222222"}, {"id": "333333333333"}])
+    assert got[0]["owner"] == "Ann" and got[0]["executive"] == "Bo"
+    assert got[1]["owner"] == "Cy" and "owner" not in got[2]
+    healthcheck._owner_cache["key"] = None

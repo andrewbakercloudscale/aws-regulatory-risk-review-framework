@@ -73,6 +73,45 @@ STOP_WORDS = set(
 
 
 # ------------------------------------------------------------------------------------------ accounts
+OWNER_SCANS = 5  # newest saved scans read for account owner tags
+_owner_cache: dict = {"key": None, "map": {}}
+_owner_lock = threading.Lock()
+
+
+def account_owners() -> dict[str, dict]:
+    """Owner and executive tags per account, from the newest saved scans (the portal and a key cannot read
+    the organisation's tags cheaply). Newer scans win; read again only when the newest scans change."""
+    from . import store
+    from .resilience import owner_of
+
+    try:
+        ids = [x["id"] for x in store.list_scans() if x.get("accounts")][:OWNER_SCANS]
+    except Exception:  # a broken scan folder must not stop a health check
+        return {}
+    with _owner_lock:
+        if _owner_cache["key"] == ids:
+            return _owner_cache["map"]
+    found: dict[str, dict] = {}
+    for scan_id in ids:
+        try:
+            accounts = store.load_scan(scan_id).get("accounts") or []
+        except Exception as exc:
+            log.warning("owner tags: scan %s unreadable: %s", scan_id, exc)
+            continue
+        for a in accounts:
+            owner, executive = owner_of(a)
+            if a.get("id") not in found and (owner or executive):
+                found[a["id"]] = {"owner": owner, "executive": executive}
+    with _owner_lock:
+        _owner_cache.update(key=ids, map=found)
+    return found
+
+
+def _with_owners(accounts: list[dict]) -> list[dict]:
+    owners = account_owners()
+    return [{**a, **owners.get(a["id"], {})} for a in accounts]
+
+
 def reachable_accounts(profile: str | None, role_name: str | None = None) -> dict:
     """The accounts a health check can read with this profile: every account the sign-in reaches (IAM
     Identity Center), else the profile's own account plus, when it may list the organisation and a role
@@ -83,7 +122,7 @@ def reachable_accounts(profile: str | None, role_name: str | None = None) -> dic
     out = {"caller": ident, "sso": bool(pair), "accounts": [], "organisation": False}
     if pair:
         found = sso.list_accounts(pair[0])["accounts"]
-        out["accounts"] = [{"id": a["id"], "name": a["name"]} for a in found]
+        out["accounts"] = _with_owners([{"id": a["id"], "name": a["name"]} for a in found])
         out["organisation"] = True
         return out
     own = {"id": ident["account_id"], "name": _account_alias(session) or ident["account_id"]}
@@ -101,6 +140,7 @@ def reachable_accounts(profile: str | None, role_name: str | None = None) -> dic
     except (ClientError, BotoCoreError):
         pass  # a key in a member account sees only its own account
     out["needs_role"] = out["organisation"] and not role_name
+    out["accounts"] = _with_owners(out["accounts"])
     return out
 
 
@@ -701,6 +741,7 @@ def build_report(doc: dict) -> dict:
             {
                 "id": a["account"],
                 "name": a.get("name"),
+                **account_owners().get(a["account"], {}),
                 "regions": a.get("regions") or [],
                 "signals": len(a.get("signals") or []),
                 "changes": len(a.get("changes") or []),

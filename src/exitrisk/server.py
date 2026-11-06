@@ -136,7 +136,7 @@ class HealthAccount(BaseModel):
 class HealthCheckRequest(BaseModel):
     profile: str | None = Field(None, max_length=200)
     accounts: list[HealthAccount] = Field(min_length=1, max_length=healthcheck.MAX_ACCOUNTS)
-    hours: float = 6
+    hours: float = 24
     symptoms: str = Field("", max_length=2000)
     role_name: str | None = Field(None, max_length=64, pattern=r"^[A-Za-z0-9+=,.@_/-]*$")
     regions: list[Annotated[str, Field(pattern=r"^[a-z]{2}(-[a-z]+)+-\d$")]] | None = None

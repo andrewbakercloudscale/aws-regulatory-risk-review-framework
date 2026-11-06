@@ -155,18 +155,24 @@
   // ------------------------------------------------------------------ accounts
   function renderList() {
     const q = $("#hcSearch").value.trim().toLowerCase();
-    const hits = state.accounts.filter((a) => !q || a.id.includes(q) || (a.name || "").toLowerCase().includes(q));
+    const hits = state.accounts.filter((a) => !q || a.id.includes(q) || `${a.name || ""} ${a.owner || ""} ${a.executive || ""}`.toLowerCase().includes(q));
     const shown = hits.slice(0, 200);
     $("#hcAcctList").innerHTML = shown.length
-      ? shown.map((a) => `<label><input type="checkbox" value="${esc(a.id)}" ${state.chosen.has(a.id) ? "checked" : ""}> <span>${esc(a.name || a.id)}</span><span class="id">${esc(a.id)}</span></label>`).join("")
+      ? shown.map((a) => `<label><input type="checkbox" value="${esc(a.id)}" ${state.chosen.has(a.id) ? "checked" : ""}> <span>${esc(a.name || a.id)}</span>${owner(a)}<span class="id">${esc(a.id)}</span></label>`).join("")
         + (hits.length > shown.length ? `<label class="muted">${hits.length - shown.length} more: type more of the name or number</label>` : "")
       : `<label class="muted">${state.accounts.length ? "No account matches" : "No accounts found"}</label>`;
+  }
+
+  function owner(a) {
+    if (!a.owner && !a.executive) return "";
+    const exec = a.executive && a.executive !== a.owner ? ` · exec ${a.executive}` : "";
+    return `<span class="hc-owner">${esc(a.owner || "no owner tag")}${esc(exec)}</span>`;
   }
 
   function renderChosen() {
     const box = $("#hcChosen");
     box.innerHTML = state.chosen.size
-      ? [...state.chosen.values()].map((a) => `<span class="chip">${esc(a.name || a.id)} <span class="muted">${esc(a.id)}</span><button type="button" data-id="${esc(a.id)}" aria-label="Remove ${esc(a.name || a.id)}">×</button></span>`).join("")
+      ? [...state.chosen.values()].map((a) => `<span class="chip">${esc(a.name || a.id)} <span class="muted">${esc(a.id)}${a.owner ? ` · ${esc(a.owner)}` : ""}</span><button type="button" data-id="${esc(a.id)}" aria-label="Remove ${esc(a.name || a.id)}">×</button></span>`).join("")
       : `<span class="muted small">No account ticked yet.</span>`;
     $("#hcRun").disabled = !state.chosen.size || !!state.runId;
     $("#hcAccessBtn").disabled = !state.chosen.size;
@@ -272,7 +278,7 @@
     $("#btnPdf").disabled = false;
     history.replaceState(null, "", `/health?run=${encodeURIComponent(r.id)}`);
     const s = r.summary;
-    const accts = r.accounts.map((a) => `${esc(a.name || a.id)} <span class="muted">${esc(a.id)}</span>`).join(", ");
+    const accts = r.accounts.map((a) => `${esc(a.name || a.id)} <span class="muted">${esc(a.id)}${a.owner ? ` · owner ${esc(a.owner)}` : ""}${a.executive && a.executive !== a.owner ? ` · executive ${esc(a.executive)}` : ""}</span>`).join(", ");
     const tiles = [
       ["Critical now", s.critical, "tone-risk", "Problems at critical level in the window, new since yesterday."],
       ["High now", s.high, "tone-risk", "Problems at high level in the window, new since yesterday."],
@@ -291,12 +297,21 @@
         ${r.symptoms ? `<p class="muted"><b>Symptoms given:</b> ${esc(r.symptoms)}</p>` : ""}
         ${status}
         ${r.unreachable?.length ? `<p class="error-text">Not reached: ${r.unreachable.map((u) => `${esc(u.name || u.account)} (${esc(u.code)}: ${esc(u.message)})`).join("; ")}</p>` : ""}
+        ${intro(`<b>About this report.</b> A read only health check of the AWS account${r.accounts.length > 1 ? "s" : ""} above over the last ${esc(r.window?.hours)} hours, in every region in use. It reads alarms, AWS Health, CloudTrail changes and refused calls, load balancers, containers, functions, databases, queues, networks, certificates, DNS, VPC flow logs, error spikes in the busiest log groups, and service quotas. Each finding is compared with the same hours a day earlier, so new problems stand apart from ones that were already there. Nothing in the accounts was changed.`)}
         <div class="tiles" style="grid-template-columns:repeat(6,minmax(0,1fr))">${tiles.map(([l, v, t, tip]) => `<div class="tile ${t}" title="${esc(tip)}"><div class="tile-label">${l}</div><div class="tile-value">${v}</div></div>`).join("")}</div>
+        <dl class="hc-legend">${tiles.map(([l, , , tip]) => `<dt>${l}</dt><dd>${esc(tip)}</dd>`).join("")}</dl>
       </section>
 
       <section class="card">
         <h2>Top ${top.length || 10} issues</h2>
-        <p class="muted small">Most critical first, then by outage likelihood: how likely each is to cause, or already be, an outage users feel. High: failing now and new, or started just before failures it can cause. Medium: pressure that becomes an outage if it grows, or a fault standing for over a day. Low: minor, or absorbed at the same level a day earlier. Useful with or without an outage going on; confirm each with its next step.</p>
+        ${intro(`<b>What this is.</b> The issues most worth acting on, most critical first. Where several findings tell one story (a change followed by errors), they are joined into one row and the others are listed under <i>Why</i>.
+          <ul>
+            <li><b>Severity</b> (coloured dot): how bad the finding is in itself. Critical means something is down or refusing work; high means failing or close to it; medium means degraded; low means minor.</li>
+            <li><b>Outage likelihood</b>: how likely the issue is to cause an outage users feel, or to be one already. <i>High</i>: failing now and new since yesterday, or it started just before failures it can cause. <i>Medium</i>: pressure that becomes an outage if it grows, or a fault that has stood for over a day. <i>Low</i>: minor, or running at the same level a day earlier without harm. The reason is given under each rating.</li>
+            <li><b>Tags</b>: <i>still happening</i> means it was still present at the end of the window; <i>long standing</i> means it was at about the same level a day earlier; <i>unexplained symptom</i> means a failure with no change or AWS event found that explains it; <i>change</i> means a change made by a person or pipeline.</li>
+            <li><b>Started</b>: when it first showed in the window; <i>before the window</i> means it was already happening when the window began.</li>
+          </ul>
+          These are leads, not verdicts: confirm each with its next step before acting.`)}
         ${top.length ? `<div class="table-wrap"><table class="data hc-top"><thead><tr><th>#</th><th>Issue</th><th>Why</th><th>Started</th><th>Where</th><th>Outage likelihood</th><th>Next step</th></tr></thead><tbody>
           ${top.map((g) => `<tr>
             <td class="rank">${g.rank}</td>
@@ -310,13 +325,15 @@
       </section>
 
       ${r.signals.length ? `<section class="card">
-        <details class="hc-more" open><summary>Everything found (${r.signals.length})</summary>
+        <h2>Everything found (${r.signals.length})</h2>
+        ${intro(`<b>What this is.</b> Every finding the check made, before ranking, so a reader can see the full picture behind the top issues. Each row is a measured fact: an error rate, a count of unhealthy targets, a throttle count, an alarm, a resource in a failed state. Many alike in one place (a dozen throttled functions) are shown once with a count, since they nearly always share a cause.`)}
+        <details class="hc-more" open><summary>Show the ${r.signals.length} findings</summary>
         ${signalsTable(r.signals)}</details>
       </section>` : ""}
 
       ${(r.risks || []).length ? `<section class="card">
         <h2>Other issues in ${r.accounts.length > 1 ? "these accounts" : "this account"} (${r.risks.length})</h2>
-        <p class="muted small">Not the live fault, but what the Outage Risk checks find here: limits nearly reached, single points of failure, resources running hot. Worst first.</p>
+        ${intro(`<b>What this is.</b> Weaknesses that are not failing now but could cause the next outage, from the same checks as the Outage Risk report: service limits nearly reached, single points of failure (one zone, one instance, one NAT gateway), resources running hot, and clusters or databases one fault away from trouble. Worst first. These are worth planning work for, separately from any live incident.`)}
         <div class="table-wrap"><table class="data compact"><thead><tr><th>Severity</th><th>Issue</th><th>Resource</th><th>Why</th><th>Where</th></tr></thead><tbody>
           ${r.risks.map((x) => `<tr><td>${sev(x.severity)}</td><td class="small"><b>${esc(x.title)}</b><div class="muted">${esc(x.service_label || "")}</div></td><td class="small">${esc(x.res || "")}${x.note ? `<div class="muted">${esc(x.note)}</div>` : ""}</td><td class="small">${esc(x.why || "")}</td><td class="small">${esc(x.account_name || x.account)}<div class="muted">${esc(x.region || "")}</div></td></tr>`).join("")}
         </tbody></table></div>
@@ -324,26 +341,32 @@
 
       ${(r.readiness || []).length ? `<section class="card">
         <h2>Turn on to see more (${r.readiness.length})</h2>
-        <p class="muted small">Data sources that are off, so a cause there could not be seen. Turn them on now and run again: they only cover traffic from then on.</p>
+        ${intro(`<b>What this is.</b> Logging and monitoring that is switched off in these accounts, so a fault in that area cannot be seen by this check or by anyone diagnosing an incident. For example, VPC flow logs show refused network connections and DNS query logs show failed name lookups. Turning them on costs a little and only covers activity from then on, so it is best done before the next incident.`)}
         <div class="table-wrap"><table class="data compact"><thead><tr><th>What is off</th><th>What it hides</th><th>How to turn it on</th><th>Where</th></tr></thead><tbody>
           ${r.readiness.map((x) => `<tr><td class="small"><b>${esc(x.item)}</b></td><td class="small">${esc(x.why)}</td><td class="small">${esc(x.how)}${x.permission ? `<div class="muted">Needs ${esc(x.permission)}</div>` : ""}</td><td class="small">${esc(x.account_name || x.account)}<div class="muted">${esc(x.region)}</div></td></tr>`).join("")}
         </tbody></table></div>
       </section>` : ""}
 
       ${r.changes.length ? `<section class="card">
-        <details class="hc-more"><summary>Changes in the window (${r.changes.length})</summary>
+        <h2>Changes in the window (${r.changes.length})</h2>
+        ${intro(`<b>What this is.</b> Changes made by people or pipelines during the window that can affect availability, read from CloudTrail: deletes, stops, detaches, scaling and configuration changes, permission and network changes. Changes AWS makes itself are left out. Those marked <i>risky</i> can break things straight away (a delete, a revoked permission, a failover). Repeats of one action are grouped with a count. A change is not a fault in itself; it matters when a failure follows it, and the top issues show that link when there is one.`)}
+        <details class="hc-more"><summary>Show the ${r.changes.length} changes</summary>
         ${changesTable(r.changes)}</details>
       </section>` : ""}
 
       ${r.timeline.length ? `<section class="card">
-        <details class="hc-more"><summary>Timeline (${r.timeline.length})</summary>
+        <h2>Timeline (${r.timeline.length})</h2>
+        ${intro(`<b>What this is.</b> New findings and changes in time order, to show what happened first. A failure that starts a few minutes after a change or an AWS event is often caused by it. Long standing problems are left out, since they did not start in the window.`)}
+        <details class="hc-more"><summary>Show the timeline</summary>
         ${r.timeline.length ? `<div class="table-wrap"><table class="data compact"><thead><tr><th>When</th><th>What</th><th>Kind</th><th>Account</th><th>Region</th></tr></thead><tbody>
           ${r.timeline.map((t) => `<tr><td class="nowrap small">${when(t.time)}</td><td class="small">${sev(t.severity)} ${esc(t.what)}</td><td class="small">${esc(t.kind)}</td><td class="small">${esc(t.account)}</td><td class="small">${esc(t.region)}</td></tr>`).join("")}
         </tbody></table></div>` : ""}</details>
       </section>` : ""}
 
       <section class="card">
-        ${r.gaps.length ? `<h3>Could not check (${r.gaps.length})</h3><p class="muted small">A cause in one of these would not show above.</p><div class="table-wrap"><table class="data compact"><thead><tr><th>Check</th><th>Account</th><th>Region</th><th>Reason</th></tr></thead><tbody>
+        <h2>Coverage</h2>
+        ${intro(`<b>What this is.</b> What the check could and could not read. ${r.gaps.length ? "Each row below is a check that was refused or failed in one place, with the reason and the fix. A cause hidden there would not appear in this report, so read the findings above with that in mind." : "Every check ran everywhere, so nothing in scope was hidden from it."}`)}
+        ${r.gaps.length ? `<h3>Could not check (${r.gaps.length})</h3><div class="table-wrap"><table class="data compact"><thead><tr><th>Check</th><th>Account</th><th>Region</th><th>Reason</th></tr></thead><tbody>
           ${r.gaps.map((g) => `<tr><td class="small">${esc(g.check)}</td><td class="small">${esc(g.account_name || g.account)}</td><td class="small">${esc(g.region)}</td><td class="small"><b>${esc(g.code)}</b> ${esc(g.message)}${g.hint ? `<div class="muted">${esc(g.hint)}</div>` : ""}</td></tr>`).join("")}
         </tbody></table></div>` : `<p class="muted small">Every check ran in every region in use (${r.accounts.map((a) => `${esc(a.name || a.id)}: ${a.regions.map(esc).join(", ")}`).join("; ")}).</p>`}
         <p class="muted small">Checks: ${r.checks.map(esc).join(", ")}.${s.scanned_gb ? ` Logs Insights read ${esc(s.scanned_gb)} GB (about US$${(s.scanned_gb * 0.005).toFixed(2)}).` : ""}</p>
@@ -351,6 +374,9 @@
       <p class="report-footer">AWS Cloud Risk Review · Health Check ${esc(r.id)}</p>`;
     for (const tr of document.querySelectorAll("#hcRuns tr[data-id]")) tr.classList.toggle("chosen", tr.dataset.id === r.id);
   }
+
+  // A plain words explanation above each part, so the report reads well when sent to someone who never ran it.
+  function intro(html) { return `<div class="hc-intro">${html}</div>`; }
 
   function signalsTable(signals) {
     if (!signals.length) return `<p class="muted">Nothing out of the ordinary.</p>`;
@@ -430,6 +456,8 @@
   $("#hcRun").addEventListener("click", run);
   $("#hcAccessBtn").addEventListener("click", () => checkAccess(requestBody()));
   $("#hcStop").addEventListener("click", stop);
+  // Printing from the browser menu too: hidden sections must be on paper.
+  window.addEventListener("beforeprint", () => { for (const d of document.querySelectorAll("details.hc-more")) d.open = true; });
   $("#btnPdf").addEventListener("click", () => {
     for (const d of document.querySelectorAll("details.hc-more")) d.open = true;
     setTimeout(() => window.print(), 200);
