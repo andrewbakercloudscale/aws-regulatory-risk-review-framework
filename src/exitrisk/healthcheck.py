@@ -162,6 +162,7 @@ ACCESS_PROBES = [
     ("rds:DescribeEvents", "rds", "describe_events", {"MaxRecords": 20}),
     ("elasticache:DescribeEvents", "elasticache", "describe_events", {"MaxRecords": 20}),
     ("elasticloadbalancing:DescribeTargetGroups", "elbv2", "describe_target_groups", {"PageSize": 1}),
+    ("ec2:DescribeNetworkInterfaces", "ec2", "describe_network_interfaces", {"MaxResults": 5}),
     ("acm:ListCertificates", "acm", "list_certificates", {"MaxItems": 1}),
     ("directconnect:DescribeConnections", "directconnect", "describe_connections", {}),
 ]  # fmt: skip
@@ -525,12 +526,13 @@ def rank(
         if c["check"] == "change" and c.get("sharp"):
             score += 15
         best = max((w for w, _, _ in linked), default=0)
-        conf = "high" if best >= 1 else "medium" if linked or hits or c["severity"] == "critical" else "low"
-        if conf == "high" and SEV[c["severity"]] < SEV["medium"]:
-            conf = "medium"  # a minor finding next to a symptom is a lead, not a likely cause
-        if c.get("chronic"):
-            conf = "low"
-        guesses.append(_guess(c, score, conf, [e for _, _, e in sorted(linked, key=lambda x: -x[0])], hits))
+        like, why = _likelihood(c, best, linked, hits)
+        g = _guess(c, score, like, [e for _, _, e in sorted(linked, key=lambda x: -x[0])], hits)
+        g["likelihood_why"] = why
+        # A cause is as serious as the worst new failure it leads to: a config change that broke checkout is critical.
+        g["severity"] = max([c["severity"]] + [e["severity"] for _, _, e in linked if not e.get("chronic")],
+                            key=SEV.__getitem__)  # fmt: skip
+        guesses.append(g)
         if best >= 0.6:
             explained.update(i for w, i, _ in linked if w >= 0.6)
     for i, e in enumerate(effects):
@@ -538,12 +540,84 @@ def rank(
             continue
         hits = _matches(e, words)
         score = SEV[e["severity"]] * (0.2 if e.get("chronic") else 0.7) + 40 * bool(hits) + 5 * bool(e.get("ongoing"))
-        guesses.append(_guess(e, score, "low" if e.get("chronic") else "medium" if hits else "low", [], hits,
-                              unexplained=True))  # fmt: skip
-    guesses.sort(key=lambda g: (-g["score"], g.get("started") or ""))
+        like, why = _likelihood(e, 0, [], hits, symptom=True)
+        g = _guess(e, score, like, [], hits, unexplained=True)
+        g["likelihood_why"] = why
+        guesses.append(g)
+    # Most critical first; within a level, the likelier outage, then new before long standing, then the score.
+    guesses.sort(key=lambda g: (-SEV[g["severity"]], -LIKELY[g["likelihood"]], g["chronic"], -g["score"],
+                                g.get("started") or ""))  # fmt: skip
     for n, g in enumerate(guesses, 1):
         g["rank"] = n
     return guesses
+
+
+KAFKA_IAM_ACTIONS = {
+    "DeleteTopic", "CreateTopic", "AlterTopic", "AlterTopicDynamicConfiguration", "AlterCluster",
+    "AlterClusterDynamicConfiguration", "AlterGroup", "DeleteGroup", "AlterTransactionalId",
+}  # fmt: skip
+LIKELY = {"high": 3, "medium": 2, "low": 1}
+_LEVEL = {3: "high", 2: "medium", 1: "low"}
+
+
+def _likelihood(item: dict, best: float, linked: list, hits: list[str], symptom: bool = False) -> tuple[str, str]:
+    """How likely this is to cause, or already be, an outage users feel, and in plain words why.
+    Works with or without an outage going on: it rates the finding, not only its link to symptoms."""
+    sev, new, now = item["severity"], not item.get("chronic"), bool(item.get("ongoing"))
+    if best >= 1 and SEV[sev] >= SEV["medium"]:
+        n = len(linked)
+        return "high", f"Started just before {n} failure{'s' if n > 1 else ''} it can cause."
+    if sev == "critical":
+        level, why = (
+            (3, "Failing now: anything that depends on it is down.")
+            if now and new
+            else (
+                (
+                    2,
+                    "Failing for more than a day: either nothing uses it, or users have been hit all along. "
+                    "Confirm it is still needed.",
+                )
+                if now
+                else (2, "Failed in the window but has recovered.")
+            )
+        )
+    elif sev == "high":
+        if symptom:
+            level, why = (
+                (3, "New since yesterday and still failing; users are likely to notice.")
+                if now and new
+                else (
+                    (2, "Failing at about the same level a day earlier: a standing fault.")
+                    if now
+                    else (2, "Failed in the window but has recovered.")
+                )
+            )
+        else:
+            level, why = (
+                (
+                    2,
+                    "New pressure since yesterday and still happening; it becomes an outage if it grows "
+                    "or retries run out.",
+                )
+                if new
+                else ((1, "At about the same level a day earlier and absorbed so far; fix it, but it is not urgent."))
+            )
+    elif sev == "medium":
+        level, why = (
+            (2 if new and now else 1),
+            (
+                "Worth fixing; on its own it rarely stops a service."
+                if not (new and now)
+                else "New and still happening; it degrades the service rather than stopping it."
+            ),
+        )
+    else:
+        level, why = 1, "Minor: unlikely to cause an outage on its own."
+    if linked and level < 3:
+        level, why = level + 1, why + " Other failures follow it."
+    if hits and level < 3:
+        level, why = level + 1, why + " It matches your description."
+    return _LEVEL[level], why  # fmt: skip
 
 
 def _guess(item: dict, score: float, conf: str, linked: list[dict], hits: list[str], unexplained=False) -> dict:
@@ -558,7 +632,7 @@ def _guess(item: dict, score: float, conf: str, linked: list[dict], hits: list[s
     why = ". ".join(p for p in parts if p) + "."
     return {
         "score": round(score, 1),
-        "confidence": conf,
+        "likelihood": conf,
         "kind": "symptom" if unexplained else item.get("check") == "change" and "change" or "cause",
         "title": item["title"],
         "why": why,
@@ -578,11 +652,23 @@ def _guess(item: dict, score: float, conf: str, linked: list[dict], hits: list[s
     }
 
 
+def _legacy_title(s: dict) -> dict:
+    """Runs saved before target groups were described name them by ARN path only: at least say ALB or NLB."""
+    kind = {"alb_unhealthy": "ALB", "nlb_unhealthy": "NLB"}.get(s.get("check"))
+    if kind and s.get("title", "").startswith("Target group targetgroup/"):
+        name = s["title"].split("/")[1]
+        return {**s, "title": f"{kind} target group {name} has unhealthy targets"}
+    return s
+
+
 def build_report(doc: dict) -> dict:
     raw = doc.get("raw") or {}
     accounts = raw.get("accounts") or []
-    signals = [s for a in accounts for s in a.get("signals") or []]
-    changes = [c for a in accounts for c in a.get("changes") or []]
+    signals = [_legacy_title(s) for a in accounts for s in a.get("signals") or []]
+    # Runs saved before MSK reads were told apart logged them under the IAM action checked (DeleteTopic);
+    # the Kafka requests that really change something are plural (DeleteTopics) and are kept.
+    changes = [c for a in accounts for c in a.get("changes") or []
+               if not (c.get("service") == "kafka-cluster" and c.get("event") in KAFKA_IAM_ACTIONS)]  # fmt: skip
     gaps = [g for a in accounts for g in a.get("gaps") or []]
     readiness = [r for a in accounts for r in a.get("readiness") or []]
     risks = sorted((r for a in accounts for r in a.get("risks") or []), key=lambda r: -SEV.get(r.get("severity"), 0))
@@ -601,6 +687,8 @@ def build_report(doc: dict) -> dict:
     top = [g for g in guesses if not g["chronic"]][:TOP]
     if len(top) < TOP:  # long standing problems only fill spare places, and only the serious ones
         top += [g for g in guesses if g["chronic"] and SEV[g["severity"]] >= SEV["high"]][: TOP - len(top)]
+    order = {id(g): n for n, g in enumerate(guesses)}
+    top.sort(key=lambda g: order[id(g)])  # back in criticality order
     top = [{**g, "rank": n} for n, g in enumerate(top, 1)]
     return {
         "id": doc["id"],

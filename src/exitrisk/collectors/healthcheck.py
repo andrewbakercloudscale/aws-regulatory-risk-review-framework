@@ -738,6 +738,11 @@ RISKY_EVENTS = re.compile(
     r"UpdateRoute|UpdateCertificateOptions|ImportCertificate|SetLoadBalancerPoliciesOfListener|SetVpcEndpoint)"
 )
 # Changes that cut capacity or access outright; the others are ordinary deployments.
+# MSK with IAM sign-in logs every Kafka request it authorises, named after the IAM action it checked
+# (a DescribeTopicPartitions request can be logged as DeleteTopic). The real request is kafkaAPI; only
+# these ones change anything.
+KAFKA_WRITES = re.compile(r"^(Create|Delete|Alter|IncrementalAlter|ElectLeaders|AlterPartitionReassignments)")
+
 SHARP_EVENTS = re.compile(
     r"^(Revoke|Delete|Disable|Deregister|Detach|Disassociate|Terminate|Stop|ScheduleKeyDeletion|"
     r"PutFunctionConcurrency|ReplaceNetworkAclEntry|ReplaceRoute|SetDesiredCapacity|PutKeyPolicy|"
@@ -1221,8 +1226,10 @@ def check_trail(ctx: Ctx, region: str) -> None:
         EndTime=ctx.end,
         PaginationConfig={"MaxItems": TRAIL_PAGES * 50, "PageSize": 50},
     )
+    seen = 0
     for page in pages:
         for ev in page.get("Events") or []:
+            seen += 1
             try:
                 d = json.loads(ev.get("CloudTrailEvent") or "{}")
             except ValueError:
@@ -1230,6 +1237,7 @@ def check_trail(ctx: Ctx, region: str) -> None:
             ident = d.get("userIdentity") or {}
             by_aws = ident.get("type") == "AWSService" or AWS_ACTORS.search(ident.get("invokedBy") or "") is not None
             name, source = ev["EventName"], (d.get("eventSource") or "").replace(".amazonaws.com", "")
+            api = str((d.get("requestParameters") or {}).get("kafkaAPI") or "") if source == "kafka-cluster" else ""
             err = d.get("errorCode") or ""
             when = ev["EventTime"]
             if err:
@@ -1243,6 +1251,10 @@ def check_trail(ctx: Ctx, region: str) -> None:
                     g["first"], g["last"] = min(g["first"], when), max(g["last"], when)
                     g["who"].add(_who(d))
                 continue
+            if source == "kafka-cluster":
+                if not KAFKA_WRITES.match(api):
+                    continue  # a read the cluster authorised, not a change
+                name = api
             if by_aws or not RISKY_EVENTS.match(name):
                 continue
             ctx.changes.append(
@@ -1258,6 +1270,13 @@ def check_trail(ctx: Ctx, region: str) -> None:
                     "sharp": bool(SHARP_EVENTS.match(name)),
                 }
             )
+    if seen >= TRAIL_PAGES * 50:
+        with ctx._lock:
+            ctx.gaps.append({"account": ctx.account, "account_name": ctx.name, "region": region,
+                             "check": "Recent changes", "code": "Partial",
+                             "message": f"More than {seen:,} write events in the window; only the latest {seen:,} "
+                                        "were read, so older changes may be missing.",
+                             "hint": "Shorten the look back to see all changes."})  # fmt: skip
     for (err, source, name), g in refused.items():
         if g["n"] < 2:
             continue
@@ -1582,25 +1601,130 @@ def check_lambda(ctx: Ctx, region: str) -> None:
             )
 
 
+LB_KIND = {"application": "ALB", "network": "NLB", "gateway": "GWLB"}
+_ELB_ENI = re.compile(r"^ELB (?:net|app|gwy)/([^/]+)/")
+
+
+def _lb_of(elb, arns: list[str]) -> dict:
+    if not arns:
+        return {}
+    try:
+        lbs = elb.describe_load_balancers(LoadBalancerArns=arns[:20]).get("LoadBalancers") or []
+    except ClientError:
+        return {}
+    return lbs[0] if lbs else {}
+
+
+def _ip_owners(ec2, vpc: str, ips: list[str]) -> dict[str, dict]:
+    """Which network interface holds each private IP: nothing there any more is the usual cause of an IP target
+    that never passes, and another load balancer's interface means a chain of load balancers."""
+    owners: dict[str, dict] = {}
+    for i in range(0, len(ips), 100):
+        flt = [
+            {"Name": "vpc-id", "Values": [vpc]},
+            {"Name": "addresses.private-ip-address", "Values": ips[i : i + 100]},
+        ]
+        nis = ec2.describe_network_interfaces(Filters=flt).get("NetworkInterfaces") or []
+        for n in nis:
+            for a in n.get("PrivateIpAddresses") or []:
+                owners[a.get("PrivateIpAddress")] = n
+    return owners
+
+
+def _inner_lb(elb, name: str) -> str:
+    """Targets that are another load balancer's interfaces: how that one's own targets are doing."""
+    try:
+        lb = (elb.describe_load_balancers(Names=[name]).get("LoadBalancers") or [{}])[0]
+    except ClientError:
+        return ""
+    tags = {}
+    with contextlib.suppress(ClientError, IndexError, KeyError):
+        tags = {t["Key"]: t["Value"] for t in
+                elb.describe_tags(ResourceArns=[lb["LoadBalancerArn"]])["TagDescriptions"][0]["Tags"]}  # fmt: skip
+    svc = tags.get("kubernetes.io/service-name")
+    label = f"{LB_KIND.get(lb.get('Type'), 'load balancer')} {name}" + (f" (Kubernetes service {svc})" if svc else "")
+    total = healthy = 0
+    with contextlib.suppress(ClientError, KeyError):
+        for g in elb.describe_target_groups(LoadBalancerArn=lb["LoadBalancerArn"]).get("TargetGroups") or []:
+            for t in (
+                elb.describe_target_health(TargetGroupArn=g["TargetGroupArn"]).get("TargetHealthDescriptions") or []
+            ):
+                total += 1
+                healthy += (t.get("TargetHealth") or {}).get("State") == "healthy"
+    if not total:
+        return (
+            f"The targets are the interfaces of {label}, which has no targets registered, so nothing answers behind it"
+        )
+    return f"The targets are the interfaces of {label}, which has {healthy} of {total} targets healthy"
+
+
 def check_target_health(ctx: Ctx, region: str) -> None:
-    """Why each unhealthy target group's targets fail (from the metric probe's list)."""
+    """Why each unhealthy target group's targets fail (from the metric probe's list): the load balancer kind and
+    scheme, the listener and health check, each target's reason, and for IP targets what holds that IP now."""
     elb = ctx.client("elbv2", region)
+    ec2 = None
     for tg, sig in [(t, s) for t, s in ctx.unhealthy_tgs if s["region"] == region][:30]:
-        arn = f"arn:aws:elasticloadbalancing:{region}:{ctx.account}:{tg}"
+        tg_path = tg.split("|")[0]
+        arn = f"arn:aws:elasticloadbalancing:{region}:{ctx.account}:{tg_path}"
         try:
+            g = (elb.describe_target_groups(TargetGroupArns=[arn]).get("TargetGroups") or [{}])[0]
             th = elb.describe_target_health(TargetGroupArn=arn).get("TargetHealthDescriptions") or []
         except ClientError:
             continue
-        why = {}
+        lb = _lb_of(elb, g.get("LoadBalancerArns") or [])
+        kind = LB_KIND.get(lb.get("Type"), "")
+        tg_name = g.get("TargetGroupName") or tg_path
+        if lb:
+            lb_name, scheme = lb["LoadBalancerName"], lb.get("Scheme", "")
+            sig["title"] = f"{kind} {lb_name} ({scheme}): target group {tg_name} has unhealthy targets"
+            sig["resource"] = f"{lb['LoadBalancerName']}, {tg_name}"
+        port = g.get("HealthCheckPort")
+        hc = f"{g.get('HealthCheckProtocol', '')} {g.get('HealthCheckPath') or ''} on " + (
+            "the traffic port" if port == "traffic-port" else f"port {port}"
+        )
+        facts = [f"{kind or 'Load balancer'} {lb.get('LoadBalancerName', '')} {lb.get('Scheme', '')}".strip()
+                 + f", {g.get('Protocol', '')} {g.get('Port', '')} to {g.get('TargetType', '')} targets; "
+                 f"health check {' '.join(hc.split())}"]  # fmt: skip
+        why: dict[str, int] = {}
+        bad_ips = []
         for t in th:
             h = t.get("TargetHealth") or {}
             if h.get("State") != "healthy":
                 k = f"{h.get('State')}: {h.get('Reason', '')} {h.get('Description', '')}".strip()
                 why[k] = why.get(k, 0) + 1
+                if g.get("TargetType") == "ip":
+                    bad_ips.append(t["Target"]["Id"])
+        healthy = sum((t.get("TargetHealth") or {}).get("State") == "healthy" for t in th)
+        facts.append(f"{healthy} of {len(th)} targets healthy now" if th else "no targets registered")
         if why:
-            sig["evidence"] += "; now: " + "; ".join(
-                f"{n} {k}" for k, n in sorted(why.items(), key=lambda x: -x[1])[:3]
-            )
+            facts.append("; ".join(f"{n} {k}" for k, n in sorted(why.items(), key=lambda x: -x[1])[:3]))
+        if bad_ips and g.get("VpcId"):
+            try:
+                ec2 = ec2 or ctx.client("ec2", region)
+                owners = _ip_owners(ec2, g["VpcId"], bad_ips)
+            except ClientError:
+                owners = None
+            if owners is not None:
+                gone = [ip for ip in bad_ips if ip not in owners]
+                lbs = {m.group(1) for ip in bad_ips if ip in owners
+                       for m in [_ELB_ENI.match(owners[ip].get("Description") or "")] if m}  # fmt: skip
+                if gone:
+                    facts.append(
+                        f"{len(gone)} of {len(bad_ips)} failing target IPs ({', '.join(gone[:3])}) are held by no "
+                        "network interface in this VPC: nothing runs there any more, so these are stale "
+                        "registrations or the IPs live in another network"
+                    )
+                    sig["next"] = ("Re-register the targets with the current IPs (or let the controller that owns them "
+                                   "do it), or remove the target group if the service is retired.")  # fmt: skip
+                for name in sorted(lbs)[:2]:
+                    inner = _inner_lb(elb, name)
+                    if inner:
+                        facts.append(inner)
+                        sig["next"] = (
+                            "Fix the load balancer behind it first: its targets (for Kubernetes, the ingress "
+                            "controller's pods and nodes) must be registered and healthy."
+                        )
+        sig["evidence"] += ". " + ". ".join(f for f in facts if f)
 
 
 def check_rds(ctx: Ctx, region: str) -> None:

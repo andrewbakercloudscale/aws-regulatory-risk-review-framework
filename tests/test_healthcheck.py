@@ -74,7 +74,7 @@ def _sig(**kw):
     return {**base, **kw}
 
 
-def test_change_before_errors_ranks_first_with_high_confidence():
+def test_change_before_errors_ranks_first_with_high_likelihood():
     errors = _sig(title="Function checkout is failing", resource="checkout", started="2026-01-01T12:20:00+00:00",
                   severity="critical")  # fmt: skip
     noise = _sig(title="Queue reports is backing up", resource="reports", started="2026-01-01T09:00:00+00:00",
@@ -83,7 +83,7 @@ def test_change_before_errors_ranks_first_with_high_confidence():
               "time": "2026-01-01T12:10:00+00:00", "event": "UpdateFunctionConfiguration", "service": "lambda",
               "who": "deployer", "resource": "checkout", "sharp": True}  # fmt: skip
     out = healthcheck.rank([errors, noise], [change], "", "2026-01-01T06:00:00+00:00")
-    assert out[0]["kind"] == "change" and out[0]["confidence"] == "high"
+    assert out[0]["kind"] == "change" and out[0]["likelihood"] == "high"
     assert "Function checkout is failing" in out[0]["why"]
 
 
@@ -105,15 +105,17 @@ def test_symptom_words_lift_a_match_and_minor_causes_stay_below_high():
     a = _sig(title="Function whatsapp-send is failing", resource="whatsapp-send", severity="medium")
     b = _sig(title="Function billing is failing", resource="billing", severity="high")
     out = healthcheck.rank([a, b], [], "whatsapp messages not going out")
-    assert out[0]["resource"] == "whatsapp-send" and "whatsapp" in out[0]["why"]
+    match = next(g for g in out if g["resource"] == "whatsapp-send")
+    assert "whatsapp" in match["why"] and match["likelihood"] == "medium"
+    assert out[0]["resource"] == "billing"  # still most critical first
     minor = _sig(title="SendEvent is denied", resource="x", severity="low", role="cause", service="security",
                  check="denied", started="2026-01-01T12:00:00+00:00")  # fmt: skip
     hit = _sig(title="Function x is failing", resource="x", started="2026-01-01T12:05:00+00:00")
     ranked = healthcheck.rank([minor, hit], [])
-    assert all(g["confidence"] != "high" for g in ranked if g["severity"] == "low")
+    assert all(g["likelihood"] != "high" for g in ranked if g["severity"] == "low")
 
 
-def test_report_puts_long_standing_problems_after_new_ones():
+def test_report_sorts_by_criticality_and_explains_likelihood():
     doc = {"id": "hc-test", "window": {"start": "2026-01-01T06:00:00+00:00", "hours": 6}, "request": {},
            "raw": {"accounts": [{"account": "123456789012", "name": "shop", "regions": ["eu-west-1"], "changes": [],
                                  "gaps": [], "signals": [
@@ -121,8 +123,9 @@ def test_report_puts_long_standing_problems_after_new_ones():
                _sig(title="Minor old", resource="minor", chronic=True, severity="low"),
                _sig(title="New", resource="new", started="2026-01-01T11:00:00+00:00")]}]}}  # fmt: skip
     r = healthcheck.build_report(doc)
-    assert [g["title"] for g in r["top"]] == ["New", "Old"]  # a minor old one does not fill the list
+    assert [g["title"] for g in r["top"]] == ["Old", "New"]  # most critical first; a minor old one stays out
     assert [g["rank"] for g in r["top"]] == [1, 2]
+    assert r["top"][0]["likelihood"] == "medium" and r["top"][0]["likelihood_why"]
     assert r["summary"]["chronic"] == 2
 
 
@@ -187,3 +190,36 @@ def test_log_samples_are_redacted_and_spikes_need_a_floor():
     assert hc._spike(600, 50, 500, 3) and not hc._spike(400, 0, 500, 3) and not hc._spike(900, 400, 500, 3)
     keep, big = hc._fit({"small": 1.0, "huge": 100.0}, 60)
     assert keep == ["small"] and big == ["huge"]
+
+
+def test_new_serious_problem_without_symptoms_is_medium_and_ranks_by_criticality():
+    dyn = _sig(title="Table t throttles writes", resource="t", role="cause", service="capacity", check="ddb",
+               severity="high", ongoing=True, started="2026-01-01T09:00:00+00:00")  # fmt: skip
+    denied = _sig(title="Call is denied", resource="k", role="cause", service="security", check="denied",
+                  severity="low", ongoing=True, started="2026-01-01T12:00:00+00:00")  # fmt: skip
+    tg = _sig(title="Target group tg has unhealthy targets", resource="tg", severity="critical", chronic=True,
+              ongoing=True)  # fmt: skip
+    out = healthcheck.rank([dyn, denied, tg], [], "", "2026-01-01T06:00:00+00:00")
+    assert [g["severity"] for g in out] == ["critical", "high", "low"]
+    assert out[0]["likelihood"] == "medium" and "more than a day" in out[0]["likelihood_why"]
+    assert out[1]["likelihood"] == "medium" and "New pressure" in out[1]["likelihood_why"]
+    assert out[2]["likelihood"] == "low"
+    new_down = _sig(title="Target group web has no healthy target", resource="web", severity="critical", ongoing=True)
+    assert healthcheck.rank([new_down], [])[0]["likelihood"] == "high"
+
+
+def test_old_runs_drop_kafka_reads_logged_under_an_iam_action():
+    doc = {"id": "hc-test", "window": {"start": "2026-01-01T06:00:00+00:00", "hours": 6}, "request": {},
+           "raw": {"accounts": [{"account": "123456789012", "name": "shop", "regions": ["eu-west-1"], "gaps": [],
+                                 "signals": [], "changes": [
+               {"account": "123456789012", "account_name": "shop", "region": "eu-west-1",
+                "time": "2026-01-01T07:00:00+00:00",
+                "event": e, "service": "kafka-cluster", "who": "app", "resource": "topic/t", "sharp": True}
+               for e in ("DeleteTopic", "DeleteTopics")]}]}}  # fmt: skip
+    r = healthcheck.build_report(doc)
+    assert r["summary"]["changes"] == 1
+
+
+def test_old_target_group_titles_name_the_load_balancer_kind():
+    sig = _sig(title="Target group targetgroup/web-tg/abc123 has unhealthy targets", check="nlb_unhealthy")
+    assert healthcheck._legacy_title(sig)["title"] == "NLB target group web-tg has unhealthy targets"

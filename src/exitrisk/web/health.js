@@ -274,8 +274,13 @@
     const s = r.summary;
     const accts = r.accounts.map((a) => `${esc(a.name || a.id)} <span class="muted">${esc(a.id)}</span>`).join(", ");
     const tiles = [
-      ["Critical now", s.critical, "tone-risk"], ["High now", s.high, "tone-risk"], ["Medium now", s.medium, ""],
-      ["Risky changes", `${s.sharp_changes}<span class="muted small"> of ${s.changes}</span>`, "tone-est"], ["Long standing", s.chronic, ""], ["Could not check", s.gaps, s.gaps ? "tone-risk" : ""],
+      ["Critical now", s.critical, "tone-risk", "Problems at critical level in the window, new since yesterday."],
+      ["High now", s.high, "tone-risk", "Problems at high level in the window, new since yesterday."],
+      ["Medium now", s.medium, "", "Problems at medium level in the window, new since yesterday."],
+      ["Risky changes", `${s.sharp_changes}<span class="muted small"> of ${s.changes}</span>`, "tone-est",
+        `Changes made by people or pipelines in the window that can break things straight away: deletes, stops, detaches, revoked access, failovers, key deletion. "of ${s.changes}" counts every change that can affect availability. AWS's own actions are left out. See Recent changes below.`],
+      ["Long standing", s.chronic, "", "Problems already at about the same level a day earlier."],
+      ["Could not check", s.gaps, s.gaps ? "tone-risk" : "", "Checks that could not read something; listed at the end with the fix."],
     ];
     const status = r.status === "done" ? "" : `<p class="error-text">This run ${esc(r.status)}${r.error ? `: ${esc(r.error)}` : ""}. What it found before then is below.</p>`;
     const top = r.top || [];
@@ -286,20 +291,20 @@
         ${r.symptoms ? `<p class="muted"><b>Symptoms given:</b> ${esc(r.symptoms)}</p>` : ""}
         ${status}
         ${r.unreachable?.length ? `<p class="error-text">Not reached: ${r.unreachable.map((u) => `${esc(u.name || u.account)} (${esc(u.code)}: ${esc(u.message)})`).join("; ")}</p>` : ""}
-        <div class="tiles" style="grid-template-columns:repeat(6,minmax(0,1fr))">${tiles.map(([l, v, t]) => `<div class="tile ${t}"><div class="tile-label">${l}</div><div class="tile-value">${v}</div></div>`).join("")}</div>
+        <div class="tiles" style="grid-template-columns:repeat(6,minmax(0,1fr))">${tiles.map(([l, v, t, tip]) => `<div class="tile ${t}" title="${esc(tip)}"><div class="tile-label">${l}</div><div class="tile-value">${v}</div></div>`).join("")}</div>
       </section>
 
       <section class="card">
-        <h2>Top ${top.length || 10} likely causes</h2>
-        <p class="muted small">Ranked by how serious each is, whether it started just before the symptoms and sits on something they depend on, shares a name with what is failing, and matches your description. Problems already present a day earlier rank lower. A guess, not a verdict: confirm each with its next step.</p>
-        ${top.length ? `<div class="table-wrap"><table class="data hc-top"><thead><tr><th>#</th><th>Likely cause</th><th>Why</th><th>Started</th><th>Where</th><th>Confidence</th><th>Next step</th></tr></thead><tbody>
+        <h2>Top ${top.length || 10} issues</h2>
+        <p class="muted small">Most critical first, then by outage likelihood: how likely each is to cause, or already be, an outage users feel. High: failing now and new, or started just before failures it can cause. Medium: pressure that becomes an outage if it grows, or a fault standing for over a day. Low: minor, or absorbed at the same level a day earlier. Useful with or without an outage going on; confirm each with its next step.</p>
+        ${top.length ? `<div class="table-wrap"><table class="data hc-top"><thead><tr><th>#</th><th>Issue</th><th>Why</th><th>Started</th><th>Where</th><th>Outage likelihood</th><th>Next step</th></tr></thead><tbody>
           ${top.map((g) => `<tr>
             <td class="rank">${g.rank}</td>
             <td><b>${esc(g.title)}</b><div>${sev(g.severity)}${g.kind === "change" ? `<span class="hc-tag">change</span>` : g.kind === "symptom" ? `<span class="hc-tag">unexplained symptom</span>` : ""}${g.ongoing ? `<span class="hc-tag">still happening</span>` : ""}${g.chronic ? `<span class="hc-tag">long standing</span>` : ""}</div></td>
             <td class="why small">${esc(g.why)}</td>
             <td class="nowrap small">${when(g.started) || "before the window"}</td>
             <td class="small">${esc(g.account_name || g.account)}<div class="muted">${esc(g.region)}</div></td>
-            <td><span class="conf ${esc(g.confidence)}">${esc(g.confidence)}</span></td>
+            <td><span class="conf ${esc(g.likelihood)}" title="${esc(g.likelihood_why || "")}">${esc(g.likelihood)}</span>${g.likelihood_why ? `<div class="muted small conf-why">${esc(g.likelihood_why)}</div>` : ""}</td>
             <td class="small">${esc(g.next || "")}</td></tr>`).join("")}
         </tbody></table></div>` : `<p><b>No fault found in this window.</b> If users still see a problem, widen the window, add symptoms, or check what these accounts call outside AWS.</p>`}
       </section>
