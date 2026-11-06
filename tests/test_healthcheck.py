@@ -250,3 +250,117 @@ def test_controller_and_housekeeping_changes_are_routine_not_risky():
     assert not col.is_sharp("TerminateInstances", "prd-karpenter-role (s)")
     assert col.is_sharp("TerminateInstances", "ops-admin (alice)")
     assert col.is_sharp("DeleteDBInstance", "deployer") and not col.is_routine("DeleteDBInstance", "deployer")
+
+
+# ------------------------------------------------------------------ deep checks
+from exitrisk.collectors import healthcheck_deep as deep  # noqa: E402
+
+
+def _probe(pid):
+    return next(p for p in hc.PROBES if p["id"] == pid)
+
+
+def test_rds_parameter_formulas_evaluate_like_rds():
+    gib16 = 16 * 1024**3
+    assert deep.param_value("LEAST({DBInstanceClassMemory/9531392},5000)", gib16) == pytest.approx(1802, abs=1)
+    assert deep.param_value("500", None) == 500
+    assert deep.param_value("{DBInstanceClassMemory/9531392}", None) is None
+    assert deep.param_value("__import__('os')", gib16) is None
+    assert deep.param_value(None, gib16) is None
+
+
+def test_dimension_with_a_space_is_quoted_in_search():
+    q = hc._search({"ns": "AWS/Kafka", "dims": ["Cluster Name", "Broker ID"]}, "CpuUser", "Average", 300)
+    assert '{AWS/Kafka,"Cluster Name","Broker ID"}' in q
+    assert hc._dim("TableName") == "TableName"
+
+
+def test_share_probe_and_raised_severity():
+    p = {**_probe("ddb_wcu"), "at": 0.8, "sevs": [(0.95, "high")], "sustain": 2}
+    per = 300 if p.get("per_s") else 1
+    used = {"orders": [(t, 0.97 * 100 * per) for t in TS]}
+    cap = {"orders": [(t, 100.0) for t in TS]}
+    low = {"orders": [(t, 0.1 * 100 * per) for t in TS]}
+    out = hc.judge(p, {"n": used, "d": cap}, {"n": low, "d": cap}, 300)
+    assert len(out) == 1 and out[0]["severity"] == "high" and not out[0]["chronic"]
+    assert hc.judge(p, {"n": low, "d": cap}, {"n": low, "d": cap}, 300) == []
+
+
+def test_xid_age_raises_to_critical_past_the_second_level():
+    p = _probe("rds_xid")
+    assert hc._sev_for(p, 1.1e9) == p["sev"] and hc._sev_for(p, 1.6e9) == "critical"
+
+
+def test_week_baseline_stops_a_weekly_peak_counting_as_a_spike():
+    p = {"id": "x_spike", "kind": "spike", "at": 10, "x": 3, "sev": "medium", "area": "a", "svc": "app",
+         "title": "{r}", "next": "", "ns": "AWS/X", "metric": "M"}  # fmt: skip
+    now = {"q": [(t, 100.0) for t in TS]}
+    day = {"q": [(t, 5.0) for t in TS]}
+    assert len(hc.judge(p, now, day, 300)) == 1
+    week = {"q": [(t, 90.0) for t in TS]}
+    assert hc.judge(p, now, day, 300, week) == []
+
+
+def test_pod_findings_group_crashing_pods_by_workload_and_skip_a_single_oom():
+    def pod(name, reason=None, oom=None):
+        st = {"containerStatuses": [{"name": "c", "state": {"waiting": {"reason": reason}} if reason else {},
+                                     "lastState": {"terminated": {"reason": "OOMKilled", "finishedAt": oom}}
+                                     if oom else {}}]}  # fmt: skip
+        refs = [{"kind": "ReplicaSet", "name": "api-7d9f8c6b5"}]
+        return {"metadata": {"name": name, "namespace": "shop", "ownerReferences": refs}, "status": st}
+
+    pods = [
+        pod("api-1", "CrashLoopBackOff"),
+        pod("api-2", "CrashLoopBackOff"),
+        pod("api-3", oom="2026-01-01T12:30:00Z"),
+    ]
+    nodes = [{"metadata": {"name": "n1"}, "status": {"conditions": [{"type": "Ready", "status": "False"}]}}]
+    out = deep.pod_findings(pods, nodes, T0)
+    text = " ".join(f["title"] for f in out)
+    assert "2 pods of shop/api" in text and "1 node" in text and "OOM" not in text and "memory" not in text
+
+
+def test_flow_log_table_location_and_sql():
+    b, loc = deep.flow_location("arn:aws:s3:::logs-bucket/vpc", "123456789012", "eu-west-1", False)
+    assert b == "logs-bucket" and loc == "s3://logs-bucket/vpc/AWSLogs/123456789012/vpcflowlogs/eu-west-1/"
+    _, hloc = deep.flow_location("arn:aws:s3:::logs-bucket", "123456789012", "eu-west-1", True)
+    assert "aws-account-id=123456789012/aws-service=vpcflowlogs/aws-region=eu-west-1/" in hloc
+    sql = deep.flow_table_sql("t1", loc, ["srcaddr", "dstport", "action"], False, False)
+    assert "PARTITIONED BY (day string)" in sql and "'projection.enabled'='true'" in sql and loc in sql
+    assert deep._days(T0, T0 + timedelta(days=1), False) == ["2026/01/01", "2026/01/02"]
+
+
+def test_fault_in_a_shared_network_account_explains_symptoms_in_the_accounts_it_serves():
+    cause = _sig(account="999988887777", account_name="network", title="Transit gateway route blackholed",
+                 resource="tgw-rtb-1", role="cause", service="network", check="tgw_blackhole",
+                 started="2026-01-01T12:00:00+00:00", severity="high")  # fmt: skip
+    effect = _sig(title="Function checkout is failing", resource="checkout", started="2026-01-01T12:05:00+00:00")
+    alone = healthcheck.rank([cause, effect], [], "", "2026-01-01T06:00:00+00:00")
+    assert "Followed by" not in next(g for g in alone if g["resource"] == "tgw-rtb-1")["why"]
+    linked = healthcheck.rank([cause, effect], [], "", "2026-01-01T06:00:00+00:00", {"999988887777": {"123456789012"}})
+    assert linked[0]["resource"] == "tgw-rtb-1" and "Function checkout is failing" in linked[0]["why"]
+    assert len(linked) == 1  # the symptom is explained, not a guess of its own
+
+
+def test_new_node_start_up_and_a_usual_low_ratio_are_not_findings():
+    p = _probe("ebs_tput")
+    ts2 = [T0 + timedelta(minutes=5 * i) for i in range(24)]
+    old = {"i-1 / vol-1": [(t, 0.0) for t in ts2]}
+    booting = {"i-2 / vol-2": [(t, 1.0 if i < 6 else 0.0) for i, t in enumerate(ts2[12:])]}
+    assert hc.judge(p, {**old, **booting}, {}, 300) == []
+    busy = {"i-3 / vol-3": [(t, 1.0) for t in ts2]}
+    assert len(hc.judge(p, {**old, **busy}, {}, 300)) == 1
+    hit = _probe("rds_cache_hit")
+    low = {"db1": [(t, 50.0) for t in TS]}
+    assert hc.judge(hit, low, low, 300, low) == []
+    assert len(hc.judge(hit, low, {"db1": [(t, 99.0) for t in TS]}, 300)) == 1
+
+
+def test_a_cluster_operation_explains_the_partition_trouble_inside_it():
+    op = _sig(title="Kafka cluster orders: update broker type in the window", resource="orders", role="cause",
+              service="db", check="msk_operation", severity="medium", started="2026-01-01T05:50:00+00:00",
+              until="2026-01-01T06:40:00+00:00")  # fmt: skip
+    urp = _sig(title="Kafka orders / 1 has under-replicated partitions", resource="orders / 1", service="db",
+               check="msk_urp", started="2026-01-01T06:05:00+00:00")  # fmt: skip
+    out = healthcheck.rank([op, urp], [], "", "2026-01-01T06:00:00+00:00")
+    assert len(out) == 1 and out[0]["title"].startswith("Kafka cluster orders") and out[0]["likelihood"] == "high"

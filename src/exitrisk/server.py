@@ -140,6 +140,8 @@ class HealthCheckRequest(BaseModel):
     symptoms: str = Field("", max_length=2000)
     role_name: str | None = Field(None, max_length=64, pattern=r"^[A-Za-z0-9+=,.@_/-]*$")
     regions: list[Annotated[str, Field(pattern=r"^[a-z]{2}(-[a-z]+)+-\d$")]] | None = None
+    shared: bool = True  # also read the accounts that own the shared network (transit gateway, DNS)
+    athena: bool = False  # read flow logs kept only in S3 with Athena: creates a table, so opt in
 
 
 class SSOSessionRequest(BaseModel):
@@ -1060,6 +1062,8 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
                 req.symptoms,
                 req.role_name or None,
                 req.regions or None,
+                req.shared,
+                req.athena,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc

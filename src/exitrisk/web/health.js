@@ -223,6 +223,8 @@
       accounts: [...state.chosen.values()].map((a) => ({ id: a.id, name: a.name || "" })),
       hours: Number($("#hcHours").value),
       symptoms: $("#hcSymptoms").value.trim(),
+      shared: $("#hcShared").checked,
+      athena: $("#hcAthena").checked,
     };
   }
 
@@ -237,6 +239,8 @@
       accounts: [...state.chosen.values()].map((a) => ({ id: a.id, name: a.name || "" })),
       hours: Number($("#hcHours").value),
       symptoms: $("#hcSymptoms").value.trim(),
+      shared: $("#hcShared").checked,
+      athena: $("#hcAthena").checked,
     };
     try {
       const job = await api("/api/health-check", { method: "POST", body });
@@ -324,7 +328,11 @@
     $("#btnPdf").disabled = false;
     history.replaceState(null, "", `/health?run=${encodeURIComponent(r.id)}`);
     const s = r.summary;
-    const accts = r.accounts.map((a) => `${esc(a.name || a.id)} <span class="muted">${esc(a.id)}${a.owner ? ` · owner ${esc(a.owner)}` : ""}${a.executive && a.executive !== a.owner ? ` · executive ${esc(a.executive)}` : ""}</span>`).join(", ");
+    const mine = r.accounts.filter((a) => !a.shared_for);
+    const shared = r.accounts.filter((a) => a.shared_for);
+    const nameOf = (id) => { const a = r.accounts.find((x) => x.id === id); return a?.name || id; };
+    const sharedLine = shared.length ? `<p class="muted small"><b>Also checked, network only:</b> ${shared.map((a) => `${esc(a.name || a.id)} (${esc(a.id)}), which ${esc(a.shared_for.why.join(", "))} used by ${esc(a.shared_for.accounts.map(nameOf).join(", "))}`).join("; ")}. A fault there can explain symptoms in the accounts it serves.</p>` : "";
+    const accts = mine.map((a) => `${esc(a.name || a.id)} <span class="muted">${esc(a.id)}${a.owner ? ` · owner ${esc(a.owner)}` : ""}${a.executive && a.executive !== a.owner ? ` · executive ${esc(a.executive)}` : ""}</span>`).join(", ");
     const tiles = [
       ["Critical now", s.critical, "tone-risk", "Problems at critical level in the window, new since yesterday."],
       ["High now", s.high, "tone-risk", "Problems at high level in the window, new since yesterday."],
@@ -338,8 +346,8 @@
     const top = r.top || [];
     // Which report this is, impossible to miss: the one just run, or an earlier one (and for which accounts).
     const fresh = r.id === state.followed;
-    const names = r.accounts.map((a) => a.name || a.id).join(", ");
-    state.reportAccounts = r.accounts.map((a) => a.id).sort().join(",");
+    const names = mine.map((a) => a.name || a.id).join(", ");
+    state.reportAccounts = mine.map((a) => a.id).sort().join(",");
     const banner = fresh
       ? `<div class="hc-banner fresh"><b>New report</b>, just finished at ${when(r.finished || r.created)}.</div>`
       : `<div class="hc-banner old"><b>Earlier report</b> from ${when(r.created)} (${ago(r.created)}) of <b>${esc(names)}</b>. <span class="hc-banner-tail"></span></div>`;
@@ -348,6 +356,7 @@
         ${banner}
         <div class="card-head"><h2>Health check: ${esc(names)}</h2><span class="muted small">window ${when(r.window?.start)} to ${when(r.window?.end)} (${esc(r.window?.hours)} h) · run ${when(r.created)}</span></div>
         <p>${accts}</p>
+        ${sharedLine}
         ${r.symptoms ? `<p class="muted"><b>Symptoms given:</b> ${esc(r.symptoms)}</p>` : ""}
         ${status}
         ${r.unreachable?.length ? `<p class="error-text">Not reached: ${r.unreachable.map((u) => `${esc(u.name || u.account)} (${esc(u.code)}: ${esc(u.message)})`).join("; ")}</p>` : ""}

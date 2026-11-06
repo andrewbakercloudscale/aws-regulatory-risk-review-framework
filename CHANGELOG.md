@@ -10,9 +10,19 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 - Health Check, a sixth report (`/health`, or Health check in the top bar): search by account number, name or owner, tick up to 10 accounts, choose how far to look back and optionally describe the symptoms. It reads metrics, alarms, CloudTrail changes, ECS, EKS, Auto Scaling, EC2, Lambda, load balancer targets, RDS, ElastiCache, VPN, transit gateway, Direct Connect, flow logs, DNS, application log errors, quotas, certificates and AWS Health, and returns the top issues by severity and outage likelihood, with everything found, changes, a timeline and what could not be checked. See docs/HEALTH_CHECK.md.
 - Sign in with an access key: the console lists the profiles in your AWS credentials and config files with their kind and the key masked, and uses the one you choose. Secrets never leave the machine.
 - Health Check: Check access tries every read once per account and gives a policy for any refused.
+- Health Check deep dive on every service, about 140 metric probes plus new checks:
+  - RDS and Aurora: IOPS and throughput over the instance or volume limit, burst and IO balance, transaction ID age, replication slot lag, deadlocks, cache hit ratio, commit latency, connections against max_connections from the parameter group, provisioned IOPS against use, storage ceiling, autovacuum off, Performance Insights waits and heaviest SQL, and database log warnings.
+  - EBS, EFS and FSx limits and state; SQS queues nothing reads; DynamoDB index throttles, latency, replication and capacity in use; MSK partitions, controller, disk, heap and lag; ElastiCache, OpenSearch, Lambda, load balancer, API Gateway, WAF and Network Firewall depth.
+  - Network: blackholed VPC and transit gateway routes, VPC endpoints, and the security groups and network ACLs behind rejected traffic.
+  - EKS pods and nodes (crash loops, image pulls, unschedulable, out of memory, node pressure), X-Ray faults and canaries.
+  - Shared network accounts (transit gateway, shared VPC, Resolver rules, private zones) are read too, and a fault there explains symptoms in the accounts it serves.
+  - Spikes are also compared with a week earlier, so a weekly peak is not a finding.
+  - Optional Athena read of flow logs kept only in S3 (off by default; it creates a table).
 
 ### Changed
 - Health Check: changes by cluster controllers (Karpenter, the autoscaler, the load balancer controller) and housekeeping (old launch templates, snapshots) are tagged routine and never counted as risky. The Risky changes tile opens the changes list, which explains that repeats are grouped.
+- Health Check: metric reads no longer lose data in large accounts. AWS returns at most 500 series a call and silently drops the rest; batches that overflow are now split, so every probe is judged (in one test account three times as many series were read).
+- Health Check: findings that are the account's normal are no longer raised: Aurora swap and load are judged by their rise, the buffer cache hit ratio by a drop below its usual level, EBS limits ignore a new node's first 30 minutes, a VPC endpoint or event source mapping broken for days is marked long standing, and MSK patching or broker changes are shown as the cause of the partition alerts they produce.
 - Health Check: MSK reads logged under a write permission (IAM authorisation records the action checked) are no longer listed as changes.
 
 ## [0.32.1] - 2026-11-06

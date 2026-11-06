@@ -14,6 +14,7 @@ nothing seen is hidden. Chronic findings (the same a day earlier) rank last: rea
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import os
@@ -205,6 +206,32 @@ ACCESS_PROBES = [
     ("ec2:DescribeNetworkInterfaces", "ec2", "describe_network_interfaces", {"MaxResults": 5}),
     ("acm:ListCertificates", "acm", "list_certificates", {"MaxItems": 1}),
     ("directconnect:DescribeConnections", "directconnect", "describe_connections", {}),
+    # deep checks
+    ("kafka:ListClustersV2", "kafka", "list_clusters_v2", {"MaxResults": 1}),
+    ("rds:DescribeDBClusters", "rds", "describe_db_clusters", {"MaxRecords": 20}),
+    ("rds:DescribeDBParameters", "rds", "describe_db_parameters",
+     {"DBParameterGroupName": "default.postgres16", "MaxRecords": 20}),
+    ("rds:DescribeDBClusterParameters", "rds", "describe_db_cluster_parameters",
+     {"DBClusterParameterGroupName": "default.aurora-postgresql16", "MaxRecords": 20}),
+    ("ec2:DescribeRouteTables", "ec2", "describe_route_tables", {"MaxResults": 5}),
+    ("ec2:DescribeVpcEndpoints", "ec2", "describe_vpc_endpoints", {"MaxResults": 5}),
+    ("ec2:DescribeTransitGateways", "ec2", "describe_transit_gateways", {"MaxResults": 5}),
+    ("ec2:DescribeTransitGatewayRouteTables", "ec2", "describe_transit_gateway_route_tables", {"MaxResults": 5}),
+    ("ec2:DescribeVolumeStatus", "ec2", "describe_volume_status", {"MaxResults": 5}),
+    ("ec2:DescribeInstanceTypes", "ec2", "describe_instance_types", {"MaxResults": 5}),
+    ("ec2:DescribeNetworkAcls", "ec2", "describe_network_acls", {"MaxResults": 5}),
+    ("elasticfilesystem:DescribeFileSystems", "efs", "describe_file_systems", {"MaxItems": 1}),
+    ("fsx:DescribeFileSystems", "fsx", "describe_file_systems", {"MaxResults": 1}),
+    ("dynamodb:ListTables", "dynamodb", "list_tables", {"Limit": 1}),
+    ("dynamodb:DescribeTable", "dynamodb", "describe_table", {"TableName": "exitrisk-access-probe"}),
+    ("lambda:GetAccountSettings", "lambda", "get_account_settings", {}),
+    ("lambda:ListEventSourceMappings", "lambda", "list_event_source_mappings", {"MaxItems": 1}),
+    ("xray:GetServiceGraph", "xray", "get_service_graph", {"StartTime": 0, "EndTime": 60}),
+    ("route53resolver:ListResolverRules", "route53resolver", "list_resolver_rules", {"MaxResults": 1}),
+    ("route53resolver:ListResolverRuleAssociations", "route53resolver", "list_resolver_rule_associations",
+     {"MaxResults": 1}),
+    ("elasticache:DescribeReplicationGroups", "elasticache", "describe_replication_groups", {"MaxRecords": 20}),
+    ("cloudwatch:ListMetrics", "cloudwatch", "list_metrics", {"Namespace": "AWS/EC2", "MetricName": "CPUUtilization"}),
 ]  # fmt: skip
 
 
@@ -303,6 +330,8 @@ def start(
     symptoms: str = "",
     role_name: str | None = None,
     regions: list[str] | None = None,
+    shared: bool = True,
+    athena: bool = False,
 ) -> Job:
     if not accounts or len(accounts) > MAX_ACCOUNTS:
         raise ValueError(f"pick between 1 and {MAX_ACCOUNTS} accounts")
@@ -310,7 +339,7 @@ def start(
         raise ValueError(f"the window must be one of {', '.join(map(str, WINDOWS))} hours")
     run_id = datetime.now().strftime("hc-%Y%m%d-%H%M%S-") + secrets.token_hex(2)
     req = {"profile": profile, "accounts": accounts, "hours": hours, "symptoms": symptoms[:2000],
-           "role_name": role_name, "regions": regions}  # fmt: skip
+           "role_name": role_name, "regions": regions, "shared": shared, "athena": athena}  # fmt: skip
     job = Job(run_id, req)
     with _jobs_lock:
         _jobs[run_id] = job
@@ -340,7 +369,9 @@ def _run(job: Job) -> None:
             try:
                 sess = _session_for(req["profile"], base, caller, a["id"], req["role_name"], job.id)
                 regions = hc.active_regions(sess, req.get("regions"))
-                ctxs.append((hc.Ctx(sess, a["id"], a.get("name") or a["id"], start_t, end), regions))
+                ctx = hc.Ctx(sess, a["id"], a.get("name") or a["id"], start_t, end)
+                ctx.athena = bool(req.get("athena"))
+                ctxs.append((ctx, regions))
             except Exception as exc:  # one account out of reach must not stop the others
                 code, msg, hint = describe_exception(exc)
                 raw["unreachable"].append({"account": a["id"], "name": a.get("name"), "code": code,
@@ -358,6 +389,15 @@ def _run(job: Job) -> None:
 
         with ThreadPoolExecutor(max_workers=hc.TASK_WORKERS) as pool:
             list(pool.map(lambda t: contextvars.copy_context().run(one, t), tasks))
+        if req.get("shared", True) and not job.cancelled:
+            extra = _shared_accounts(job, req, base, caller, ctxs, start_t, end)
+            if extra:
+                tasks = [(ctx, r, n, f) for ctx, regions in extra for r in regions for n, f in hc.REGION_CHECKS
+                         if n in hc.SHARED_CHECKS]  # fmt: skip
+                job.total += len(tasks)
+                with ThreadPoolExecutor(max_workers=hc.TASK_WORKERS) as pool:
+                    list(pool.map(lambda t: contextvars.copy_context().run(one, t), tasks))
+                ctxs += extra
         raw["accounts"] = [hc.result(ctx, regions) for ctx, regions in ctxs]
         job.status = "cancelled" if job.cancelled else "done"
     except Exception as exc:
@@ -376,6 +416,47 @@ def _run(job: Job) -> None:
     }
     _save(doc)
     job.message = "Finished" if job.status == "done" else job.status.capitalize()
+
+
+SHARED_MAX = 3  # accounts owning shared network pieces read beside the ones ticked
+
+
+def _shared_accounts(job: Job, req: dict, base, caller: str, ctxs: list, start_t, end) -> list:
+    """The accounts that own the transit gateway, shared VPCs, DNS rules or private zones the ticked accounts
+    use, each with the regions involved, as contexts for the network checks. Ones that cannot be reached are
+    noted, not fatal."""
+    ticked = {c.account for c, _ in ctxs}
+    owners: dict[str, dict] = {}
+    for c, _ in ctxs:
+        for owner, whys in c.related.items():
+            if owner in ticked:
+                continue
+            o = owners.setdefault(owner, {"for": set(), "why": set(), "regions": set()})
+            o["for"].add(c.account)
+            o["why"].update(w.rsplit(" (", 1)[0] for w in whys)
+            o["regions"].update(w.rsplit(" (", 1)[1].rstrip(")") for w in whys if " (" in w)
+    names = {}
+    if owners:
+        with contextlib.suppress(Exception):
+            names = {a["id"]: a["name"] for a in reachable_accounts(req["profile"], req["role_name"])["accounts"]}
+    out = []
+    for owner, o in sorted(owners.items(), key=lambda kv: -len(kv[1]["for"]))[:SHARED_MAX]:
+        job.message = f"Reading the shared network account {names.get(owner, owner)}"
+        try:
+            sess = _session_for(req["profile"], base, caller, owner, req["role_name"], job.id)
+            ctx = hc.Ctx(sess, owner, names.get(owner) or owner, start_t, end)
+        except Exception as exc:  # no access to the shared account: say so in the report
+            code, msg, hint = describe_exception(exc)
+            for c, _ in ctxs:
+                if c.account in o["for"]:
+                    c.gaps.append({"account": c.account, "account_name": c.name, "region": "global",
+                                   "check": f"shared network account {names.get(owner, owner)}", "code": code,
+                                   "message": f"It {', '.join(sorted(o['why']))}; could not be read: {msg[:200]}",
+                                   "hint": hint})  # fmt: skip
+            continue
+        ctx.shared_for = {"accounts": sorted(o["for"]), "why": sorted(o["why"])}
+        out.append((ctx, sorted(o["regions"])))
+    return out
 
 
 def _iso(dt: datetime) -> str:
@@ -528,9 +609,15 @@ def _group(signals: list[dict]) -> list[dict]:
 
 
 def rank(
-    signals: list[dict], changes: list[dict], symptoms_text: str = "", window_start: str | None = None
+    signals: list[dict],
+    changes: list[dict],
+    symptoms_text: str = "",
+    window_start: str | None = None,
+    serves: dict[str, set] | None = None,
 ) -> list[dict]:
-    """The likely causes, best first, each with the symptoms it would explain."""
+    """The likely causes, best first, each with the symptoms it would explain. ``serves`` maps a shared
+    network account to the accounts that use it, so a fault there can explain their symptoms."""
+    serves = serves or {}
     words = _tokens(symptoms_text)
     ws = _when(window_start)
     signals = _group(signals)
@@ -547,13 +634,17 @@ def rank(
         ct = at(c)
         linked = []
         for i, e in enumerate(effects):
-            same_place = e["account"] == c["account"] and (
+            same_place = (e["account"] == c["account"] or e["account"] in serves.get(c["account"], ())) and (
                 e["region"] == c["region"] or "global" in (e["region"], c["region"])
             )
             if not same_place or e.get("service") not in EXPLAINS.get(c.get("service"), set()):
                 continue
             fit = _close(ct, at(e))
             named = _overlap(c.get("resource", ""), e.get("resource", ""))
+            if named and c.get("until"):  # an operation with an end (MSK patching): its effects fall inside it
+                cs, cu, es = _when(c.get("started")), _when(c["until"]), _when(e.get("started"))
+                if cs and cu and es and cs - timedelta(minutes=15) <= es <= cu + timedelta(minutes=30):
+                    fit = 1.0
             if c.get("ongoing") and not ct and named:
                 fit = max(fit, 0.6)  # a standing condition (a full subnet) named like the failing resource
             if fit or (named and c["check"] != "change"):
@@ -716,7 +807,8 @@ def build_report(doc: dict) -> dict:
     readiness = [r for a in accounts for r in a.get("readiness") or []]
     risks = sorted((r for a in accounts for r in a.get("risks") or []), key=lambda r: -SEV.get(r.get("severity"), 0))
     symptoms = (doc.get("request") or {}).get("symptoms") or ""
-    guesses = rank(signals, changes, symptoms, (doc.get("window") or {}).get("start"))
+    serves = {a["account"]: set(a["shared_for"]["accounts"]) for a in accounts if a.get("shared_for")}
+    guesses = rank(signals, changes, symptoms, (doc.get("window") or {}).get("start"), serves)
     sev = Counter(s["severity"] for s in signals if not s.get("chronic"))
     timeline = sorted(
         [{"time": s.get("started"), "what": s["title"], "kind": s.get("role"), "severity": s["severity"],
@@ -748,6 +840,7 @@ def build_report(doc: dict) -> dict:
                 "regions": a.get("regions") or [],
                 "signals": len(a.get("signals") or []),
                 "changes": len(a.get("changes") or []),
+                "shared_for": a.get("shared_for"),
             }
             for a in accounts
         ],  # fmt: skip

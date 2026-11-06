@@ -46,6 +46,8 @@
     .tile.hc-go { cursor: pointer; }
     .tile.hc-go:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
     .hc-tag.risky { background: color-mix(in srgb, var(--sev-critical) 16%, var(--surface)); color: color-mix(in srgb, var(--sev-critical) 80%, var(--ink)); font-weight: 600; }
+    .hc-opts { display: grid; gap: 6px; }
+    .hc-opts label.check { display: flex; gap: 8px; align-items: baseline; font-weight: normal; }
     .hc-intro { margin: 6px 0 14px; padding: 10px 14px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--surface-2); font-size: 13.5px; line-height: 1.55; color: var(--ink); max-width: 110ch; }
     .hc-intro ul { margin: 6px 0; padding-left: 20px; display: grid; gap: 4px; }
     .hc-legend { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 14px 0 0; font-size: 12.5px; }
@@ -106,6 +108,10 @@
       <div class="field">
         <label for="hcSymptoms">Symptoms <span class="muted">(optional)</span></label>
         <textarea id="hcSymptoms" maxlength="2000" placeholder="e.g. payments API returning 502 since 09:40, call centre agents cannot log in"></textarea>
+      </div>
+      <div class="span-2 hc-opts">
+        <label class="check"><input type="checkbox" id="hcShared" checked> Also check the accounts that own the shared network <span class="muted">(transit gateway, shared VPCs, DNS rules and zones these accounts use; network checks only, up to 3)</span></label>
+        <label class="check"><input type="checkbox" id="hcAthena"> Read flow logs kept only in S3 with Athena <span class="muted">(creates database exitrisk_healthcheck and a table in that account, and writes query results to Athena's result location; about US$5 a TB read)</span></label>
       </div>
       <div class="span-2 hc-row">
         <button id="hcRun" class="btn primary" disabled>Run health check</button>

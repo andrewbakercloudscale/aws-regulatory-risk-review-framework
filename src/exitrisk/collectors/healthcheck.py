@@ -43,7 +43,7 @@ MAX_ITEMS = 400  # resources of one kind read per region
 TRAIL_PAGES = 40  # pages of 50 write events per region (about 20 seconds)
 STOPPED_TASKS = 100  # stopped ECS tasks read per cluster
 HEALTH_CHECKS = 200  # Route 53 health checks read per account
-METRIC_QUERIES = 500  # GetMetricData's limit per call
+METRIC_QUERIES = 100  # GetMetricData allows 500 queries a call, but only 100 of them SEARCH
 SUSTAIN = 3  # periods in a row a level must hold to count (15 minutes at the 5 minute period)
 
 # Namespaces every account has; a region showing only these runs no workload.
@@ -795,11 +795,16 @@ class Ctx:
         self.period = period_for(self.hours)
         shift = timedelta(days=max(1, math.ceil(self.hours / 24)))
         self.base_start, self.base_end = start - shift, end - shift
+        # The same hours a week earlier: a busy Monday against a quiet Sunday is not a spike.
+        self.week_start, self.week_end = start - timedelta(days=7), end - timedelta(days=7)
+        self.related: dict[str, set] = {}  # accounts that own shared network pieces this one uses: {id: {why}}
+        self.athena = False  # also read flow logs kept only in S3, with Athena (creates a table; opt in)
         self.signals: list[dict] = []
         self.changes: list[dict] = []
         self.gaps: list[dict] = []
         self.checked: list[str] = []
         self.unhealthy_tgs: list[tuple[str, dict]] = []
+        self.no_history: set[str] = set()  # log groups with nothing a day earlier: no baseline to judge by
         self.readiness: list[dict] = []  # data sources that are off, so the next check can see more
         self.risks: list[dict] = []  # Outage Risk findings in this account, beside the live faults
         self.scanned_gb = 0.0  # Logs Insights data read, the part of a health check AWS charges for
@@ -876,29 +881,50 @@ def _label(dims: list[str]) -> str:
     return "|".join(f"${{PROP('Dim.{d}')}}" for d in dims)
 
 
+def _dim(d: str) -> str:
+    """A dimension name as a SEARCH schema takes it: quoted when it holds a space (MSK's "Cluster Name")."""
+    return d if re.fullmatch(r"[A-Za-z0-9_.]+", d) else f'"{d}"'
+
+
 def _search(probe: dict, metric: str, stat: str, period: int) -> str:
-    schema = ",".join([probe["ns"], *probe["dims"]])
+    schema = ",".join([probe["ns"], *(_dim(d) for d in probe["dims"])])
     return f"SEARCH('{{{schema}}} MetricName=\"{metric}\"', '{stat}', {period})"
 
 
-def _metric_data(cw, queries: list[dict], start: datetime, end: datetime) -> dict[str, dict[str, list]]:
-    """{query id: {label: [(time, value), ...] oldest first}} for SEARCH queries, every page read."""
+def _metric_data(
+    cw, queries: list[dict], start: datetime, end: datetime, truncated: list | None = None
+) -> dict[str, dict[str, list]]:
+    """{query id: {label: [(time, value), ...] oldest first}} for SEARCH queries, every page read.
+    One call returns at most 500 series in all and silently drops the rest (MaxMetricsExceeded), so a batch
+    that overflows is split in two until each part fits. A single SEARCH matching more than 500 series keeps
+    the first 500; its id goes in ``truncated``."""
     out: dict[str, dict[str, list]] = {}
-    for at in range(0, len(queries), METRIC_QUERIES):
-        kwargs = {
-            "MetricDataQueries": queries[at : at + METRIC_QUERIES],
-            "StartTime": start,
-            "EndTime": end,
-            "ScanBy": "TimestampAscending",
-        }
+
+    def fetch(batch: list[dict]) -> None:
+        kwargs = {"MetricDataQueries": batch, "StartTime": start, "EndTime": end, "ScanBy": "TimestampAscending"}
+        pages, cut = [], False
         while True:
             resp = with_backoff(cw.get_metric_data, transient=True, **kwargs)
-            for r in resp.get("MetricDataResults") or []:
-                series = out.setdefault(r["Id"], {}).setdefault(r.get("Label") or "", [])
-                series.extend(zip(r.get("Timestamps") or [], r.get("Values") or [], strict=False))
+            if any(m.get("Code") == "MaxMetricsExceeded" for m in resp.get("Messages") or []):
+                if len(batch) > 1:
+                    mid = len(batch) // 2
+                    fetch(batch[:mid])
+                    fetch(batch[mid:])
+                    return
+                cut = True
+            pages.append(resp)
             if not resp.get("NextToken"):
                 break
             kwargs["NextToken"] = resp["NextToken"]
+        if cut and truncated is not None:
+            truncated.append(batch[0]["Id"])
+        for resp in pages:
+            for r in resp.get("MetricDataResults") or []:
+                series = out.setdefault(r["Id"], {}).setdefault(r.get("Label") or "", [])
+                series.extend(zip(r.get("Timestamps") or [], r.get("Values") or [], strict=False))
+
+    for at in range(0, len(queries), METRIC_QUERIES):
+        fetch(queries[at : at + METRIC_QUERIES])
     return out
 
 
@@ -967,7 +993,13 @@ def _fmt(v: float, unit: str | None) -> str:
     if unit == "bytes":
         return f"{v / 1024**3:.1f} GiB"
     if unit == "ms":
-        return f"{v / 1000:.0f} s"
+        return f"{v:,.0f} ms" if v < 1000 else f"{v / 1000:,.1f} s"
+    if unit == "sec":  # seconds, shown in milliseconds when short (latency)
+        return f"{v * 1000:,.0f} ms" if v < 1 else f"{v:,.1f} s"
+    if unit == "us":
+        return f"{v / 1000:,.0f} ms"
+    if unit == "share":
+        return f"{v:.0%}"
     if unit == "s":
         return f"{v / 60:.0f} min" if v >= 120 else f"{v:.0f} s"
     if unit == "%":
@@ -975,14 +1007,27 @@ def _fmt(v: float, unit: str | None) -> str:
     return f"{v:,.0f}"
 
 
-def judge(probe: dict, now: dict, base: dict, period: int) -> list[dict]:
+def _share(num: list, den: list, per_s: int) -> list:
+    """Points of numerator / denominator for the periods both have (a level such as used / allowed)."""
+    d = {ts: v for ts, v in den}
+    return [(ts, n / (d[ts] * per_s)) for ts, n in num if d.get(ts)]
+
+
+def judge(probe: dict, now: dict, base: dict, period: int, week: dict | None = None) -> list[dict]:
     """Signals from one probe: ``now`` and ``base`` are {label: points} for the window and a day earlier
-    (for ratio and unhealthy probes, {"n": {...}, "d": {...}})."""
+    (for ratio, unhealthy and share probes, {"n": {...}, "d": {...}}); ``week`` is a week earlier, for the
+    spike and count kinds, so a weekly rhythm is not taken for a new problem."""
     out: list[dict] = []
     kind = probe["kind"]
+    week = week or {}
+    need = probe.get("sustain", SUSTAIN)
     name_re = re.compile(probe["name"]) if probe.get("name") else None
     nums = now["n"] if "n" in now else now
+    first_seen = min((p[0][0] for p in nums.values() if p), default=None)
     for label, pts in nums.items():
+        if pts and probe.get("boot") and pts[0][0] > first_seen + timedelta(seconds=2 * period):
+            # The resource appeared in the window (a new node): its first minutes of start up are not a fault.
+            pts = [(ts, v) for ts, v in pts if (ts - pts[0][0]).total_seconds() >= probe["boot"]]
         if not pts or not label:
             continue
         res = label.split("|")[0] if probe["id"].endswith("unhealthy") else label.replace("|", " / ")
@@ -1024,26 +1069,50 @@ def judge(probe: dict, now: dict, base: dict, period: int) -> list[dict]:
             total = sum(v for _, v in pts)
             if total >= probe["at"]:
                 btotal = sum(v for _, v in base.get(label, []))
+                wtotal = sum(v for _, v in week.get(label, []))
                 mean = btotal / max(len(base.get(label, [])), 1)
                 onset = next((ts for ts, v in pts if v > max(0.0, 3 * mean)), None)
-                chronic = btotal >= probe["at"] and total < 3 * btotal
+                chronic = any(b >= probe["at"] and total < 3 * b for b in (btotal, wtotal))
                 sig = {
                     "severity": probe["sev"],
                     "started": onset,
                     "chronic": chronic,
-                    "evidence": f"{total:,.0f} in the window; {btotal:,.0f} in the same hours a day earlier",
+                    "evidence": f"{total:,.0f} in the window; {btotal:,.0f} in the same hours a day earlier"
+                    + (f", {wtotal:,.0f} a week earlier" if label in week else ""),
                     "ongoing": _still(pts, lambda v: v > 0),
+                }
+        elif kind == "share":
+            at = probe["at"]
+            lv = _share(pts, now["d"].get(label, []), period if probe.get("per_s") else 1)
+            first, hits, _ = _runs(lv, lambda v, a=at: v >= a, need)
+            if first:
+                peak = max(v for _, v in lv)
+                blv = _share(base["n"].get(label, []), base["d"].get(label, []), period if probe.get("per_s") else 1)
+                bfirst, *_ = _runs(blv, lambda v, a=at: v >= a, need)
+                sig = {
+                    "severity": _sev_for(probe, peak),
+                    "started": first,
+                    "chronic": bfirst is not None,
+                    "evidence": f"peak {peak:.0%} of the limit, {hits * period // 60} min at or above {at:.0%}"
+                    + ("; same a day earlier" if bfirst else ""),
+                    "ongoing": _still(lv, lambda v, a=at: v >= a),
                 }
         elif kind in ("high", "low"):
             at = probe["at"]
             test = (lambda v, a=at: v >= a) if kind == "high" else (lambda v, a=at: v <= a)
-            first, hits, _ = _runs(pts, test, SUSTAIN if probe["at"] not in (0, 1) or kind == "low" else 2)
+            first, hits, _ = _runs(
+                pts, test, probe.get("sustain") or (SUSTAIN if probe["at"] not in (0, 1) or kind == "low" else 2)
+            )
+            if first and probe.get("drop"):
+                usual = sorted(v for _, v in base.get(label, []) + week.get(label, []))
+                if not usual or min(v for _, v in pts) > usual[len(usual) // 2] - probe["drop"]:
+                    first = None  # always about this low: that workload's normal
             if first:
                 vals = [v for _, v in pts]
                 peak = max(vals) if kind == "high" else min(vals)
-                bfirst, *_ = _runs(base.get(label, []), test, SUSTAIN)
+                bfirst, *_ = _runs(base.get(label, []), test, need)
                 sig = {
-                    "severity": probe["sev"],
+                    "severity": _sev_for(probe, peak),
                     "started": first,
                     "chronic": bfirst is not None,
                     "evidence": f"{'peak' if kind == 'high' else 'lowest'} {_fmt(peak, probe.get('unit'))} "
@@ -1053,15 +1122,18 @@ def judge(probe: dict, now: dict, base: dict, period: int) -> list[dict]:
                 }
         elif kind == "spike":
             peak = max(v for _, v in pts)
-            bpeak = max((v for _, v in base.get(label, [])), default=0.0)
+            dpeak = max((v for _, v in base.get(label, [])), default=0.0)
+            wpeak = max((v for _, v in week.get(label, [])), default=0.0)
+            bpeak = max(dpeak, wpeak)
             if peak >= probe["at"] and peak >= probe["x"] * bpeak:
                 bar = max(probe["at"], probe["x"] * bpeak)
                 onset = next((ts for ts, v in pts if v >= bar), None)
                 sig = {
-                    "severity": probe["sev"],
+                    "severity": _sev_for(probe, peak),
                     "started": onset,
                     "chronic": False,
-                    "evidence": f"peak {_fmt(peak, probe.get('unit'))}; a day earlier {_fmt(bpeak, probe.get('unit'))}",
+                    "evidence": f"peak {_fmt(peak, probe.get('unit'))}; a day earlier {_fmt(dpeak, probe.get('unit'))}"
+                    + (f", a week earlier {_fmt(wpeak, probe.get('unit'))}" if label in week else ""),
                     "ongoing": _still(pts, lambda v, b=bar: v >= b),
                 }
         if sig:
@@ -1082,6 +1154,15 @@ def judge(probe: dict, now: dict, base: dict, period: int) -> list[dict]:
     return out
 
 
+def _sev_for(probe: dict, peak: float) -> str:
+    """The probe's severity, raised by ``sevs`` [(level, severity), ...] when the peak passes a further level."""
+    sev = probe["sev"]
+    for level, s in probe.get("sevs") or []:
+        if (peak <= level) if probe["kind"] == "low" else (peak >= level):
+            sev = s
+    return sev
+
+
 def _still(pts: list, test) -> bool:
     return bool(pts) and any(test(v) for _, v in pts[-2:])
 
@@ -1090,15 +1171,27 @@ def check_metrics(ctx: Ctx, region: str) -> None:
     probes = [p for p in PROBES if not p.get("global") or region == "us-east-1"]
     cw = ctx.client("cloudwatch", region)
     qs = _queries(probes, ctx.period)
-    now = _metric_data(cw, qs, ctx.start, ctx.end)
+    cut: list[str] = []
+    now = _metric_data(cw, qs, ctx.start, ctx.end, cut)
     base = _metric_data(cw, qs, ctx.base_start, ctx.base_end)
+    if cut:
+        names = sorted({probes[int(q[1:])]["metric"] for q in cut})
+        with ctx._lock:
+            ctx.gaps.append({"account": ctx.account, "account_name": ctx.name, "region": region,
+                             "check": "metrics", "code": "Partial",
+                             "message": f"More than 500 resources report {', '.join(names)}: the first 500 were read.",
+                             "hint": "Shorten the look back or check that service on its own."})  # fmt: skip
+    # A week earlier only for the kinds that compare levels with the past (spike and count).
+    wanted = {f"n{i}" for i, p in enumerate(probes)
+              if (p["kind"] in ("spike", "count") or p.get("drop")) and now.get(f"n{i}")}  # fmt: skip
+    week = _metric_data(cw, [q for q in qs if q["Id"] in wanted], ctx.week_start, ctx.week_end) if wanted else {}
     for i, p in enumerate(probes):
         if p.get("den"):
             n = {"n": now.get(f"n{i}", {}), "d": now.get(f"d{i}", {})}
             b = {"n": base.get(f"n{i}", {}), "d": base.get(f"d{i}", {})}
         else:
             n, b = now.get(f"n{i}", {}), base.get(f"n{i}", {})
-        for sig in judge(p, n, b, ctx.period):
+        for sig in judge(p, n, b, ctx.period, week.get(f"n{i}", {})):
             tg = sig.pop("tg", None)
             ctx.add(region, **sig)
             if tg:
@@ -2140,7 +2233,9 @@ def _redact(text: str) -> str:
     return re.sub(r"\d{6,}", "<n>", text).strip()[:140]
 
 
-NOT_APP_LOGS = re.compile(r"(flow|vpc|resolver|querylog|query-log|cloudtrail|aws-waf-logs|/aws/route53)", re.I)
+NOT_APP_LOGS = re.compile(
+    r"(flow|vpc|resolver|querylog|query-log|cloudtrail|aws-waf-logs|/aws/route53|/aws/rds/)", re.I
+)
 DEFAULT_FLOW_FORMAT = (
     "${version} ${account-id} ${interface-id} ${srcaddr} ${dstaddr} ${srcport} ${dstport} ${protocol} "
     "${packets} ${bytes} ${start} ${end} ${action} ${log-status}"
@@ -2158,18 +2253,49 @@ def _ingest_gb(ctx: Ctx, region: str, start: datetime, end: datetime) -> dict[st
     """{log group: GB ingested between start and end}, from AWS/Logs IncomingBytes: what a query will read."""
     secs = max(60, int((end - start).total_seconds()) // 60 * 60)
     q = [{"Id": "b", "Expression": f"SEARCH('{{AWS/Logs,LogGroupName}} MetricName=\"IncomingBytes\"', 'Sum', {secs})",
-          "ReturnData": True}]  # fmt: skip
+          "Label": _label(["LogGroupName"]), "ReturnData": True}]  # fmt: skip
     got = _metric_data(ctx.client("cloudwatch", region), q, start, end).get("b") or {}
     return {label: sum(v for _t, v in pts) / 1e9 for label, pts in got.items()}
+
+
+def _no_history(logs, groups: list[str], start: datetime) -> set[str]:
+    """The log groups that hold nothing from ``start``: created later, or keeping fewer days."""
+    out, now = set(), datetime.now(timezone.utc)
+    for g in groups:
+        found = [x for x in logs.describe_log_groups(logGroupNamePrefix=g, limit=5).get("logGroups") or []
+                 if x.get("logGroupName") == g]  # fmt: skip
+        if not found:
+            out.add(g)
+            continue
+        made = datetime.fromtimestamp(found[0].get("creationTime", 0) / 1000, timezone.utc)
+        keep = found[0].get("retentionInDays")
+        if made > start or (keep and now - timedelta(days=keep) > start):
+            out.add(g)
+    return out
 
 
 def _insights(ctx: Ctx, region: str, groups: list[str], query: str, start: datetime, end: datetime, gb: float = 0):
     """Rows of one Logs Insights query as dicts. Raises TimeoutError when AWS takes too long."""
     logs = ctx.client("logs", region)
-    qid = with_backoff(
-        logs.start_query, transient=True, logGroupNames=groups[:INSIGHTS_GROUPS], queryString=query,
-        startTime=int(start.timestamp()), endTime=int(end.timestamp()), limit=1000,
-    )["queryId"]  # fmt: skip
+    groups = groups[:INSIGHTS_GROUPS]
+    for attempt in range(2):
+        try:
+            qid = with_backoff(
+                logs.start_query, transient=True, logGroupNames=groups, queryString=query,
+                startTime=int(start.timestamp()), endTime=int(end.timestamp()), limit=1000,
+            )["queryId"]  # fmt: skip
+            break
+        except ClientError as exc:
+            msg = str(exc)
+            if attempt or "MalformedQuery" not in msg or not ("retention" in msg or "creation time" in msg):
+                raise
+            # A group created after the start, or keeping logs for less time: it has no history for this
+            # span. Leave it out (and note it, so it is not judged against an empty day earlier).
+            short = _no_history(logs, groups, start)
+            ctx.no_history.update(short)
+            groups = [g for g in groups if g not in short]
+            if not groups:
+                return []
     with ctx._lock:
         ctx.scanned_gb += gb
     waited = 0.0
@@ -2245,7 +2371,14 @@ def check_flowlogs(ctx: Ctx, region: str) -> None:
                   "Create a flow log per VPC to CloudWatch Logs (EC2 > VPC > Flow logs; about US$0.50 a GB).",
                   permission="ec2:CreateFlowLogs, logs:CreateLogGroup, iam:PassRole")  # fmt: skip
     only_s3 = sorted(to_s3 - {v for g in to_cw.values() for v in g["vpcs"]})
-    if only_s3:
+    s3_flows = [f for f in flows if f.get("LogDestinationType") == "s3"
+                and (f.get("ResourceId") in only_s3 or subnet_vpc.get(f.get("ResourceId")) in only_s3)]  # fmt: skip
+    if only_s3 and ctx.athena and s3_flows:
+        try:
+            _deep.check_flow_athena(ctx, region, s3_flows)
+        except (ClientError, BotoCoreError, RuntimeError, TimeoutError) as exc:
+            ctx.gap(region, _deep.CHECK_LABELS["athena"], exc)
+    elif only_s3:
         ctx.ready(region, f"Flow logs of {len(only_s3)} VPC{'s' if len(only_s3) > 1 else ''} go to S3 only",
                   "A health check reads flow logs through CloudWatch Logs Insights, not from S3.",
                   "Add a second flow log to CloudWatch Logs during the incident, or query the S3 copy "
@@ -2272,7 +2405,7 @@ def check_flowlogs(ctx: Ctx, region: str) -> None:
         if not _spike(now, before, 500, 3):
             continue
         started = _first_bin(rows, "n", max(20.0, 3 * before / _bins(ctx)))
-        top = ""
+        top, guards = "", {}
         if to_cw[g]["format"].strip() == DEFAULT_FLOW_FORMAT:
             tq = ('filter @message like / REJECT / | parse @message "* * * * * * * * * * * * * *" as v, a, eni, src, '
                   "dst, sport, dport, proto, pk, by, st, en, act, ls | stats count(*) as n by dst, dport "
@@ -2281,22 +2414,55 @@ def check_flowlogs(ctx: Ctx, region: str) -> None:
                 hits = _insights(ctx, region, [g], tq, ctx.start, ctx.end, sizes.get(g, 0.0))
                 top = "; most refused: " + ", ".join(f"{h.get('dst')}:{h.get('dport')} ×{int(float(h['n']))}"
                                                      for h in hits[:3] if h.get("n"))  # fmt: skip
+                guards = _guards(ec2, [h.get("dst") for h in hits[:3] if h.get("dst")])
         vpcs_txt = ", ".join(sorted(to_cw[g]["vpcs"]))
         ctx.add(
             region,
             area="Network",
             service="network",
             title=f"Rejected traffic jumped in {vpcs_txt}",
-            resource=vpcs_txt,
+            # The security groups and network ACLs guarding the refused addresses, so a change to one links here.
+            resource=" ".join([vpcs_txt, *guards.get("ids", [])]),
             severity="high" if now >= 10 * (before + 50) else "medium",
             started=_t(started),
             ongoing=True,
-            evidence=f"{int(now):,} rejected flows in the window against {int(before):,} the day before{top}",
+            evidence=f"{int(now):,} rejected flows in the window against {int(before):,} the day before{top}"
+            + (f"; refused at {guards['text']}" if guards.get("text") else ""),
             next="A security group, network ACL or firewall change usually explains a jump in refusals: compare "
             "the refused ports with recent changes.",
             source="VPC flow logs",
             check="flow_rejects",
         )
+
+
+def _guards(ec2, ips: list[str]) -> dict:
+    """The network interfaces holding these addresses, with their security groups and subnet network ACLs."""
+    ips = [i for i in ips if re.fullmatch(r"[0-9.]+", i or "")]
+    if not ips:
+        return {}
+    ids, parts = [], []
+    with contextlib.suppress(ClientError):
+        nis = ec2.describe_network_interfaces(
+            Filters=[{"Name": "addresses.private-ip-address", "Values": ips}]
+        ).get("NetworkInterfaces") or []  # fmt: skip
+        subnets = sorted({n["SubnetId"] for n in nis if n.get("SubnetId")})
+        acls = {}
+        if subnets:
+            for a in (
+                ec2.describe_network_acls(Filters=[{"Name": "association.subnet-id", "Values": subnets}]).get(
+                    "NetworkAcls"
+                )
+                or []
+            ):
+                for asc in a.get("Associations") or []:
+                    acls[asc.get("SubnetId")] = a["NetworkAclId"]
+        for n in nis:
+            sgs = [g["GroupId"] for g in n.get("Groups") or []]
+            acl = acls.get(n.get("SubnetId"))
+            ids += sgs + ([acl] if acl else [])
+            parts.append(f"{n.get('PrivateIpAddress')} ({(n.get('Description') or n['NetworkInterfaceId'])[:50]}; "
+                         f"security groups {', '.join(sgs)}; network ACL {acl})")  # fmt: skip
+    return {"ids": sorted(set(ids)), "text": "; ".join(parts[:3])}
 
 
 def check_dns(ctx: Ctx, region: str) -> None:
@@ -2416,7 +2582,7 @@ def check_log_errors(ctx: Ctx, region: str) -> None:
     for g in keep:
         rows = [r for r in now_rows if name(r) == g]
         now, before = sum(float(r.get("n") or 0) for r in rows), base.get(g, 0.0)
-        if _spike(now, before, 100, 4):
+        if g not in ctx.no_history and _spike(now, before, 100, 4):
             found.append((g, rows, now, before))
     for g, rows, now, before in sorted(found, key=lambda x: -(x[2] / (x[3] + 25)))[:8]:
         sample = ""
@@ -2516,6 +2682,29 @@ CHECK_LABELS = {
 }
 
 
+_merged = False
+
+
+def _merge_deep(deep) -> None:
+    """Add the deep checks once, whichever of the two modules is imported first."""
+    global _merged
+    if _merged:
+        return
+    _merged = True
+    PROBES.extend(deep.PROBES)
+    REGION_CHECKS[3:3] = deep.REGION_CHECKS[:2]  # the database deep dive reads logs: among the slow ones
+    REGION_CHECKS.extend(deep.REGION_CHECKS[2:])
+    CHECK_LABELS.update(deep.CHECK_LABELS)
+
+
+from . import healthcheck_deep as _deep  # noqa: E402  (it builds on everything above)
+
+if hasattr(_deep, "PROBES"):  # else healthcheck_deep is importing this module and merges when it is done
+    _merge_deep(_deep)
+# Checks run in the accounts that own the shared network an account uses (transit gateway, DNS).
+SHARED_CHECKS = {"network", "routes", "dns", "flowlogs", "metrics", "alarms", "cloudtrail"}
+
+
 def run_check(ctx: Ctx, region: str, name: str, fn) -> None:
     try:
         fn(ctx, region) if region != "global" else fn(ctx)
@@ -2558,4 +2747,5 @@ def result(ctx: Ctx, regions: list[str]) -> dict:
         "readiness": ctx.readiness,
         "risks": ctx.risks,
         "scanned_gb": round(ctx.scanned_gb, 2),
+        "shared_for": getattr(ctx, "shared_for", None),
     }
