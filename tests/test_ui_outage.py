@@ -86,6 +86,35 @@ def test_selecting_an_area_filters_the_findings(page):
     assert not page.errors
 
 
+def test_each_risk_card_lists_its_findings_and_opens_the_table(page):
+    card = page.locator("#orRules details").first
+    card.locator("summary").click()
+    assert card.locator("tbody tr").count() > 0
+    link = card.locator("[data-or-rule]")
+    if link.count():
+        rule = link.get_attribute("data-or-rule")
+        link.click()
+        assert page.locator("#orRule").input_value() == rule
+
+
+def test_export_table_to_pdf_prints_that_table_alone(page):
+    page.evaluate("window.print = () => { window.printed = true; }")
+    page.locator("[data-pdf-section='or-accounts']").click()
+    page.wait_for_function("window.printed === true")
+    assert page.evaluate("document.body.classList.contains('print-one')")
+    assert page.evaluate("!document.getElementById('or-accounts').classList.contains('print-off')")
+    assert page.evaluate("document.getElementById('or-findings').classList.contains('print-off')")
+    page.evaluate("window.dispatchEvent(new Event('afterprint'))")
+    card = page.locator("#orRules details").first
+    card.locator("summary").click()
+    card.locator("[data-pdf-section='']").click()
+    page.wait_for_function("document.body.classList.contains('print-one')")
+    assert page.evaluate(
+        "document.querySelector('#orRules details').nextElementSibling?.classList.contains('print-off') ?? true"
+    )
+    assert not page.errors
+
+
 def test_the_other_tabs_hide_it(page):
     page.locator(".vtab[data-view='exit']").click()
     assert page.locator("#orContent").is_hidden()

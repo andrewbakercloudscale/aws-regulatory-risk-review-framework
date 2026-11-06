@@ -3088,7 +3088,16 @@
 
   function renderOrRules(r) {
     const top = r.rules.filter((x) => x.critical || x.high).slice(0, PRINT ? 40 : 15);
-    $("#orRules").innerHTML = top.map((x) => `<details class="card or-rule"><summary>${orSev(x.critical ? "critical" : "high")} <strong>${esc(x.title)}</strong> <span class="muted small">${plural(x.findings, "finding")} in ${plural(x.accounts, "account")}</span></summary><p class="small"><strong>Why it matters.</strong> ${esc(x.why)}</p><p class="small"><strong>What to do.</strong> ${esc(x.fix)}</p></details>`).join("");
+    $("#orRules").innerHTML = top.map((x) => `<details class="card or-rule"><summary>${orSev(x.critical ? "critical" : "high")} <strong>${esc(x.title)}</strong> <span class="muted small">${plural(x.findings, "finding")} in ${plural(x.accounts, "account")}</span></summary><p class="small"><strong>Why it matters.</strong> ${esc(x.why)}</p><p class="small"><strong>What to do.</strong> ${esc(x.fix)}</p>${orRuleRows(x)}</details>`).join("");
+  }
+
+  // The worst findings of one rule, inside its card, so the card is never just prose.
+  function orRuleRows(x) {
+    const rows = state.or.findings.filter((f) => f.rule === x.id);
+    if (!rows.length) return `<p class="small muted">None of these are among the worst ${num(state.or.findings.length)} findings sent to the page; the CSV has them all.</p>`;
+    const n = PRINT ? Math.min(rows.length, 25) : Math.min(rows.length, 10);
+    const val = (f) => (f.pct != null ? `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}` : f.used != null ? `${num(f.used, f.used % 1 ? 1 : 0)}${f.limit != null ? ` of ${num(f.limit, f.limit % 1 ? 1 : 0)}` : ""}${f.unit ? ` <span class="muted">${esc(f.unit)}</span>` : ""}` : "");
+    return `<div class="table-wrap"><table class="data compact"><thead><tr><th>Severity</th><th>Account</th><th>Resource</th><th>Region</th><th class="num-cell">Now → peak</th><th>Detail</th></tr></thead><tbody>${rows.slice(0, n).map((f) => `<tr><td>${orSev(f.severity)}</td><td class="small">${esc(f.account)}${f.production ? "" : ' <span class="muted">non-prod</span>'}</td><td class="mono small or-res">${esc(f.res)}</td><td class="small">${esc(f.region)}</td><td class="num-cell nowrap small">${val(f)}</td><td class="small muted">${esc(f.note || "")}</td></tr>`).join("")}</tbody></table></div><p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="">Export table to PDF</button></p>${rows.length > n || x.findings > n ? `<p class="small no-print">${n < rows.length ? `The worst ${num(n)} shown. ` : ""}<button type="button" class="link-btn" data-or-rule="${esc(x.id)}">See all ${num(x.findings)} in the findings table</button></p>` : ""}`;
   }
 
   function renderOrAccounts(more) {
@@ -3191,6 +3200,15 @@
     $("#orSearch").addEventListener("input", () => { state.orAccount = ""; renderOrFindings(); });
     $("#btnOrMore").addEventListener("click", () => renderOrFindings(true));
     $("#btnOrAcctMore").addEventListener("click", () => renderOrAccounts(true));
+    $("#orRules").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-or-rule]");
+      if (!b) return;
+      for (const id of ["#orArea", "#orService"]) $(id).value = "";
+      $("#orSev").value = "";
+      $("#orRule").value = b.dataset.orRule;
+      renderOrFindings();
+      $("#or-findings").scrollIntoView({ behavior: "smooth" });
+    });
     $("#orFocus").addEventListener("click", (e) => {
       const b = e.target.closest("[data-or-area]");
       if (!b) return;
@@ -4534,8 +4552,13 @@
     document.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-pdf-section]");
       if (!btn) return;
-      const target = document.getElementById(btn.dataset.pdfSection);
+      // A blank value means the card the button sits in (one risk's findings).
+      const target = btn.dataset.pdfSection ? document.getElementById(btn.dataset.pdfSection) : btn.closest("details, .card");
       if (!target) return;
+      if (target.tagName === "DETAILS") target.open = true;
+      // A shared table holds every row, not the first page.
+      for (const more of target.querySelectorAll("#btnOrAcctMore, #btnOrMore"))
+        for (let i = 0; i < 40 && !more.hidden; i++) more.click();
       for (let el = target; el && el !== document.body; el = el.parentElement)
         for (const sib of el.parentElement.children) if (sib !== el) sib.classList.add("print-off");
       document.body.classList.add("print-one");

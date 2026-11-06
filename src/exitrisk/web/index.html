@@ -761,6 +761,7 @@
     <section class="section" id="or-coverage">
       <h2><span class="num">4</span>What is covered, and what is not</h2>
       <div class="card">
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-coverage">Export table to PDF</button></p>
         <p id="orCovHead" class="brief-headline"></p>
         <div id="orCovBar" class="or-covbar" role="img" aria-label="Share of the estate, by monthly spend, by how far it is checked"></div>
         <div id="orCovLevels" class="or-covlevels"></div>
@@ -812,6 +813,7 @@
     <section class="section" id="or-findings">
       <h2><span class="num">7</span>Findings</h2>
       <div class="card">
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-findings">Export table to PDF</button></p>
         <div class="row no-print or-filters">
           <label class="inline">Area<select id="orArea"></select></label>
           <label class="inline">Severity<select id="orSev"><option value="outage" selected>Critical and high: outage risk</option><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
@@ -831,6 +833,7 @@
     <section class="section" id="or-accounts">
       <h2><span class="num">8</span>Accounts</h2>
       <div class="card">
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-accounts">Export table to PDF</button></p>
         <p class="muted small">Every account read, highest outage risk first. Score 0 to 100, higher is worse: each finding type adds its severity's points once. Select an account to see its findings.</p>
         <div class="table-wrap"><table class="data compact" id="orAccounts"></table></div>
         <p class="table-more"><span id="orAcctNote" class="muted small"></span> <button type="button" class="btn no-print" id="btnOrAcctMore" hidden></button></p>
@@ -850,6 +853,7 @@
     <section class="section" id="or-eks">
       <h2><span class="num">10</span>EKS clusters</h2>
       <div class="card">
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-eks">Export table to PDF</button></p>
         <p class="muted small">Replica counts, requests and limits come from each cluster's Kubernetes API, which needs a read-only access entry for the scan's identity and a network path to the endpoint. The scan never adds an entry. A cluster not read is not a pass; Container Insights, where on, still gives memory and CPU against limits.</p>
         <p id="orEksHelp" class="small" hidden></p>
         <div class="table-wrap"><table class="data compact" id="orClusters"></table></div>
@@ -859,6 +863,7 @@
     <section class="section" id="or-causes">
       <h2><span class="num">11</span>What causes outages</h2>
       <div class="card">
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-causes">Export table to PDF</button></p>
         <p class="muted small">Published evidence, beside what this scan found for the same cause. The order is our judgement for a bank's peak event, not a published ranking, and no source here measures AWS customers or banks directly. A scan measures capacity far better than it measures change, yet change has the strongest evidence: hold the freeze as well as fixing the findings.</p>
         <div class="table-wrap"><table class="data compact" id="orCauses"></table></div>
       </div>
@@ -988,6 +993,9 @@
     <section class="section" id="cp-people">
       <h2><span class="num">7</span>Who can act</h2>
       <div class="card">
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-people">Export table to PDF</button></p>
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-accounts">Export table to PDF</button></p>
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-areas">Export table to PDF</button></p>
         <p class="muted small">Permission sets, IAM users, pipeline roles and the roles a person can switch into. "Can change" counts the resources each can change or read by hand; "blocked by a guardrail" counts what an SCP stops.</p>
         <div class="table-wrap"><table class="data compact" id="cpPeople"></table></div>
       </div>
@@ -996,6 +1004,7 @@
     <section class="section" id="cp-changes">
       <h2><span class="num">8</span>Changes people made by hand, last 30 days</h2>
       <div class="card">
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="cp-changes">Export table to PDF</button></p>
         <p class="muted small">Writes by people's own sign-ins, from CloudTrail. A change from a laptop's CLI, SDK or Terraform is what a stolen session looks like: each one should have a reason.</p>
         <div class="table-wrap"><table class="data compact" id="cpChanges"></table></div>
       </div>
