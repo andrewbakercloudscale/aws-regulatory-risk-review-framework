@@ -836,3 +836,36 @@ def test_dns_domain_and_certificate_findings_are_judged_by_date_and_auto_renewal
     assert "renewing.example" not in got  # renews by itself, well after the peak
     assert got["api.example"]["severity"] == "critical"
     assert got["api.example A"]["severity"] == "high"
+
+
+def test_serverless_peaks_are_judged_against_todays_maximum_acus():
+    from datetime import datetime, timedelta, timezone
+
+    from exitrisk.collectors.outage import serverless_usage
+
+    t0 = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    hours = {k: {} for k in ("ua", "ca", "cm", "pa", "pm")}
+    for h in range(48):
+        when = t0 + timedelta(hours=h)
+        top = 32 if h < 24 else 256  # the maximum was raised from 32 to 256 halfway
+        cap = 32 if h < 24 else 40
+        hours["ca"][when] = hours["cm"][when] = cap
+        hours["ua"][when] = cap / top * 100
+        hours["pa"][when] = hours["pm"][when] = 100 if h < 24 else 10
+    use = serverless_usage(hours, 256)
+    assert use["changed"] == {"until": "2026-10-01", "was": 32}
+    assert use["cpu_acus"] == 32 and use["cpu_pct"] == 12.5  # 100% of 32 ACUs is 12.5% of 256
+    assert use["acu_pct"] == 15.6 and use["ceiling_hours"] == 0
+
+
+def test_serverless_advice_says_the_range_and_what_to_raise_the_maximum_to():
+    from exitrisk.outage import OutageAnswers, acu_advice
+
+    a = OutageAnswers()
+    row = {"rule": "aurora_acu", "acu_min": 4, "acu_max": 128, "cpu_acus": 68.7, "changed": None}
+    said = acu_advice(row, a)
+    assert "now 4 to 128 ACUs" in said and "raise the maximum to 200 ACUs" in said
+    big = acu_advice({**row, "cpu_acus": 120}, a)
+    assert "past the 256 Aurora Serverless v2 allows" in big
+    fine = acu_advice({**row, "cpu_acus": 20, "changed": {"until": "2026-10-21", "was": 64}}, a)
+    assert "the maximum was 64 until 2026-10-21" in fine and "today's maximum covers that" in fine

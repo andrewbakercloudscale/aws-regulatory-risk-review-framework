@@ -1264,20 +1264,131 @@ def _ebs_mismatch(ctx: OutageCtx, ec2, instances: dict, region: str) -> None:
             )
 
 
+# Aurora Serverless v2. ACUUtilization and CPUUtilization are percentages of the maximum ACUs in force at
+# the time, so a maximum raised last week would leave the old peaks looking full. Each hour is turned back
+# into ACUs (capacity / utilisation gives the maximum then) and judged against today's maximum.
+SERVERLESS_STATS = (
+    ("ua", "ACUUtilization", "Average"),
+    ("ca", "ServerlessDatabaseCapacity", "Average"),
+    ("cm", "ServerlessDatabaseCapacity", "Maximum"),
+    ("pa", "CPUUtilization", "Average"),
+    ("pm", "CPUUtilization", "Maximum"),
+)
+SERVERLESS_MAX_ACU = 256  # the most Aurora Serverless v2 allows, on current engine versions
+CEILING_HOURS = 24  # hours at the maximum in the lookback window before it is worth a look
+SATURATED_HOURS = 7  # hours also at full CPU there: it ran out, not just reached its ceiling
+
+
+def _serverless_hours(ctx: OutageCtx, region: str, names: list[str]) -> dict[str, dict[str, dict]]:
+    """{instance: {stat id: {hour: value}}}, hourly over the lookback window."""
+    cw = ctx.client("cloudwatch", region)
+    out: dict[str, dict[str, dict]] = {}
+    per = 500 // len(SERVERLESS_STATS)
+    for at in range(0, len(names), per):
+        queries, ids = [], {}
+        for i, name in enumerate(names[at : at + per]):
+            for sid, metric, stat in SERVERLESS_STATS:
+                qid = f"{sid}{i}"
+                ids[qid] = (name, sid)
+                metric_q = {"Namespace": "AWS/RDS", "MetricName": metric,
+                            "Dimensions": [{"Name": "DBInstanceIdentifier", "Value": name}]}  # fmt: skip
+                queries.append({"Id": qid, "MetricStat": {"Metric": metric_q, "Period": PERIOD, "Stat": stat}})
+        kwargs = {
+            "MetricDataQueries": queries,
+            "StartTime": ctx.now - timedelta(days=LOOKBACK_DAYS),
+            "EndTime": ctx.now,
+            "ScanBy": "TimestampAscending",
+        }
+        while True:
+            resp = with_backoff(cw.get_metric_data, transient=True, **kwargs)
+            for r in resp.get("MetricDataResults") or []:
+                name, sid = ids.get(r.get("Id"), (None, None))
+                if name:
+                    got = out.setdefault(name, {}).setdefault(sid, {})
+                    got.update(zip(r.get("Timestamps") or [], r.get("Values") or [], strict=False))
+            if not resp.get("NextToken"):
+                break
+            kwargs["NextToken"] = resp["NextToken"]
+    return out
+
+
+def serverless_usage(hours: dict[str, dict], top: float) -> dict | None:
+    """Peak use of one Serverless v2 instance against today's maximum ACUs ``top``, or None with no data."""
+    ua, ca, cm, pa, pm = (hours.get(k) or {} for k in ("ua", "ca", "cm", "pa", "pm"))
+    if not ca or not top:
+        return None
+    cpu_acus = cpu_max_acus = 0.0
+    then: dict = {}  # hour: the maximum ACUs in force then
+    for when, util in ua.items():
+        cap = ca.get(when)
+        if util and util > 0 and cap is not None:
+            then[when] = cap / (util / 100)
+    for when, ceiling in then.items():
+        cpu_acus = max(cpu_acus, (pa.get(when) or 0) * ceiling / 100)
+        cpu_max_acus = max(cpu_max_acus, (pm.get(when) or 0) * ceiling / 100)
+    at_top = [w for w, v in cm.items() if v >= 0.95 * top]
+    full = sum(1 for w in at_top if w in then and (pm.get(w) or 0) * then[w] / 100 >= 0.95 * top)
+    # A different maximum in force before: the last hour it was not today's.
+    before = [(w, v) for w, v in sorted(then.items()) if abs(v - top) > max(1.0, 0.1 * top)]
+    changed = None
+    if before:
+        # The value in force most of that time: the hour of a change mixes the old and new maximum.
+        was = Counter(round(v * 2) / 2 for _, v in before).most_common(1)[0][0]
+        changed = {"until": before[-1][0].date().isoformat(), "was": was}
+    return {
+        "acus": round(max(ca.values()), 1),
+        "acu_pct": round(min(100.0, max(ca.values()) / top * 100), 1),
+        "cpu_acus": round(cpu_acus, 1),
+        "cpu_pct": round(min(100.0, cpu_acus / top * 100), 1) if then else None,
+        "ceiling_hours": len(at_top),
+        "full_hours": full,
+        "hours": len(ca),
+        "changed": changed,
+        "cpu_max_acus": round(cpu_max_acus, 1),
+    }
+
+
+def _serverless_v2(ctx: OutageCtx, region: str, rds, dbs: list[dict]) -> None:
+    if not dbs:
+        return
+    scaling = {
+        c["DBClusterIdentifier"]: c.get("ServerlessV2ScalingConfiguration") or {}
+        for c in _pages(rds, "describe_db_clusters", "DBClusters")
+    }
+    hours = _serverless_hours(ctx, region, [d["DBInstanceIdentifier"] for d in dbs])
+    for d in dbs:
+        name = d["DBInstanceIdentifier"]
+        conf = scaling.get(d.get("DBClusterIdentifier") or "") or {}
+        top, low = float(conf.get("MaxCapacity") or 0), float(conf.get("MinCapacity") or 0)
+        use = serverless_usage(hours.get(name) or {}, top)
+        if not use:
+            continue
+        extra = {"acu_min": low, "acu_max": top, "acu_used": use["acu_pct"], "acus": use["acus"],
+                 "cpu_acus": use["cpu_acus"], "changed": use["changed"]}  # fmt: skip
+        if use["cpu_pct"] is not None:
+            ctx.add("aurora_acu", name, region, pct=use["cpu_pct"], load=True, **extra)
+        if use["ceiling_hours"] >= CEILING_HOURS:
+            at, of, full = f"{use['ceiling_hours']:,}", f"{use['hours']:,}", use["full_hours"]
+            note = f"at today's maximum of {top:g} ACUs in {at} of {of} hours (hourly maximum)"
+            if full >= SATURATED_HOURS:
+                note += f"; CPU at the limit in {full:,} of them, so it ran out of capacity, not just reached it"
+            sev = "high" if use["full_hours"] >= SATURATED_HOURS else "medium"
+            ctx.add("aurora_acu_ceiling", name, region, sev=sev, note=note, **extra)
+
+
 def task_rds(ctx: OutageCtx, region: str) -> None:
     rds = ctx.client("rds", region)
     dbs = _pages(rds, "describe_db_instances", "DBInstances", cap=MAX_ITEMS)
     m = ctx.metrics(region)
     by_id = {d["DBInstanceIdentifier"]: d for d in dbs}
+    _serverless_v2(ctx, region, rds, [d for d in dbs if d.get("DBInstanceClass") == "db.serverless"])
     for d in dbs:
         name = d["DBInstanceIdentifier"]
         cls = d.get("DBInstanceClass", "")
         engine = d.get("Engine", "")
         shared = d.get("DBClusterIdentifier") and engine.startswith(("aurora", "docdb", "neptune"))
         if cls == "db.serverless":
-            s = m["rds_acu"].get(name)
-            if s and s.n:
-                ctx.add("aurora_acu", name, region, pct=min(s.high, 100.0), load=True)
+            continue  # judged by _serverless_v2 below, against today's maximum ACUs
         else:
             s = m["rds_cpu"].get(name)
             if s and s.n:

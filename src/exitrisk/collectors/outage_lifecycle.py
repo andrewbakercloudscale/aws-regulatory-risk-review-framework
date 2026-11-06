@@ -20,25 +20,15 @@ import threading
 from datetime import date
 
 from .assurance import _pages
-from .outage import MAX_ITEMS, METRICS, REGION_TASKS, OutageCtx
+from .outage import MAX_ITEMS, REGION_TASKS, OutageCtx
 
 SOON_DAYS = 180  # support ending this soon is worth planning for now
 FORCED_DAYS = 180  # a major upgrade AWS forces this soon is high: too little time to test it and dodge the peak
 EKS_AUTO_DAYS = 60  # an EKS control plane AWS upgrades itself this soon is high
 EKS_NOTICE_DAYS = 90  # paid Extended Support starting this soon, worth a low note
-CEILING_HOURS = 24  # hours at the maximum in the lookback window before it is worth a look
-SATURATED_HOURS = 7  # hours also at full CPU there: it ran out, not just reached its ceiling
 MAX_TASK_DEFS = 300  # ECS task definitions read per region
 MAX_STOPPED = 100  # stopped ECS tasks read per cluster: ECS keeps them about an hour
 
-# Hourly maxima, for capacity that reaches its ceiling in bursts the hourly average hides.
-_RDS = "Amazon Relational Database Service"
-METRICS.update(
-    {
-        "rds_acu_max": ("AWS/RDS", ("DBInstanceIdentifier",), "ACUUtilization", "Maximum", _RDS),
-        "rds_cpu_max": ("AWS/RDS", ("DBInstanceIdentifier",), "CPUUtilization", "Maximum", _RDS),
-    }
-)
 
 # Operating systems: (name pattern, version pattern or None, end of support, what ends). The vendors'
 # published dates for standard support: paid extended support (Windows ESU, RHEL ELS, Ubuntu Pro) can
@@ -165,7 +155,6 @@ def task_db_lifecycle(ctx: OutageCtx, region: str) -> None:
     seen: set[str] = set()
     instances = _pages(rds, "describe_db_instances", "DBInstances", cap=MAX_ITEMS)
     for d in instances:
-        _acu_ceiling(ctx, d, region)
         engine, version = d.get("Engine", ""), d.get("EngineVersion", "")
         res = d.get("DBClusterIdentifier") or d["DBInstanceIdentifier"]  # an Aurora cluster has one version
         if res in seen or not engine.startswith(("postgres", "mysql", "mariadb", "aurora")):
@@ -181,28 +170,6 @@ def task_db_lifecycle(ctx: OutageCtx, region: str) -> None:
         if got:
             ctx.add("db_eol", res, region, sev=got[0], note=got[1])
     ctx.r.ok("eol_db")
-
-
-def _acu_ceiling(ctx: OutageCtx, d: dict, region: str) -> None:
-    """Aurora Serverless that reaches its maximum ACUs in bursts: the hourly average hides them."""
-    if d.get("DBInstanceClass") != "db.serverless":
-        return
-    name = d["DBInstanceIdentifier"]
-    m = ctx.metrics(region)
-    acu, cpu = m["rds_acu_max"].get(name), m["rds_cpu_max"].get(name)
-    if not acu or not acu.n or acu.hot < CEILING_HOURS:
-        return
-    full = cpu.hot if cpu and cpu.n else 0
-    note = f"at its maximum ACUs in {acu.hot:,} of {acu.n:,} hours (hourly maximum)"
-    if full >= SATURATED_HOURS:
-        note += f"; CPU at the limit in {full:,} of them, so it ran out of capacity, not just reached it"
-    ctx.add(
-        "aurora_acu_ceiling",
-        name,
-        region,
-        sev="high" if full >= SATURATED_HOURS else "medium",
-        note=note,
-    )
 
 
 def task_cache_lifecycle(ctx: OutageCtx, region: str) -> None:

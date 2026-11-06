@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import re
 import time
 from collections import Counter, defaultdict
@@ -434,16 +435,55 @@ def _false_positive(row: dict, profiles: dict) -> bool:
     return False
 
 
+SERVERLESS_MAX_ACU = 256  # the most Aurora Serverless v2 allows, on current engine versions
 SERVERLESS_NOTE = (
     "AWS measures Aurora Serverless v2 CPU against the maximum ACUs, so CPU is the headroom left before the "
     "ceiling. Capacity used is held up by the buffer cache and falls slowly, so it does not grow with load"
 )
 
 
+def acu_advice(row: dict, a: OutageAnswers) -> str:
+    """What the minimum and maximum ACUs are, and what to set the maximum to: the busiest hour's CPU,
+    in ACUs, at the expected peak load, with the warning level's headroom left over."""
+    top, low, cpu = row.get("acu_max"), row.get("acu_min"), row.get("cpu_acus")
+    if not top:
+        return ""
+    said = [f"now {low:g} to {top:g} ACUs"]
+    if row.get("changed"):
+        was = row["changed"]
+        said.append(
+            f"the maximum was {was['was']:g} until {was['until']}, "
+            f"so earlier peaks are measured against today's {top:g}"
+        )
+    if cpu is None or row["rule"] != "aurora_acu":
+        return "; ".join(said)
+    need = cpu * a.peak_multiplier
+    want = need / (a.warn_pct / 100)
+    step = 8 if want > 16 else 1
+    rec = math.ceil(want / step) * step
+    said.append(f"the busiest hour used {cpu:g} ACUs of CPU, about {need:.0f} at {a.peak_multiplier:g}x load")
+    if rec <= top:
+        said.append("today's maximum covers that")
+    elif rec <= SERVERLESS_MAX_ACU:
+        said.append(
+            f"raise the maximum to {rec:g} ACUs, which leaves {100 - a.warn_pct}% headroom at the peak; "
+            "the minimum does not limit the peak and can stay"
+        )
+    else:
+        said.append(
+            f"that needs about {rec:g} ACUs, past the {SERVERLESS_MAX_ACU} Aurora Serverless v2 allows: "
+            f"set the maximum to {SERVERLESS_MAX_ACU} and move reads to a reader endpoint, "
+            "or move the writer to a provisioned class"
+        )
+    return "; ".join(said)
+
+
 def _rebase(row: dict, profiles: dict) -> dict:
     """A measure judged against the headroom the engine really has. MySQL, MariaDB and Aurora give about
     three quarters of memory to the buffer pool or cache when they start, by design: low freeable memory
     there is normal, so it is measured against the remaining quarter."""
+    if row["rule"] == "aurora_acu" and row.get("cpu_acus") is not None:
+        return row  # already CPU against today's maximum ACUs: see acu_advice
     if row["rule"] == "aurora_acu" and row.get("pct") is not None:
         cpu = _stat(profiles.get(("rds", row["res"])), "CPU")
         if cpu.get("peak") is None:
@@ -692,6 +732,10 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
             if f:
                 if based.get("acu_used") is not None:
                     f["why"] = f"CPU {f['why']}; capacity used {based['acu_used']:.0f}% of the maximum ACUs"
+                advice = acu_advice(based, a) if rule["id"] in ("aurora_acu", "aurora_acu_ceiling") else ""
+                if advice:
+                    f["why"] = f"{f['why']}; {advice}"
+                    f["advice"] = advice
                 _temper(f, based, profiles)
                 found.append(
                     {

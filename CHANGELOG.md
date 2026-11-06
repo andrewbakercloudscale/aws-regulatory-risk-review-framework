@@ -7,9 +7,11 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 ## [Unreleased]
 
 ### Added
+- Outage Risk: Aurora Serverless findings say the current minimum and maximum ACUs and what to set the maximum to: the busiest hour's CPU in ACUs, at the expected peak load, with the warning level's headroom (for example "now 4 to 128 ACUs ... raise the maximum to 200 ACUs"). Past 256 ACUs, the most Serverless v2 allows, it says to move reads to a reader or the writer to a provisioned class.
 - Outage Risk: Risk by owner opens the report. One bubble per owner, up = the risk points of all their accounts, right = their monthly spend as a proxy for importance, size = how many accounts they own; start at the top right. Selecting an owner lists their findings, and the findings search now matches owners.
 
 ### Changed
+- Outage Risk: Aurora Serverless is judged against today's maximum ACUs. AWS reports Serverless v2 CPU and capacity as a share of the maximum in force at the time, so a cluster whose maximum was raised in the last 35 days kept its old peaks and looked full. Each hour is now turned back into ACUs first, and the finding says when the maximum changed. On the latest scan six production clusters flagged critical or high had already been raised and now clear. Needs a new scan.
 - Outage Risk: each risk card (Kinesis readers falling behind, Lambda near its reserved concurrency, and so on) now lists its worst findings, with account, resource, region and value, and a link that opens the findings table filtered to that risk. The cards had shown only the explanation.
 - Export table to PDF inside each service review (What to do, Limits and how soon, Resources, Another design), each printed alone under the service's name, plus Export this service to PDF for the whole review.
 - Export table to PDF on every table: Outage Risk findings, accounts, coverage, EKS and causes, each risk card, and Developer Compromise areas, accounts, people and changes. The accounts and findings tables export every row, not only the first page.
