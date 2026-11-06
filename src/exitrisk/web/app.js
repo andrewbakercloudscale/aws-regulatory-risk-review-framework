@@ -3153,7 +3153,7 @@
     $("#orCovGap").hidden = !gap.length;
     $("#orCovGap").textContent = gap.length ? `Not covered, so nothing here says these are safe: ${gap.slice(0, 12).map((x) => `${x.name} (${money(x.monthly)})`).join(", ")}${gap.length > 12 ? `, and ${num(gap.length - 12)} more` : ""}.` : "";
     const rows = PRINT ? c.billed.slice(0, 60) : c.billed;
-    $("#orCovTable").innerHTML = `<thead><tr><th>Billed service</th><th class="num-cell">Monthly</th><th>How far it is checked</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${x.service ? `<button type="button" class="link-btn" data-or-service="${esc(x.service)}">${esc(x.name)}</button>` : esc(x.name)}</td><td class="num-cell">${money(x.monthly)}</td><td>${pill(null, OR_LEVEL_LABEL[x.level], OR_LEVEL_COLOR[x.level])}</td></tr>`).join("")}</tbody>`;
+    $("#orCovTable").innerHTML = `<thead><tr><th>Billed service</th><th class="num-cell">Monthly</th><th>How far it is checked</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${x.service && r.services.some((v) => v.id === x.service && v.tone !== "clear") ? `<button type="button" class="link-btn" data-or-service="${esc(x.service)}">${esc(x.name)}</button>` : esc(x.name)}</td><td class="num-cell">${money(x.monthly)}</td><td>${pill(null, OR_LEVEL_LABEL[x.level], OR_LEVEL_COLOR[x.level])}</td></tr>`).join("")}</tbody>`;
     $("#orCovCatalog").innerHTML = `<thead><tr><th>Service</th><th>Level</th><th>Reads</th><th>Cannot see</th></tr></thead><tbody>${c.catalog.map((s) => `<tr><td><strong>${esc(s.label)}</strong></td><td>${pill(null, OR_LEVEL_LABEL[s.level], OR_LEVEL_COLOR[s.level])}</td><td class="small">${esc(s.reads.join("; "))}</td><td class="small">${esc(s.not_seen.join("; "))}</td></tr>`).join("")}</tbody>`;
   }
 
@@ -3161,8 +3161,10 @@
     const old = r.services.length && r.services[0].no_profiles;
     $("#orReviewsNote").hidden = !old;
     $("#orReviewsNote").textContent = old ? "This scan was made before the service reviews, so it holds findings but no settings or peak figures for each resource. Scan again for the full reviews." : "";
-    state.orReviewById = Object.fromEntries(r.services.map((s) => [s.id, s]));
-    $("#orReviews").innerHTML = r.services.map((s) => `<details class="card or-rule or-review" id="orReview-${esc(s.id)}" data-or-review="${esc(s.id)}"><summary>${pill(null, OR_TONE_LABEL[s.tone], OR_TONE_COLOR[s.tone])} <strong>${esc(s.label)}</strong> <span class="muted small">${pill(null, OR_LEVEL_LABEL[s.level], OR_LEVEL_COLOR[s.level])} ${s.monthly ? `${money(s.monthly)} a month` : "no spend seen"}</span><div class="small or-verdict">${esc(s.verdict)}</div></summary><div class="or-review-body"></div></details>`).join("");
+    // Only services with something wrong: a clean one is coverage, shown in section 6, not a review.
+    const shown = r.services.filter((s) => s.tone !== "clear");
+    state.orReviewById = Object.fromEntries(shown.map((s) => [s.id, s]));
+    $("#orReviews").innerHTML = shown.length ? shown.map((s) => `<details class="card or-rule or-review" id="orReview-${esc(s.id)}" data-or-review="${esc(s.id)}"><summary>${pill(null, OR_TONE_LABEL[s.tone], OR_TONE_COLOR[s.tone])} <strong>${esc(s.label)}</strong> <span class="muted small">${pill(null, OR_LEVEL_LABEL[s.level], OR_LEVEL_COLOR[s.level])} ${s.monthly ? `${money(s.monthly)} a month` : "no spend seen"}</span><div class="small or-verdict">${esc(s.verdict)}</div></summary><div class="or-review-body"></div></details>`).join("") : '<p class="muted small">No service has a finding.</p>';
     for (const d of $("#orReviews").children) d.addEventListener("toggle", () => { if (d.open) fillOrReview(d); });
   }
 
@@ -3179,12 +3181,14 @@
     const usage = (f) => (f.used != null && f.limit != null ? `${num(f.used, f.used % 1 ? 1 : 0)} of ${num(f.limit, f.limit % 1 ? 1 : 0)}${f.unit ? ` ${esc(f.unit)}` : ""}` : "");
     const unit = (u) => (!u ? "" : ["%", "s", "ms", "x"].includes(u) ? u : ` ${u}`);
     const stat = (x) => `<div>${esc(x.k)}: <strong>${num(x.peak, x.peak % 1 ? 1 : 0)}${esc(unit(x.unit))}</strong> peak, ${num(x.avg, x.avg % 1 ? 1 : 0)}${esc(unit(x.unit))} average${x.limit ? `, limit ${num(x.limit)}` : ""}${x.per_day ? `, ${x.per_day > 0 ? "+" : ""}${num(x.per_day, 2)} a day` : ""}</div>`;
-    const resources = PRINT ? s.resource_rows.slice(0, 15) : s.resource_rows;
+    // Only resources with something wrong; the clean ones are counted in the facts line above.
+    const flagged = s.resource_rows.filter((p) => (p.issues || []).length);
+    const resources = PRINT ? flagged.slice(0, 15) : flagged;
     const parts = [`<div class="or-facts"><div><b>${num(s.resources)}</b> resources read</div><div><b>${num(s.accounts)}</b> accounts</div><div><b>${num(s.critical)} / ${num(s.high)} / ${num(s.medium)}</b> critical, high, medium in production</div><div><b>${num(s.no_alarm)}</b> with no alarm on what fails first</div><div><b>${num(s.non_production)}</b> outside production</div></div>`];
     if (s.not_read_count) parts.push(`<p class="warn-text small">Not read in ${plural(s.not_read_count, "account")}: ${esc(s.not_read.join(", "))}${s.not_read_count > s.not_read.length ? ", and more" : ""}. Unknown, not a pass.</p>`);
     if (s.actions.length) parts.push(block("What to do", `<div class="table-wrap"><table class="data compact"><thead><tr><th>Impact</th><th>Finding</th><th class="num-cell">Found</th><th>Why it matters</th><th>What to do</th></tr></thead><tbody>${s.actions.map((a) => `<tr><td>${orSev(a.severity)}</td><td><strong>${esc(a.title)}</strong></td><td class="num-cell">${num(a.findings)}<div class="muted small">${plural(a.accounts, "account")}</div></td><td class="small">${esc(a.why)}</td><td class="small">${esc(a.fix)}</td></tr>`).join("")}</tbody></table></div>`));
     if (s.limits.length) parts.push(block("Limits and how soon", `<div class="table-wrap"><table class="data compact"><thead><tr><th>Resource</th><th>Account</th><th>Measure</th><th class="num-cell">Now → peak</th><th>Detail</th></tr></thead><tbody>${s.limits.map((f) => `<tr><td class="mono small">${esc(f.res)}</td><td class="small">${esc(f.account)}</td><td class="small">${orSev(f.severity)} ${esc(f.title)}</td><td class="num-cell">${f.pct != null ? `${pct(f.pct, 0)}${f.at_peak != null && f.at_peak !== f.pct ? ` <span class="muted">→ ${pct(f.at_peak, 0)}</span>` : ""}` : EMPTY}</td><td class="small">${usage(f)}${f.days != null ? ` · at its limit in about ${num(f.days, 0)} days` : ""}</td></tr>`).join("")}</tbody></table></div>`));
-    if (resources.length) parts.push(block("Resources, worst first", `<p class="muted small">Live settings, and peak against average over 35 days. Showing ${num(resources.length)} of ${num(s.resources)}.</p><div class="table-wrap"><table class="data compact"><thead><tr><th>Resource</th><th>What is wrong</th><th>Settings</th><th>Peak against average</th></tr></thead><tbody>${resources.map((p) => `<tr><td>${p.severity ? `${orSev(p.severity)} ` : ""}<span class="mono small">${esc(p.res)}</span><div class="muted small">${esc(p.account)} · ${esc(p.region)}</div></td><td class="small or-issues">${(p.issues || []).map((i) => `<div>${orSev(i.severity)} <strong>${esc(i.title)}</strong>${i.why ? `<div class="muted">${esc(i.why)}</div>` : ""}</div>`).join("") || `<span class="muted">Nothing found</span>`}</td><td class="small">${Object.entries(p.facts).map(([k, v]) => `${esc(k)}: <strong>${esc(v)}</strong>`).join(" · ")}</td><td class="small">${p.stats.map(stat).join("") || EMPTY}</td></tr>`).join("")}</tbody></table></div>`));
+    if (resources.length) parts.push(block("Resources with an issue, worst first", `<p class="muted small">Live settings, and peak against average over 35 days. ${num(flagged.length)} of ${num(s.resources)} resources read have an issue${resources.length < flagged.length ? `; showing ${num(resources.length)}` : ""}.</p><div class="table-wrap"><table class="data compact"><thead><tr><th>Resource</th><th>What is wrong</th><th>Settings</th><th>Peak against average</th></tr></thead><tbody>${resources.map((p) => `<tr><td>${p.severity ? `${orSev(p.severity)} ` : ""}<span class="mono small">${esc(p.res)}</span><div class="muted small">${esc(p.account)} · ${esc(p.region)}</div></td><td class="small or-issues">${(p.issues || []).map((i) => `<div>${orSev(i.severity)} <strong>${esc(i.title)}</strong>${i.why ? `<div class="muted">${esc(i.why)}</div>` : ""}</div>`).join("")}</td><td class="small">${Object.entries(p.facts).map(([k, v]) => `${esc(k)}: <strong>${esc(v)}</strong>`).join(" · ")}</td><td class="small">${p.stats.map(stat).join("") || EMPTY}</td></tr>`).join("")}</tbody></table></div>`));
     if (s.options.length) parts.push(block("Another design", `<p class="muted small">Designs that remove a class of outage. Prices are not read, so cost is not compared.</p><div class="table-wrap"><table class="data compact"><thead><tr><th>Option</th><th>Removes</th><th>To weigh</th></tr></thead><tbody>${s.options.map((o) => `<tr><td><strong>${esc(o.name)}</strong></td><td class="small">${esc(o.removes)}</td><td class="small">${esc(o.note)}</td></tr>`).join("")}</tbody></table></div>`));
     parts.push(`<div class="or-two"><div><h4>What was read</h4>${list(s.reads)}</div><div><h4>Not checked</h4>${list(s.not_seen)}</div></div>`);
     if (s.docs.length) parts.push(`<p class="small">AWS guidance: ${s.docs.map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.label)}</a>`).join(" · ")}</p>`);
@@ -4277,8 +4281,69 @@
     if (session && sso.sessions.some((s) => s.name === session)) want = session;
     if (want && sso.sessions.some((s) => s.name === want)) $("#ssoSession").value = want;
     $("#ssoAdd").hidden = sso.sessions.length > 0;
+    let mode = null;
+    try { mode = localStorage.getItem(LS_SIGN_MODE); } catch { /* ignore */ }
+    // Nobody with no portal configured wants the portal pane first.
+    if (!sso.sessions.length || (mode === "keys" && !session && !overScan)) await signMode("keys", false);
+    else await signMode("sso", false);
     $("#ssoDialog").showModal();
-    await showSsoState();
+    if (!$("#ssoPane").hidden) await showSsoState();
+  }
+
+  // ------------------------------------------------------------------ keys on this machine
+  const LS_SIGN_MODE = "exitrisk.signMode";
+  const KEY_KINDS = { "access key": "Access key", "session key": "Temporary keys", role: "Assumes a role", process: "Credential process", sso: "Portal profile", other: "Profile" };
+  async function signMode(mode, remember = true) {
+    for (const b of document.querySelectorAll("[data-sign-mode]")) b.setAttribute("aria-pressed", String(b.dataset.signMode === mode));
+    const keys = mode === "keys";
+    $("#keysPane").hidden = !keys;
+    $("#ssoPane").hidden = keys;
+    $("#btnKeysUse").hidden = !keys;
+    $("#ssoError").textContent = "";
+    if (remember) { try { localStorage.setItem(LS_SIGN_MODE, mode); } catch { /* ignore */ } }
+    if (keys) { $("#btnSsoUse").hidden = true; $("#btnSsoLogout").hidden = true; await loadKeys(); }
+    else await showSsoState();
+  }
+
+  async function loadKeys() {
+    const box = $("#keysList");
+    $("#btnKeysUse").disabled = true;
+    box.innerHTML = `<div class="empty-row">Reading the AWS CLI files…</div>`;
+    try {
+      const { details } = await api("/api/profiles");
+      // Portal profiles are signed in on the other tab; here, everything that works without one.
+      const rows = Object.entries(details || {}).filter(([, d]) => d.kind !== "sso" && d.kind !== "other");
+      const order = { "access key": 0, "session key": 1, role: 2, process: 3 };
+      rows.sort((a, b) => (order[a[1].kind] ?? 9) - (order[b[1].kind] ?? 9) || a[0].localeCompare(b[0]));
+      let last = null;
+      try { last = localStorage.getItem(LS_ORG_PROFILE); } catch { /* ignore */ }
+      box.innerHTML = rows.length
+        ? rows.map(([name, d]) => `<label><input type="radio" name="keyProfile" value="${esc(name)}" ${name === last ? "checked" : ""}><span class="k-name">${esc(name)}</span><span class="k-kind">${esc(KEY_KINDS[d.kind] || d.kind)}${d.key ? ` ${esc(d.key)}` : ""}</span><span class="k-sub">${esc([d.kind === "role" ? d.label : "", d.account ? `account ${d.account}` : "", d.region ? `region ${d.region}` : ""].filter(Boolean).join(" · ") || "region from your AWS settings")}</span></label>`).join("")
+        : `<div class="empty-row">No access keys or roles saved on this machine. Add one with <code>aws configure --profile name</code>.</div>`;
+      $("#btnKeysUse").disabled = !box.querySelector("input:checked");
+    } catch (e) {
+      box.innerHTML = "";
+      $("#ssoError").textContent = e.message;
+    }
+  }
+
+  function keysUse() {
+    const pick = $("#keysList input:checked");
+    if (!pick) return;
+    try { localStorage.setItem(LS_ORG_PROFILE, pick.value); } catch { /* ignore */ }
+    if (sso.overScan) {  // New scan is open underneath: switch it to these keys and carry on
+      const after = sso.after;
+      sso.overScan = false;
+      sso.after = null;
+      $("#ssoDialog").close();
+      const sel = $("#sProfile");
+      if (![...sel.options].some((o) => o.value === pick.value)) sel.add(new Option(pick.value, pick.value));
+      sel.value = pick.value;
+      after?.();
+      return;
+    }
+    $("#ssoDialog").close();
+    openAccessDialog(pick.value, true);
   }
 
   async function showSsoState() {
@@ -4293,7 +4358,7 @@
       ? `Signed in · token valid until ${new Date(s.expires_at).toLocaleString()} · region ${s.region}`
       : `Not signed in · region ${s.region}`;
     $("#btnSsoLogin").textContent = s.signed_in ? "Sign in again" : "Sign in";
-    $("#btnSsoLogout").hidden = !s.signed_in;
+    $("#btnSsoLogout").hidden = !s.signed_in || $("#ssoPane").hidden;
     if (s.signed_in) await loadSsoAccounts(s);
   }
 
@@ -4336,7 +4401,7 @@
       $("#ssoRole").innerHTML = roles.map((r) => `<option>${esc(r)}</option>`).join("") || `<option value="">(no roles)</option>`;
       const ro = prefer && roles.includes(prefer) ? prefer : roles.find((r) => /read|audit|view/i.test(r));
       if (ro) $("#ssoRole").value = ro;
-      $("#btnSsoUse").hidden = !roles.length;
+      $("#btnSsoUse").hidden = !roles.length || $("#ssoPane").hidden;
       showSsoVia();
     } catch (e) { $("#ssoRole").innerHTML = ""; $("#ssoError").textContent = e.message; }
     finally { $("#ssoRole").disabled = false; busy("#ssoBusy", null); }
@@ -4443,9 +4508,10 @@
 
   // ------------------------------------------------------------------ access check
   async function fillProfiles(sel, want) {
-    const { profiles, accounts } = await api("/api/profiles");
+    const { profiles, accounts, details } = await api("/api/profiles");
     state.profileAccounts = accounts || {};
-    sel.innerHTML = profiles.length ? profiles.map((p) => `<option>${esc(p)}</option>`).join("") : `<option value="">(no profiles found - default credential chain)</option>`;
+    const kind = (p) => (details?.[p]?.kind === "access key" || details?.[p]?.kind === "session key" ? `  ·  ${details[p].label}` : "");
+    sel.innerHTML = profiles.length ? profiles.map((p) => `<option value="${esc(p)}">${esc(p)}${esc(kind(p))}</option>`).join("") : `<option value="">(no profiles found - default credential chain)</option>`;
     const pick = preferredProfile(profiles, want);
     if (pick) sel.value = pick;
     return profiles;
@@ -4802,6 +4868,11 @@
     $("#btnSsoAddToggle").addEventListener("click", () => { $("#ssoAdd").hidden = !$("#ssoAdd").hidden; });
     $("#btnSsoAdd").addEventListener("click", ssoAddPortal);
     $("#btnSsoUse").addEventListener("click", ssoUse);
+    for (const b of document.querySelectorAll("[data-sign-mode]")) b.addEventListener("click", () => signMode(b.dataset.signMode));
+    $("#keysList").addEventListener("change", () => { $("#btnKeysUse").disabled = !$("#keysList input:checked"); });
+    $("#keysList").addEventListener("dblclick", (e) => { if (e.target.closest("label")) keysUse(); });
+    $("#btnKeysUse").addEventListener("click", keysUse);
+    $("#lnkKeysReload").addEventListener("click", (e) => { e.preventDefault(); loadKeys(); });
     $("#btnSsoLogout").addEventListener("click", ssoLogout);
     $("#ssoDialog").addEventListener("close", () => clearInterval(sso.loginTimer));
     refreshSsoBadge();

@@ -21,6 +21,7 @@
     <select id="scanSelect" title="Stored scans"></select>
     <button id="btnSso" class="btn" title="Sign in through your AWS access portal (IAM Identity Center)"><span class="dot" id="ssoDot"></span><span id="ssoLabel">AWS sign-in</span></button>
     <button id="btnNewScan" class="btn primary">New scan</button>
+    <a id="btnHealth" class="btn" href="/health" title="Something is broken now: deep check of one or a few accounts and the ten most likely causes">Health check</a>
     <button id="btnScanRunning" class="btn scan-running" title="A scan is running: open it to follow or stop it" hidden><span class="spin" aria-hidden="true"></span>Scan running <span id="scanRunPct"></span></button>
     <span class="tb-sep" aria-hidden="true"></span>
     <button id="btnExcl" class="btn" title="AWS products left out of the score and estimate">Exclusions<span id="exclCount" class="count-badge" hidden></span></button>
@@ -110,6 +111,11 @@
         <h3><span class="step-n">3</span> Scan and report</h3>
         <p>Scan the organisation (seconds for hundreds of accounts), filter to production, answer the questions under Exit model and export the PDF.</p>
         <div class="row"><button type="button" class="btn" id="btnGsScan">New scan</button></div>
+      </li>
+      <li class="card">
+        <h3><span class="step-n">!</span> Something broken right now?</h3>
+        <p>A <strong>Health check</strong> reads everything in one or a few accounts (alarms, AWS Health, recent changes, load balancers, functions, databases, queues, networks, quotas) and ranks the ten most likely causes. Works with an SSO sign-in or an access key from your credentials file.</p>
+        <div class="row"><a class="btn" href="/health">Health check</a></div>
       </li>
     </ol>
     <p class="muted small">Just looking? <a href="#" id="lnkDemo">Load the demo organisation</a> - no AWS access needed. Permissions in detail: <a href="https://github.com/andrewbakercloudscale/aws-org-level-risk-framework-reporting/blob/main/docs/IAM_PERMISSIONS.md" target="_blank" rel="noopener noreferrer">IAM_PERMISSIONS.md</a>.</p>
@@ -793,7 +799,7 @@
 
     <section class="section" id="or-services">
       <h2><span class="num">5</span>Service reviews</h2>
-      <p class="muted small">Worst first. Each opens with its verdict, then what to do, its limits, its resources with peak against average, what was read, and what could not be seen.</p>
+      <p class="muted small">Only services with a finding, worst first. Each opens with its verdict, then what to do, its limits, the resources with an issue, what was read, and what could not be seen. Services where nothing was found are left out; the coverage section shows how far each is checked.</p>
       <p id="orReviewsNote" class="warn-text small" hidden></p>
       <div id="orReviews"></div>
     </section>
@@ -1364,6 +1370,16 @@
 <dialog id="ssoDialog" class="dialog" aria-labelledby="ssoTitle">
   <form method="dialog" id="ssoForm" autocomplete="off">
     <h2 id="ssoTitle">AWS sign-in</h2>
+    <div class="seg sign-mode" role="group" aria-label="How to sign in">
+      <button type="button" data-sign-mode="sso" aria-pressed="true">Access portal (SSO)</button>
+      <button type="button" data-sign-mode="keys" aria-pressed="false">Keys on this Mac</button>
+    </div>
+    <div id="keysPane" hidden>
+      <p class="muted small">Uses credentials already saved on this machine in <code>~/.aws/credentials</code> or <code>~/.aws/config</code>: an access key, temporary keys, a role or a credential process. Only the key ID is shown, masked; the secret never leaves the AWS CLI files.</p>
+      <div id="keysList" class="keys-list" role="radiogroup" aria-label="Saved credentials"></div>
+      <p class="hint">Not listed? Save it with <code>aws configure --profile name</code> in a terminal, then press <a href="#" id="lnkKeysReload">Refresh</a>. Without access to the whole organisation, a scan or health check covers the key's own account, or the accounts a role you name can be assumed into.</p>
+    </div>
+    <div id="ssoPane">
     <p class="muted small">Signs in through your organisation's AWS access portal (IAM Identity Center), the same as <code>aws sso login</code>. You approve it on AWS's own page; the token stays in the AWS CLI cache on this machine and is never sent to this page.</p>
     <label>Access portal<select id="ssoSession"></select></label>
     <p id="ssoStatus" class="small"></p>
@@ -1391,11 +1407,13 @@
         <p class="hint">Only the roles IAM Identity Center gives you in this account; any read-only role that can call Organizations and Cost Explorer works.</p>
       </div>
     </div>
+    </div>
     <p id="ssoError" class="error-text" role="alert"></p>
     <div class="dialog-actions">
       <button type="button" id="btnSsoLogout" class="btn push-left" hidden>Sign out</button>
       <button value="cancel" class="btn" formnovalidate>Close</button>
       <button type="button" id="btnSsoUse" class="btn primary" hidden>Next: check access</button>
+      <button type="button" id="btnKeysUse" class="btn primary" hidden disabled>Next: check access</button>
     </div>
   </form>
 </dialog>

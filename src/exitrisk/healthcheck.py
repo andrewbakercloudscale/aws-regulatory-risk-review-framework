@@ -450,6 +450,8 @@ def rank(
             score += 15
         best = max((w for w, _, _ in linked), default=0)
         conf = "high" if best >= 1 else "medium" if linked or hits or c["severity"] == "critical" else "low"
+        if conf == "high" and SEV[c["severity"]] < SEV["medium"]:
+            conf = "medium"  # a minor finding next to a symptom is a lead, not a likely cause
         if c.get("chronic"):
             conf = "low"
         guesses.append(_guess(c, score, conf, [e for _, _, e in sorted(linked, key=lambda x: -x[0])], hits))
@@ -469,14 +471,15 @@ def rank(
 
 
 def _guess(item: dict, score: float, conf: str, linked: list[dict], hits: list[str], unexplained=False) -> dict:
-    why = item.get("evidence", "")
+    parts = [(item.get("evidence") or "").rstrip(". ")]
     if linked:
         names = "; ".join(f"{e['title']} (from {(e.get('started') or '?')[11:16]})" for e in linked[:3])
-        why += f". Followed by {len(linked)} symptom{'s' if len(linked) > 1 else ''}: {names}"
+        parts.append(f"Followed by {len(linked)} symptom{'s' if len(linked) > 1 else ''}: {names}")
     if unexplained:
-        why += ". No change or AWS event found that explains it: look at what this resource depends on."
+        parts.append("No change or AWS event found that explains it: look at what this resource depends on")
     if hits:
-        why += f". Matches your description: {', '.join(hits)}"
+        parts.append(f"Matches your description: {', '.join(hits)}")
+    why = ". ".join(p for p in parts if p) + "."
     return {
         "score": round(score, 1),
         "confidence": conf,

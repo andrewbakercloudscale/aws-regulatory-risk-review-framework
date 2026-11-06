@@ -966,3 +966,14 @@ body[data-view="compromise"] #btnJumpAi { display: none; }
 .cp-exec { margin: 8px 0 14px; display: grid; gap: 6px; }
 .cp-exec p { margin: 0; }
 #cp-focus .grid-2 { gap: 16px; }
+
+/* Sign-in: portal or keys saved on this machine */
+.sign-mode { margin: 0 0 12px; }
+.keys-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; max-height: 300px; overflow: auto; margin-bottom: 8px; }
+.keys-list label { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--grid); cursor: pointer; font-weight: 400; margin: 0; }
+.keys-list label:last-child { border-bottom: none; }
+.keys-list label:hover { background: var(--surface-2); }
+.keys-list .k-name { font-weight: 600; }
+.keys-list .k-kind { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.keys-list .k-sub { grid-column: 2 / -1; font-size: 12px; color: var(--muted); }
+.keys-list .empty-row { padding: 12px; color: var(--ink-2); font-size: 13px; }

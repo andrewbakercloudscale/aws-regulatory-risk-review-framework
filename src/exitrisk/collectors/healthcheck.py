@@ -2014,6 +2014,13 @@ def run_check(ctx: Ctx, region: str, name: str, fn) -> None:
             return
         log.warning("health check %s %s %s failed: %s", ctx.account, region, name, code)
         ctx.gap(region, CHECK_LABELS.get(name, name), exc)
+        if code == "SubscriptionRequiredException":
+            ctx.gaps[-1]["message"] = (
+                "The AWS Health API needs a Business, Enterprise On-Ramp or Enterprise support plan."
+            )
+            ctx.gaps[-1]["hint"] = (
+                "Open the AWS Health Dashboard in the console for this account to see AWS's own events."
+            )
     except Exception as exc:  # one odd answer must not lose the rest
         log.exception("health check %s %s %s failed", ctx.account, region, name)
         ctx.gap(region, CHECK_LABELS.get(name, name), exc)

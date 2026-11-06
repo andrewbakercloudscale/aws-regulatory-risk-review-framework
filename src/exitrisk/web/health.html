@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Health Check · AWS Cloud Risk Review</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .hc-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+    .hc-form .span-2 { grid-column: 1 / -1; }
+    .hc-form .field { min-width: 0; }
+    .hc-form input[type=text], .hc-form input:not([type]), .hc-form select, .hc-form textarea { width: 100%; box-sizing: border-box; }
+    .hc-form textarea { min-height: 64px; font: inherit; padding: 8px 10px; border: 1px solid var(--control-line); border-radius: 8px; background: var(--surface); color: var(--ink); resize: vertical; }
+    .hc-list { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .hc-list label { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--grid); cursor: pointer; font-size: 13px; }
+    .hc-list label:last-child { border-bottom: none; }
+    .hc-list label:hover { background: var(--surface-2); }
+    .hc-list .id { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; }
+    .hc-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 26px; align-items: center; }
+    .hc-chips .chip { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; padding: 3px 8px; }
+    .hc-chips .chip button { border: 0; background: none; color: var(--ink-2); cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
+    .hc-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .hc-kind { font-size: 12px; color: var(--ink-2); }
+    .conf { font-size: 12px; font-weight: 650; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: var(--surface-2); }
+    .conf.high { background: color-mix(in srgb, var(--t5) 18%, var(--surface)); color: color-mix(in srgb, var(--t5) 75%, var(--ink)); }
+    .conf.medium { background: color-mix(in srgb, var(--sev-warning) 22%, var(--surface)); color: color-mix(in srgb, var(--warn-ink) 85%, var(--ink)); }
+    table.hc-top td { font-size: 13px; }
+    table.hc-top td.why { min-width: 320px; }
+    table.hc-top td.rank { font-weight: 700; font-size: 16px; width: 28px; }
+    .hc-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); margin-left: 4px; white-space: nowrap; }
+    .hc-runs td { font-size: 13px; }
+    .hc-runs tr { cursor: pointer; }
+    .hc-runs tr:hover td { background: var(--surface-2); }
+    .hc-runs tr.chosen td { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+    details.hc-more > summary { cursor: pointer; font-weight: 600; margin: 4px 0 10px; }
+    .hc-signin { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 13px; }
+    @media (max-width: 760px) { .hc-form { grid-template-columns: 1fr; } table.hc-top td.why { min-width: 220px; } }
+    @media print { .hc-setup, .hc-runs-card { display: none !important; } details.hc-more { display: block; } details.hc-more > summary { display: none; } }
+  </style>
+  <script src="/static/health.js" defer></script>
+</head>
+<body>
+<header class="topbar no-print">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Health Check</span>
+    <span class="build-info muted small">AWS Cloud Risk Review</span>
+  </div>
+  <div class="topbar-actions">
+    <button id="btnPdf" class="btn" disabled title="Print or save the report on screen as a PDF">Export PDF</button>
+    <a class="btn" href="/">Back to reports</a>
+  </div>
+</header>
+
+<main class="report">
+  <section class="card hc-setup no-print" aria-labelledby="hcSetupTitle">
+    <h2 id="hcSetupTitle">What is wrong, and where?</h2>
+    <p class="muted small">Pick the accounts having trouble. The check reads every region in use: alarms, AWS Health, recent changes, refused calls, load balancers, containers, functions, databases, queues, networks, certificates, DNS and quotas, then ranks the ten most likely causes. Read only.</p>
+    <div class="hc-form">
+      <div class="field">
+        <label for="hcProfile">Credentials</label>
+        <select id="hcProfile"></select>
+        <span id="hcProfileKind" class="hc-kind"></span>
+      </div>
+      <div class="field">
+        <label for="hcRole">Role to assume in other accounts <span class="muted">(optional)</span></label>
+        <input id="hcRole" autocomplete="off" placeholder="Only for a key that reaches more than its own account">
+      </div>
+      <div id="hcSignIn" class="span-2 hc-signin" hidden></div>
+      <div class="field span-2">
+        <label for="hcSearch">Accounts <span class="muted">(name or number; tick up to <span id="hcMax">10</span>)</span></label>
+        <input id="hcSearch" autocomplete="off" placeholder="Type to search" disabled>
+        <div id="hcAcctList" class="hc-list" role="group" aria-label="Accounts found"></div>
+        <div id="hcChosen" class="hc-chips" aria-live="polite"></div>
+      </div>
+      <div class="field">
+        <label for="hcHours">Look back</label>
+        <select id="hcHours">
+          <option value="1">1 hour</option><option value="3">3 hours</option><option value="6" selected>6 hours</option>
+          <option value="12">12 hours</option><option value="24">24 hours</option><option value="72">3 days</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="hcSymptoms">Symptoms <span class="muted">(optional)</span></label>
+        <textarea id="hcSymptoms" maxlength="2000" placeholder="e.g. payments API returning 502 since 09:40, call centre agents cannot log in"></textarea>
+      </div>
+      <div class="span-2 hc-row">
+        <button id="hcRun" class="btn primary" disabled>Run health check</button>
+        <button id="hcStop" class="btn" hidden>Stop</button>
+        <span id="hcError" class="error-text" role="alert"></span>
+      </div>
+      <div id="hcProgress" class="span-2 progress" hidden>
+        <div class="muted small" id="hcProgMsg"></div>
+        <div class="bar"><div id="hcProgBar"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <div id="hcReport"></div>
+
+  <section class="card hc-runs-card no-print">
+    <h3>Earlier health checks</h3>
+    <div class="table-wrap"><table class="data hc-runs" id="hcRuns"></table></div>
+  </section>
+</main>
+</body>
+</html>
