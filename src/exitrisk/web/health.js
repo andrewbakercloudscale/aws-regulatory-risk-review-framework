@@ -169,7 +169,18 @@
     return `<span class="hc-owner">${esc(a.owner || "no owner tag")}${esc(exec)}</span>`;
   }
 
+  // The earlier report banner says whether it covers the accounts ticked now; ticks change after it shows.
+  function bannerTail() {
+    const tail = document.querySelector(".hc-banner-tail");
+    if (!tail) return;
+    const picked = [...state.chosen.keys()].sort().join(",");
+    tail.innerHTML = picked && picked !== state.reportAccounts
+      ? "It does <b>not</b> cover the accounts ticked above: press <b>Run health check</b> for those."
+      : "Press <b>Run health check</b> above for a fresh one.";
+  }
+
   function renderChosen() {
+    bannerTail();
     const box = $("#hcChosen");
     box.innerHTML = state.chosen.size
       ? [...state.chosen.values()].map((a) => `<span class="chip">${esc(a.name || a.id)} <span class="muted">${esc(a.id)}${a.owner ? ` · ${esc(a.owner)}` : ""}</span><button type="button" data-id="${esc(a.id)}" aria-label="Remove ${esc(a.name || a.id)}">×</button></span>`).join("")
@@ -229,14 +240,43 @@
     };
     try {
       const job = await api("/api/health-check", { method: "POST", body });
-      follow(job.id);
+      follow(job.id, body.accounts.map((a) => a.name || a.id).join(", "));
+      $("#hcReport").scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (e) {
       $("#hcError").textContent = e.message;
     }
   }
 
-  function follow(id) {
+  function ago(iso) {
+    const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (!Number.isFinite(m)) return "";
+    if (m < 1) return "just now";
+    if (m < 60) return `${m} min ago`;
+    const h = Math.round(m / 60);
+    return h < 48 ? `${h} hour${h > 1 ? "s" : ""} ago` : `${Math.round(h / 24)} days ago`;
+  }
+
+  // While a run is going, the report area says so: an earlier report left in view reads as the new one.
+  function runningCard() {
+    const names = state.runNames;
+    return `<section class="card hc-running" role="status" aria-live="polite">
+        <div class="busy-head"><span class="spin" aria-hidden="true"></span><span>Running a new health check${names ? ` of <b>${esc(names)}</b>` : ""}</span></div>
+        <p>The new report replaces this panel when it finishes, usually in 2 to 10 minutes. Progress is shown above.${state.reportId ? " The report below is an earlier one." : ""}</p>
+        <span class="busy-bar"><i></i></span>
+      </section>`;
+  }
+
+  function showRunning() {
+    state.reportId = null;
+    $("#btnPdf").disabled = true;
+    $("#hcReport").innerHTML = runningCard();
+  }
+
+  function follow(id, names = "") {
     state.runId = id;
+    state.followed = id;
+    state.runNames = names;
+    showRunning();
     $("#hcRun").disabled = true;
     $("#hcStop").hidden = false;
     $("#hcProgress").hidden = false;
@@ -245,6 +285,11 @@
       try {
         const r = await api(`/api/health-check/${encodeURIComponent(id)}`);
         const run = r.run;
+        if (!state.runNames && run.accounts?.length) {
+          state.runNames = run.accounts.join(", ");
+          const head = document.querySelector(".hc-running .busy-head span:last-child");
+          if (head) head.innerHTML = `Running a new health check of <b>${esc(state.runNames)}</b>`;
+        }
         const pct = run.total ? Math.round((100 * run.done) / run.total) : 2;
         $("#hcProgBar").style.width = `${pct}%`;
         $("#hcProgMsg").textContent = `${run.message || ""} · ${run.done || 0} of ${run.total || "?"} checks · ${run.elapsed ?? 0} s`;
@@ -265,6 +310,7 @@
     renderChosen();
     showReport(report);
     loadRuns();
+    $("#hcReport").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function stop() {
@@ -290,9 +336,17 @@
     ];
     const status = r.status === "done" ? "" : `<p class="error-text">This run ${esc(r.status)}${r.error ? `: ${esc(r.error)}` : ""}. What it found before then is below.</p>`;
     const top = r.top || [];
-    $("#hcReport").innerHTML = `
+    // Which report this is, impossible to miss: the one just run, or an earlier one (and for which accounts).
+    const fresh = r.id === state.followed;
+    const names = r.accounts.map((a) => a.name || a.id).join(", ");
+    state.reportAccounts = r.accounts.map((a) => a.id).sort().join(",");
+    const banner = fresh
+      ? `<div class="hc-banner fresh"><b>New report</b>, just finished at ${when(r.finished || r.created)}.</div>`
+      : `<div class="hc-banner old"><b>Earlier report</b> from ${when(r.created)} (${ago(r.created)}) of <b>${esc(names)}</b>. <span class="hc-banner-tail"></span></div>`;
+    $("#hcReport").innerHTML = `${state.runId && state.runId !== r.id ? runningCard() : ""}
       <section class="card">
-        <div class="card-head"><h2>Health check</h2><span class="muted small">${when(r.window?.start)} to ${when(r.window?.end)} (${esc(r.window?.hours)} h) · run ${when(r.created)}</span></div>
+        ${banner}
+        <div class="card-head"><h2>Health check: ${esc(names)}</h2><span class="muted small">window ${when(r.window?.start)} to ${when(r.window?.end)} (${esc(r.window?.hours)} h) · run ${when(r.created)}</span></div>
         <p>${accts}</p>
         ${r.symptoms ? `<p class="muted"><b>Symptoms given:</b> ${esc(r.symptoms)}</p>` : ""}
         ${status}
@@ -373,6 +427,7 @@
       </section>
       <p class="report-footer">AWS Cloud Risk Review · Health Check ${esc(r.id)}</p>`;
     for (const tr of document.querySelectorAll("#hcRuns tr[data-id]")) tr.classList.toggle("chosen", tr.dataset.id === r.id);
+    bannerTail();
   }
 
   // A plain words explanation above each part, so the report reads well when sent to someone who never ran it.

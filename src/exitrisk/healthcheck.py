@@ -265,6 +265,7 @@ class Job:
             "message": self.message,
             "elapsed": round(time.time() - self.started),
             "error": self.error,
+            "accounts": [a.get("name") or a["id"] for a in self.req.get("accounts") or []],
         }
 
 
