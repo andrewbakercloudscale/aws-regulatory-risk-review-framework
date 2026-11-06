@@ -4288,8 +4288,7 @@
     // Nobody with no portal configured wants the portal pane first.
     if (!sso.sessions.length || (mode === "keys" && !session && !overScan)) await signMode("keys", false);
     else await signMode("sso", false);
-    $("#ssoDialog").showModal();
-    if (!$("#ssoPane").hidden) await showSsoState();
+    $("#ssoDialog").showModal();  // signMode above has already shown the portal's state: once, not twice
   }
 
   // ------------------------------------------------------------------ keys on this machine
@@ -4349,6 +4348,7 @@
   }
 
   async function showSsoState() {
+    const seq = (sso.stateSeq = (sso.stateSeq || 0) + 1); // a later call wins; an earlier one stops quietly
     const s = currentSso();
     $("#ssoUse").hidden = true;
     $("#btnSsoUse").hidden = true;
@@ -4356,15 +4356,16 @@
     $("#btnSsoLogin").disabled = !s;
     if (!s) { $("#ssoStatus").textContent = ""; return; }
     try { localStorage.setItem(LS_SSO, s.name); } catch { /* ignore */ }
-    $("#ssoStatus").textContent = s.signed_in
+    sso.statusText = s.signed_in
       ? `Signed in · token valid until ${new Date(s.expires_at).toLocaleString()} · region ${s.region}`
       : `Not signed in · region ${s.region}`;
+    $("#ssoStatus").textContent = sso.statusText;
     $("#btnSsoLogin").textContent = s.signed_in ? "Sign in again" : "Sign in";
     $("#btnSsoLogout").hidden = !s.signed_in || $("#ssoPane").hidden;
-    if (s.signed_in) await loadSsoAccounts(s);
+    if (s.signed_in) await loadSsoAccounts(s, seq);
   }
 
-  async function loadSsoAccounts(s) {
+  async function loadSsoAccounts(s, seq = sso.stateSeq) {
     $("#ssoUse").hidden = false;
     $("#ssoVia").hidden = true;
     $("#ssoPick").hidden = false;
@@ -4374,12 +4375,13 @@
     busy("#ssoBusy", "Loading the accounts and roles you can use (a few seconds)…");
     try {
       const { accounts, management_account_id: mgmt } = await api(`/api/sso/${encodeURIComponent(s.name)}/accounts`);
+      if (seq !== sso.stateSeq) return;
       sso.mgmt = mgmt;
       const sorted = [...accounts].sort((a, b) => (b.id === mgmt) - (a.id === mgmt));
       $("#ssoAccount").innerHTML = sorted.map((a) => `<option value="${esc(a.id)}">${esc(a.name)} · ${esc(a.id)}${a.id === mgmt ? " · management account" : ""}</option>`).join("");
       const linked = s.profiles.find((p) => p.account_id === mgmt) || s.profiles[0];
       if (linked && accounts.some((a) => a.id === linked.account_id)) $("#ssoAccount").value = linked.account_id;
-      $("#ssoStatus").textContent += ` · ${accounts.length} accounts${mgmt ? "" : " · management account not visible"}`;
+      $("#ssoStatus").textContent = `${sso.statusText} · ${accounts.length} accounts${mgmt ? "" : " · management account not visible"}`;
       $("#ssoAccount").disabled = false;
       // With the management account found, show one line instead of a 300-account list.
       $("#ssoPick").hidden = !!mgmt && $("#ssoAccount").value === mgmt;
