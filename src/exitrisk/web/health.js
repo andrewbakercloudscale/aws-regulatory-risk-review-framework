@@ -154,11 +154,51 @@
       ? [...state.chosen.values()].map((a) => `<span class="chip">${esc(a.name || a.id)} <span class="muted">${esc(a.id)}</span><button type="button" data-id="${esc(a.id)}" aria-label="Remove ${esc(a.name || a.id)}">×</button></span>`).join("")
       : `<span class="muted small">No account ticked yet.</span>`;
     $("#hcRun").disabled = !state.chosen.size || !!state.runId;
+    $("#hcAccessBtn").disabled = !state.chosen.size;
+  }
+
+  // ------------------------------------------------------------------ access
+  async function checkAccess(body) {
+    const box = $("#hcAccess");
+    box.hidden = false;
+    box.innerHTML = `<p class="muted small">Checking access: each read once in ${body.accounts.length} account${body.accounts.length > 1 ? "s" : ""}…</p>`;
+    let r;
+    try {
+      r = await api("/api/health-check/access", { method: "POST", body });
+    } catch (e) {
+      box.innerHTML = `<p class="error-text">Access check failed: ${esc(e.message)}</p>`;
+      return null;
+    }
+    const out = r.accounts.filter((a) => a.error || a.denied.length);
+    if (r.ready) {
+      box.innerHTML = `<p class="hc-ok">✓ Access ready: all ${r.checked} reads allowed in ${r.accounts.map((a) => esc(a.name)).join(", ")}.</p>`;
+      return r;
+    }
+    const policy = r.policy ? JSON.stringify(r.policy, null, 2) : "";
+    box.innerHTML = `<p><b>Some reads are refused.</b> The health check still runs; what it cannot read is listed under "Could not check". Add the policy below to the role or user, then run again.</p>
+      <ul class="small">${out.map((a) => `<li><b>${esc(a.name)}</b> <span class="muted">${esc(a.account)}</span>: ${a.error ? `not reached (${esc(a.error.code)}: ${esc(a.error.message)})` : `${a.denied.length} refused: ${a.denied.map(esc).join(", ")}`}</li>`).join("")}</ul>
+      ${policy ? `<details open><summary>IAM policy to add</summary><pre class="hc-policy">${esc(policy)}</pre><button type="button" class="btn small" id="hcCopyPolicy">Copy policy</button></details>` : ""}`;
+    $("#hcCopyPolicy")?.addEventListener("click", async (e) => {
+      try { await navigator.clipboard.writeText(policy); e.target.textContent = "Copied"; } catch { /* ignore */ }
+    });
+    return r;
+  }
+
+  function requestBody() {
+    return {
+      profile: $("#hcProfile").value || null,
+      role_name: $("#hcRole").value.trim() || null,
+      accounts: [...state.chosen.values()].map((a) => ({ id: a.id, name: a.name || "" })),
+      hours: Number($("#hcHours").value),
+      symptoms: $("#hcSymptoms").value.trim(),
+    };
   }
 
   // ------------------------------------------------------------------ run
   async function run() {
     $("#hcError").textContent = "";
+    $("#hcRun").disabled = true;
+    await checkAccess(requestBody()); // permissions first, so a refusal is named before the long run
     const body = {
       profile: $("#hcProfile").value || null,
       role_name: $("#hcRole").value.trim() || null,
@@ -254,6 +294,22 @@
         ${signalsTable(r.signals)}</details>
       </section>` : ""}
 
+      ${(r.risks || []).length ? `<section class="card">
+        <h2>Other issues in ${r.accounts.length > 1 ? "these accounts" : "this account"} (${r.risks.length})</h2>
+        <p class="muted small">Not the live fault, but what the Outage Risk checks find here: limits nearly reached, single points of failure, resources running hot. Worst first.</p>
+        <div class="table-wrap"><table class="data compact"><thead><tr><th>Severity</th><th>Issue</th><th>Resource</th><th>Why</th><th>Where</th></tr></thead><tbody>
+          ${r.risks.map((x) => `<tr><td>${sev(x.severity)}</td><td class="small"><b>${esc(x.title)}</b><div class="muted">${esc(x.service_label || "")}</div></td><td class="small">${esc(x.res || "")}${x.note ? `<div class="muted">${esc(x.note)}</div>` : ""}</td><td class="small">${esc(x.why || "")}</td><td class="small">${esc(x.account_name || x.account)}<div class="muted">${esc(x.region || "")}</div></td></tr>`).join("")}
+        </tbody></table></div>
+      </section>` : ""}
+
+      ${(r.readiness || []).length ? `<section class="card">
+        <h2>Turn on to see more (${r.readiness.length})</h2>
+        <p class="muted small">Data sources that are off, so a cause there could not be seen. Turn them on now and run again: they only cover traffic from then on.</p>
+        <div class="table-wrap"><table class="data compact"><thead><tr><th>What is off</th><th>What it hides</th><th>How to turn it on</th><th>Where</th></tr></thead><tbody>
+          ${r.readiness.map((x) => `<tr><td class="small"><b>${esc(x.item)}</b></td><td class="small">${esc(x.why)}</td><td class="small">${esc(x.how)}${x.permission ? `<div class="muted">Needs ${esc(x.permission)}</div>` : ""}</td><td class="small">${esc(x.account_name || x.account)}<div class="muted">${esc(x.region)}</div></td></tr>`).join("")}
+        </tbody></table></div>
+      </section>` : ""}
+
       ${r.changes.length ? `<section class="card">
         <details class="hc-more"><summary>Changes in the window (${r.changes.length})</summary>
         ${changesTable(r.changes)}</details>
@@ -270,7 +326,7 @@
         ${r.gaps.length ? `<h3>Could not check (${r.gaps.length})</h3><p class="muted small">A cause in one of these would not show above.</p><div class="table-wrap"><table class="data compact"><thead><tr><th>Check</th><th>Account</th><th>Region</th><th>Reason</th></tr></thead><tbody>
           ${r.gaps.map((g) => `<tr><td class="small">${esc(g.check)}</td><td class="small">${esc(g.account_name || g.account)}</td><td class="small">${esc(g.region)}</td><td class="small"><b>${esc(g.code)}</b> ${esc(g.message)}${g.hint ? `<div class="muted">${esc(g.hint)}</div>` : ""}</td></tr>`).join("")}
         </tbody></table></div>` : `<p class="muted small">Every check ran in every region in use (${r.accounts.map((a) => `${esc(a.name || a.id)}: ${a.regions.map(esc).join(", ")}`).join("; ")}).</p>`}
-        <p class="muted small">Checks: ${r.checks.map(esc).join(", ")}.</p>
+        <p class="muted small">Checks: ${r.checks.map(esc).join(", ")}.${s.scanned_gb ? ` Logs Insights read ${esc(s.scanned_gb)} GB (about US$${(s.scanned_gb * 0.005).toFixed(2)}).` : ""}</p>
       </section>
       <p class="report-footer">AWS Cloud Risk Review · Health Check ${esc(r.id)}</p>`;
     for (const tr of document.querySelectorAll("#hcRuns tr[data-id]")) tr.classList.toggle("chosen", tr.dataset.id === r.id);
@@ -352,6 +408,7 @@
     renderList();
   });
   $("#hcRun").addEventListener("click", run);
+  $("#hcAccessBtn").addEventListener("click", () => checkAccess(requestBody()));
   $("#hcStop").addEventListener("click", stop);
   $("#btnPdf").addEventListener("click", () => {
     for (const d of document.querySelectorAll("details.hc-more")) d.open = true;

@@ -738,7 +738,7 @@ def test_only_evidence_of_an_outage_stays_critical_or_high():
     found = {f["res"]: f for f in _one(rows, profiles)}
     assert found["quiet"]["severity"] == "low" and "noise" in found["quiet"]["why"]
     assert found["failing"]["severity"] == "high" and "of requests" in found["failing"]["why"]
-    assert found["patched"]["severity"] == "medium" and found["stuck"]["severity"] == "high"
+    assert "patched" not in found and found["stuck"]["severity"] == "high"  # recovered: not an issue
     assert found["nat-1"]["severity"] == "low"
     assert found["nightly"]["severity"] == "medium" and "background job" in found["nightly"]["why"]
     assert not found.get("sonarqube-prod-inst-1", {}).get("production")
@@ -869,3 +869,17 @@ def test_serverless_advice_says_the_range_and_what_to_raise_the_maximum_to():
     assert "past the 256 Aurora Serverless v2 allows" in big
     fine = acu_advice({**row, "cpu_acus": 20, "changed": {"until": "2026-10-21", "was": 64}}, a)
     assert "the maximum was 64 until 2026-10-21" in fine and "today's maximum covers that" in fine
+
+
+def test_a_fault_that_has_recovered_is_not_reported():
+    rows = [
+        {"rule": "msk_offline", "res": "fixed-on-sunday", "region": "r", "used": 93, "now": 0},
+        {"rule": "msk_offline", "res": "still-down", "region": "r", "used": 4, "now": 2},
+        {"rule": "msk_offline", "res": "older-scan", "region": "r", "used": 1},  # read before "now" was kept
+        {"rule": "msk_offline", "res": "older-fixed", "region": "r", "used": 93},
+        {"rule": "msk_under_replicated", "res": "older-fixed", "region": "r", "used": 2, "now": 0},
+    ]
+    found = {f["res"]: f for f in _one(rows)}
+    assert "fixed-on-sunday" not in found
+    assert found["still-down"]["severity"] == "critical" and "older-scan" in found
+    assert "older-fixed" not in found  # its cluster is fully replicated now, so the partitions are back

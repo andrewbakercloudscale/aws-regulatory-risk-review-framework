@@ -127,6 +127,82 @@ def _session_for(profile: str | None, base, caller: str, account_id: str, role_n
 
 
 # ------------------------------------------------------------------------------------------ jobs
+# ------------------------------------------------------------------------------------------ access
+_NONE = "exitrisk-probe-none"
+# Every read a health check makes, as (action, client, method, arguments): each made once to see if it is allowed.
+ACCESS_PROBES = [
+    ("cloudwatch:GetMetricData", "cloudwatch", "get_metric_data",
+     {"MetricDataQueries": [{"Id": "q", "Expression": "1"}], "StartTime": 0, "EndTime": 3600}),
+    ("cloudwatch:DescribeAlarms", "cloudwatch", "describe_alarms", {"MaxRecords": 1}),
+    ("logs:DescribeLogGroups", "logs", "describe_log_groups", {"limit": 1}),
+    ("logs:StartQuery", "logs", "start_query",
+     {"logGroupNames": [_NONE], "queryString": "fields @timestamp", "startTime": 0, "endTime": 60}),
+    ("logs:GetQueryResults", "logs", "get_query_results", {"queryId": "00000000-0000-0000-0000-000000000000"}),
+    ("ec2:DescribeFlowLogs", "ec2", "describe_flow_logs", {"MaxResults": 5}),
+    ("ec2:DescribeVpcs", "ec2", "describe_vpcs", {"MaxResults": 5}),
+    ("ec2:DescribeSubnets", "ec2", "describe_subnets", {"MaxResults": 5}),
+    ("ec2:DescribeInstanceStatus", "ec2", "describe_instance_status", {"MaxResults": 5}),
+    ("ec2:DescribeVpnConnections", "ec2", "describe_vpn_connections", {}),
+    ("ec2:DescribeTransitGatewayAttachments", "ec2", "describe_transit_gateway_attachments", {"MaxResults": 5}),
+    ("route53resolver:ListResolverEndpoints", "route53resolver", "list_resolver_endpoints", {"MaxResults": 1}),
+    ("route53resolver:ListResolverQueryLogConfigs", "route53resolver", "list_resolver_query_log_configs",
+     {"MaxResults": 1}),
+    ("route53resolver:ListResolverQueryLogConfigAssociations", "route53resolver",
+     "list_resolver_query_log_config_associations", {"MaxResults": 1}),
+    ("route53:ListHealthChecks", "route53", "list_health_checks", {"MaxItems": "1"}),
+    ("cloudtrail:LookupEvents", "cloudtrail", "lookup_events", {"MaxResults": 1}),
+    ("health:DescribeEvents", "health", "describe_events", {"maxResults": 10}),
+    ("servicequotas:ListAWSDefaultServiceQuotas", "service-quotas", "list_aws_default_service_quotas",
+     {"ServiceCode": "ec2", "MaxResults": 1}),
+    ("ecs:ListClusters", "ecs", "list_clusters", {"maxResults": 1}),
+    ("eks:ListClusters", "eks", "list_clusters", {"maxResults": 1}),
+    ("autoscaling:DescribeScalingActivities", "autoscaling", "describe_scaling_activities", {"MaxRecords": 1}),
+    ("lambda:ListFunctions", "lambda", "list_functions", {"MaxItems": 1}),
+    ("rds:DescribeDBInstances", "rds", "describe_db_instances", {"MaxRecords": 20}),
+    ("rds:DescribeEvents", "rds", "describe_events", {"MaxRecords": 20}),
+    ("elasticache:DescribeEvents", "elasticache", "describe_events", {"MaxRecords": 20}),
+    ("elasticloadbalancing:DescribeTargetGroups", "elbv2", "describe_target_groups", {"PageSize": 1}),
+    ("acm:ListCertificates", "acm", "list_certificates", {"MaxItems": 1}),
+    ("directconnect:DescribeConnections", "directconnect", "describe_connections", {}),
+]  # fmt: skip
+
+
+def check_access(profile: str | None, accounts: list[dict], role_name: str | None = None) -> dict:
+    """Make each read a health check needs in each account; say what is refused, as a policy to add."""
+    from . import preflight
+    from .parallel import pmap
+
+    if not 1 <= len(accounts) <= MAX_ACCOUNTS:
+        raise ValueError(f"pick between 1 and {MAX_ACCOUNTS} accounts")
+    base = make_session(profile)
+    caller = caller_identity(base)["account_id"]
+    probes = ACCESS_PROBES + [p for p in preflight.OUTAGE_PROBES if p[0] not in {a for a, *_ in ACCESS_PROBES}]
+
+    def one(a: dict) -> dict:
+        out = {"account": a["id"], "name": a.get("name") or a["id"], "denied": [], "other": [], "error": None}
+        try:
+            sess = _session_for(profile, base, caller, a["id"], role_name, "hc-access")
+            out["denied"], out["other"] = preflight.probe_actions(sess, a["id"], probes)
+        except Exception as exc:  # the account itself is out of reach
+            code, msg, hint = describe_exception(exc)
+            out["error"] = {"code": code, "message": msg[:300], "hint": hint}
+        return out
+
+    results = pmap(one, accounts, workers=min(len(accounts), 5))
+    denied = sorted({d for r in results for d in r["denied"]})
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [{"Sid": "HealthCheckReads", "Effect": "Allow", "Action": denied, "Resource": "*"}],
+    }
+    return {
+        "accounts": results,
+        "checked": len(probes),
+        "ready": not denied and not any(r["error"] for r in results),
+        "missing": denied,
+        "policy": policy if denied else None,
+    }
+
+
 class Job:
     def __init__(self, run_id: str, req: dict):
         self.id = run_id
@@ -508,6 +584,8 @@ def build_report(doc: dict) -> dict:
     signals = [s for a in accounts for s in a.get("signals") or []]
     changes = [c for a in accounts for c in a.get("changes") or []]
     gaps = [g for a in accounts for g in a.get("gaps") or []]
+    readiness = [r for a in accounts for r in a.get("readiness") or []]
+    risks = sorted((r for a in accounts for r in a.get("risks") or []), key=lambda r: -SEV.get(r.get("severity"), 0))
     symptoms = (doc.get("request") or {}).get("symptoms") or ""
     guesses = rank(signals, changes, symptoms, (doc.get("window") or {}).get("start"))
     sev = Counter(s["severity"] for s in signals if not s.get("chronic"))
@@ -550,6 +628,9 @@ def build_report(doc: dict) -> dict:
             "changes": len(changes),
             "sharp_changes": sum(1 for c in changes if c["sharp"]),
             "gaps": len(gaps),
+            "risks": len(risks),
+            "readiness": len(readiness),
+            "scanned_gb": round(sum(a.get("scanned_gb") or 0 for a in accounts), 2),
         },  # fmt: skip
         "top": top,
         "guesses": guesses,
@@ -559,5 +640,7 @@ def build_report(doc: dict) -> dict:
         "changes": changes,
         "timeline": timeline[:400],
         "gaps": gaps,
+        "readiness": readiness,
+        "risks": risks,
         "checks": [hc.CHECK_LABELS[k] for k in hc.CHECK_LABELS],
     }

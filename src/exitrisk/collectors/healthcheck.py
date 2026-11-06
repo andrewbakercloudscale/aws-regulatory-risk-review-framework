@@ -20,10 +20,12 @@ A check that could not be read is listed as a gap, never treated as healthy.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
@@ -770,6 +772,10 @@ class Ctx:
         self.gaps: list[dict] = []
         self.checked: list[str] = []
         self.unhealthy_tgs: list[tuple[str, dict]] = []
+        self.readiness: list[dict] = []  # data sources that are off, so the next check can see more
+        self.risks: list[dict] = []  # Outage Risk findings in this account, beside the live faults
+        self.scanned_gb = 0.0  # Logs Insights data read, the part of a health check AWS charges for
+        self.deep = True  # also run the Outage Risk checks for other issues
         self._lock = threading.Lock()
 
     def client(self, service: str, region: str):
@@ -780,6 +786,12 @@ class Ctx:
         sig.setdefault("chronic", False)
         with self._lock:
             self.signals.append({"account": self.account, "account_name": self.name, "region": region, **sig})
+
+    def ready(self, region: str, item: str, why: str, how: str, *, permission: str = "") -> None:
+        """Something to turn on: without it this check cannot look there."""
+        with self._lock:
+            self.readiness.append({"account": self.account, "account_name": self.name, "region": region,
+                                   "item": item, "why": why, "how": how, "permission": permission})  # fmt: skip
 
     def gap(self, region: str, check: str, exc: BaseException) -> None:
         code, msg, hint = describe_exception(exc)
@@ -1962,6 +1974,350 @@ def _words(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z][a-z0-9]{2,}", (text or "").lower())][:20]
 
 
+# ------------------------------------------------------------------------------- deep dive: logs
+INSIGHTS_WAIT = 150  # seconds one Logs Insights query may run
+INSIGHTS_GROUPS = 50  # log groups one query may read (the AWS limit)
+LOG_GROUPS = 20  # busiest application log groups searched for an error spike per region
+SCAN_CAP_GB = 60.0  # Logs Insights data one check may read in a region (about US$0.30 at US$0.005 a GB)
+# Words that mark a failure, and an HTTP 5xx status. Not a bare 5xx number: ids and counts match that.
+ERROR_RE = (
+    r"/(?i)(\berror\b|exception|\bfatal\b|\bpanic\b|timed out|timeout|connection refused|unavailable|"
+    r"status(code)?\W{0,4}5\d\d\b)/"
+)
+
+
+def _redact(text: str) -> str:
+    """A log line fit for a report: long numbers (ids, account and card numbers) and emails masked."""
+    text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "<email>", text or "")
+    return re.sub(r"\d{6,}", "<n>", text).strip()[:140]
+
+
+NOT_APP_LOGS = re.compile(r"(flow|vpc|resolver|querylog|query-log|cloudtrail|aws-waf-logs|/aws/route53)", re.I)
+DEFAULT_FLOW_FORMAT = (
+    "${version} ${account-id} ${interface-id} ${srcaddr} ${dstaddr} ${srcport} ${dstport} ${protocol} "
+    "${packets} ${bytes} ${start} ${end} ${action} ${log-status}"
+)
+
+
+def _group_name(arn_or_name: str) -> str:
+    """A log group's name from its ARN (arn:aws:logs:r:a:log-group:NAME[:*]) or the name itself."""
+    if ":log-group:" in arn_or_name:
+        return arn_or_name.split(":log-group:", 1)[1].removesuffix(":*")
+    return arn_or_name
+
+
+def _ingest_gb(ctx: Ctx, region: str, start: datetime, end: datetime) -> dict[str, float]:
+    """{log group: GB ingested between start and end}, from AWS/Logs IncomingBytes: what a query will read."""
+    secs = max(60, int((end - start).total_seconds()) // 60 * 60)
+    q = [{"Id": "b", "Expression": f"SEARCH('{{AWS/Logs,LogGroupName}} MetricName=\"IncomingBytes\"', 'Sum', {secs})",
+          "ReturnData": True}]  # fmt: skip
+    got = _metric_data(ctx.client("cloudwatch", region), q, start, end).get("b") or {}
+    return {label: sum(v for _t, v in pts) / 1e9 for label, pts in got.items()}
+
+
+def _insights(ctx: Ctx, region: str, groups: list[str], query: str, start: datetime, end: datetime, gb: float = 0):
+    """Rows of one Logs Insights query as dicts. Raises TimeoutError when AWS takes too long."""
+    logs = ctx.client("logs", region)
+    qid = with_backoff(
+        logs.start_query, transient=True, logGroupNames=groups[:INSIGHTS_GROUPS], queryString=query,
+        startTime=int(start.timestamp()), endTime=int(end.timestamp()), limit=1000,
+    )["queryId"]  # fmt: skip
+    with ctx._lock:
+        ctx.scanned_gb += gb
+    waited = 0.0
+    while waited < INSIGHTS_WAIT:
+        resp = logs.get_query_results(queryId=qid)
+        if resp.get("status") in ("Complete", "Failed", "Cancelled", "Timeout"):
+            if resp.get("status") != "Complete":
+                raise TimeoutError(f"Logs Insights query {resp.get('status')}")
+            return [{c["field"]: c.get("value") for c in row} for row in resp.get("results") or []]
+        time.sleep(1.5)
+        waited += 1.5
+    with contextlib.suppress(ClientError):
+        logs.stop_query(queryId=qid)
+    raise TimeoutError(f"Logs Insights query ran over {INSIGHTS_WAIT} s")
+
+
+def _bin(ctx: Ctx) -> str:
+    return f"{max(1, ctx.period // 60)}m"
+
+
+def _first_bin(rows: list[dict], key: str, over: float) -> datetime | None:
+    """The earliest bin whose ``key`` count passes ``over``."""
+    hits = sorted(r["bin"] for r in rows if r.get("bin") and float(r.get(key) or 0) > over)
+    return (
+        _parse(hits[0].replace(" ", "T") + ("" if "+" in hits[0] or hits[0].endswith("Z") else "Z")) if hits else None
+    )
+
+
+def _spike(now: float, base: float, floor: float, factor: float) -> bool:
+    return now >= floor and now >= factor * (base + floor / 10)
+
+
+def _bins(ctx: Ctx) -> int:
+    return max(1, int(ctx.hours * 3600 // ctx.period))
+
+
+def _fit(groups: dict[str, float], cap: float) -> tuple[list[str], list[str]]:
+    """(groups to read, groups too big), the smallest first, so most groups fit under the cap."""
+    keep, big, total = [], [], 0.0
+    for g, size in sorted(groups.items(), key=lambda kv: kv[1]):
+        if total + size * 2 > cap:  # the window and the day-before baseline are both read
+            big.append(g)
+        else:
+            keep.append(g)
+            total += size * 2
+    return keep, big
+
+
+def check_flowlogs(ctx: Ctx, region: str) -> None:
+    """VPC flow logs: rejected traffic now against the same window a day earlier. Turned off means a readiness item."""
+    ec2 = ctx.client("ec2", region)
+    vpcs = {v["VpcId"]: v for v in _pages(ec2, "describe_vpcs", "Vpcs")}
+    if not vpcs:
+        return
+    subnet_vpc = {s["SubnetId"]: s["VpcId"] for s in _pages(ec2, "describe_subnets", "Subnets")}
+    flows = [f for f in _pages(ec2, "describe_flow_logs", "FlowLogs") if f.get("FlowLogStatus", "ACTIVE") == "ACTIVE"]
+    covered, to_cw, to_s3 = set(), {}, set()
+    for f in flows:
+        vpc = f.get("ResourceId") if f.get("ResourceId", "").startswith("vpc-") else subnet_vpc.get(f.get("ResourceId"))
+        if not vpc:
+            continue
+        covered.add(vpc)
+        if f.get("LogDestinationType", "cloud-watch-logs") == "cloud-watch-logs" and f.get("LogGroupName"):
+            to_cw.setdefault(f["LogGroupName"], {"vpcs": set(), "format": f.get("LogFormat") or DEFAULT_FLOW_FORMAT})
+            to_cw[f["LogGroupName"]]["vpcs"].add(vpc)
+        else:
+            to_s3.add(vpc)
+    off = sorted(v for v, d in vpcs.items() if v not in covered and not d.get("IsDefault"))
+    if off:
+        ctx.ready(region, f"VPC flow logs are off in {len(off)} VPC{'s' if len(off) > 1 else ''}",
+                  f"Rejected and dropped traffic in {', '.join(off[:6])}{' and more' if len(off) > 6 else ''} "
+                  "cannot be seen.",
+                  "Create a flow log per VPC to CloudWatch Logs (EC2 > VPC > Flow logs; about US$0.50 a GB).",
+                  permission="ec2:CreateFlowLogs, logs:CreateLogGroup, iam:PassRole")  # fmt: skip
+    only_s3 = sorted(to_s3 - {v for g in to_cw.values() for v in g["vpcs"]})
+    if only_s3:
+        ctx.ready(region, f"Flow logs of {len(only_s3)} VPC{'s' if len(only_s3) > 1 else ''} go to S3 only",
+                  "A health check reads flow logs through CloudWatch Logs Insights, not from S3.",
+                  "Add a second flow log to CloudWatch Logs during the incident, or query the S3 copy "
+                  "with Athena.")  # fmt: skip
+    if not to_cw:
+        return
+    sizes = _ingest_gb(ctx, region, ctx.start, ctx.end)
+    keep, big = _fit({g: sizes.get(g, 0.0) for g in to_cw}, SCAN_CAP_GB)
+    if big:
+        ctx.ready(region, f"Flow log group{'s' if len(big) > 1 else ''} too large to search in this window",
+                  f"{', '.join(big[:3])} hold more than {SCAN_CAP_GB:.0f} GB for the window and the day before.",
+                  "Choose a shorter window, or search the group by hand in Logs Insights.")  # fmt: skip
+    if not keep:
+        return
+    gb = sum(sizes.get(g, 0.0) for g in keep)
+    q = f"filter @message like / REJECT / | stats count(*) as n by @log, bin({_bin(ctx)}) as bin"
+    now_rows = _insights(ctx, region, keep, q, ctx.start, ctx.end, gb)
+    base_rows = _insights(ctx, region, keep, "filter @message like / REJECT / | stats count(*) as n by @log",
+                          ctx.base_start, ctx.base_end, gb)  # fmt: skip
+    base = {_group_name(r["@log"].split(":", 1)[-1]): float(r.get("n") or 0) for r in base_rows if r.get("@log")}
+    for g in keep:
+        rows = [r for r in now_rows if _group_name((r.get("@log") or "").split(":", 1)[-1]) == g]
+        now, before = sum(float(r.get("n") or 0) for r in rows), base.get(g, 0.0)
+        if not _spike(now, before, 500, 3):
+            continue
+        started = _first_bin(rows, "n", max(20.0, 3 * before / _bins(ctx)))
+        top = ""
+        if to_cw[g]["format"].strip() == DEFAULT_FLOW_FORMAT:
+            tq = ('filter @message like / REJECT / | parse @message "* * * * * * * * * * * * * *" as v, a, eni, src, '
+                  "dst, sport, dport, proto, pk, by, st, en, act, ls | stats count(*) as n by dst, dport "
+                  "| sort n desc | limit 5")  # fmt: skip
+            with contextlib.suppress(Exception):
+                hits = _insights(ctx, region, [g], tq, ctx.start, ctx.end, sizes.get(g, 0.0))
+                top = "; most refused: " + ", ".join(f"{h.get('dst')}:{h.get('dport')} ×{int(float(h['n']))}"
+                                                     for h in hits[:3] if h.get("n"))  # fmt: skip
+        vpcs_txt = ", ".join(sorted(to_cw[g]["vpcs"]))
+        ctx.add(
+            region,
+            area="Network",
+            service="network",
+            title=f"Rejected traffic jumped in {vpcs_txt}",
+            resource=vpcs_txt,
+            severity="high" if now >= 10 * (before + 50) else "medium",
+            started=_t(started),
+            ongoing=True,
+            evidence=f"{int(now):,} rejected flows in the window against {int(before):,} the day before{top}",
+            next="A security group, network ACL or firewall change usually explains a jump in refusals: compare "
+            "the refused ports with recent changes.",
+            source="VPC flow logs",
+            check="flow_rejects",
+        )
+
+
+def check_dns(ctx: Ctx, region: str) -> None:
+    """Route 53 Resolver endpoints, and SERVFAIL, NXDOMAIN and DNS Firewall blocks in the query logs."""
+    r = ctx.client("route53resolver", region)
+    for ep in _pages(r, "list_resolver_endpoints", "ResolverEndpoints"):
+        name = ep.get("Name") or ep["Id"]
+        kind = (ep.get("Direction") or "").lower()
+        st = ep.get("Status", "")
+        if st in ("ACTION_NEEDED", "AUTO_RECOVERING"):
+            ctx.add(region, area="DNS", service="network", title=f"Resolver {kind} endpoint {name} is {st.lower()}",
+                    resource=name, severity="high", started=None, ongoing=True,
+                    evidence=(ep.get("StatusMessage") or "")[:300],
+                    next="Lookups through this endpoint fail or slow down: check its subnets, security group and "
+                    "the on premises DNS servers it forwards to.",
+                    source="Route 53 Resolver", check="resolver_endpoint")  # fmt: skip
+            continue
+        if st != "OPERATIONAL":
+            continue
+        ips = _pages(r, "list_resolver_endpoint_ip_addresses", "IpAddresses", ResolverEndpointId=ep["Id"])
+        bad = [i for i in ips if i.get("Status") not in ("ATTACHED", "CREATING", "UPDATING", "ATTACHING")]
+        if bad:
+            ctx.add(region, area="DNS", service="network",
+                    title=f"{len(bad)} of {len(ips)} addresses of resolver endpoint {name} are not attached",
+                    resource=name, severity="medium", started=None, ongoing=True,
+                    evidence="; ".join(f"{i.get('Ip')} {i.get('Status')}: {i.get('StatusMessage', '')}"
+                                       for i in bad[:3])[:300],
+                    next="The endpoint runs with less capacity and fewer zones: replace the failed addresses.",
+                    source="Route 53 Resolver", check="resolver_ip")  # fmt: skip
+    configs = _pages(r, "list_resolver_query_log_configs", "ResolverQueryLogConfigs")
+    assoc = _pages(r, "list_resolver_query_log_config_associations", "ResolverQueryLogConfigAssociations")
+    logged = {a.get("ResourceId") for a in assoc if a.get("Status") in ("ACTIVE", "CREATING")}
+    ec2 = ctx.client("ec2", region)
+    vpcs = [v["VpcId"] for v in _pages(ec2, "describe_vpcs", "Vpcs") if not v.get("IsDefault")]
+    off = [v for v in vpcs if v not in logged]
+    if off:
+        ctx.ready(region, f"DNS query logging is off in {len(off)} VPC{'s' if len(off) > 1 else ''}",
+                  "Failed lookups (SERVFAIL, NXDOMAIN) and DNS Firewall blocks cannot be seen.",
+                  "Route 53 > Resolver > Query logging: log these VPCs to CloudWatch Logs.",
+                  permission="route53resolver:CreateResolverQueryLogConfig, "
+                  "route53resolver:AssociateResolverQueryLogConfig, logs:CreateLogDelivery")  # fmt: skip
+    groups = sorted({_group_name(c["DestinationArn"]) for c in configs
+                     if ":logs:" in (c.get("DestinationArn") or "") and c.get("Status") == "CREATED"})  # fmt: skip
+    if not groups:
+        return
+    sizes = _ingest_gb(ctx, region, ctx.start, ctx.end)
+    keep, big = _fit({g: sizes.get(g, 0.0) for g in groups}, SCAN_CAP_GB)
+    if big:
+        ctx.ready(region, "DNS query logs too large to search in this window",
+                  f"{', '.join(big[:3])} hold more than {SCAN_CAP_GB:.0f} GB for the window and the day before.",
+                  "Choose a shorter window, or search the group by hand in Logs Insights.")  # fmt: skip
+    if not keep:
+        return
+    gb = sum(sizes.get(g, 0.0) for g in keep)
+    q = f"stats count(*) as n by rcode, firewall_rule_action, bin({_bin(ctx)}) as bin"
+    now_rows = _insights(ctx, region, keep, q, ctx.start, ctx.end, gb)
+    base_rows = _insights(ctx, region, keep, "stats count(*) as n by rcode, firewall_rule_action",
+                          ctx.base_start, ctx.base_end, gb)  # fmt: skip
+
+    def total(rows, test):
+        return sum(float(x.get("n") or 0) for x in rows if test(x))
+
+    looks = [
+        ("SERVFAIL", lambda x: x.get("rcode") == "SERVFAIL", 200, 3, "high",
+         "Lookups are failing (SERVFAIL)", "The resolver could not get an answer: check forwarding rules, resolver "
+         "endpoints and the DNS servers they forward to.", 'filter rcode = "SERVFAIL"'),
+        ("NXDOMAIN", lambda x: x.get("rcode") == "NXDOMAIN", 1000, 5, "medium",
+         "Lookups for names that do not exist jumped (NXDOMAIN)", "A deleted record, a wrong endpoint name in a "
+         "release, or a private hosted zone no longer associated with the VPC.", 'filter rcode = "NXDOMAIN"'),
+        ("BLOCK", lambda x: x.get("firewall_rule_action") == "BLOCK", 100, 3, "medium",
+         "DNS Firewall is blocking more lookups", "A new block list entry or rule can stop real traffic: read the "
+         "names below against the rule groups.", 'filter firewall_rule_action = "BLOCK"'),
+    ]  # fmt: skip
+    for key, test, floor, factor, sev, title, nxt, flt in looks:
+        now, before = total(now_rows, test), total(base_rows, test)
+        if not _spike(now, before, floor, factor):
+            continue
+        per_bin = [{"bin": x["bin"], "n": x["n"]} for x in now_rows if test(x)]
+        merged: dict[str, float] = {}
+        for x in per_bin:
+            merged[x["bin"]] = merged.get(x["bin"], 0.0) + float(x["n"] or 0)
+        started = _first_bin([{"bin": b, "n": n} for b, n in merged.items()], "n",
+                             max(5.0, factor * before / _bins(ctx)))  # fmt: skip
+        names = ""
+        with contextlib.suppress(Exception):
+            hits = _insights(ctx, region, keep, f"{flt} | stats count(*) as n by query_name | sort n desc | limit 5",
+                             ctx.start, ctx.end, gb)  # fmt: skip
+            names = "; most: " + ", ".join(f"{h.get('query_name')} ×{int(float(h['n']))}" for h in hits[:4])
+        ctx.add(region, area="DNS", service="network", title=title, resource=", ".join(keep[:2]),
+                severity=sev if now < 10 * (before + floor / 10) or sev == "high" else "high",
+                started=_t(started), ongoing=True,
+                evidence=f"{int(now):,} {key} answers in the window against {int(before):,} the day before{names}",
+                next=nxt, source="Route 53 Resolver query logs", check=f"dns_{key.lower()}")  # fmt: skip
+
+
+def check_log_errors(ctx: Ctx, region: str) -> None:
+    """Error lines in the busiest application log groups, now against the same window a day earlier."""
+    sizes = {
+        g: gb for g, gb in _ingest_gb(ctx, region, ctx.start, ctx.end).items() if gb > 0 and not NOT_APP_LOGS.search(g)
+    }
+    busiest = dict(sorted(sizes.items(), key=lambda kv: -kv[1])[: LOG_GROUPS * 2])
+    keep, _big = _fit(busiest, SCAN_CAP_GB)
+    keep = sorted(keep, key=lambda g: -sizes[g])[:LOG_GROUPS]
+    if not keep:
+        return
+    gb = sum(sizes[g] for g in keep)
+    now_rows = _insights(ctx, region, keep, f"filter @message like {ERROR_RE} | stats count(*) as n by @log, "
+                         f"bin({_bin(ctx)}) as bin", ctx.start, ctx.end, gb)  # fmt: skip
+    base_rows = _insights(ctx, region, keep, f"filter @message like {ERROR_RE} | stats count(*) as n by @log",
+                          ctx.base_start, ctx.base_end, gb)  # fmt: skip
+
+    def name(r):
+        return _group_name((r.get("@log") or "").split(":", 1)[-1])
+
+    base = {name(r): float(r.get("n") or 0) for r in base_rows}
+    found = []
+    for g in keep:
+        rows = [r for r in now_rows if name(r) == g]
+        now, before = sum(float(r.get("n") or 0) for r in rows), base.get(g, 0.0)
+        if _spike(now, before, 100, 4):
+            found.append((g, rows, now, before))
+    for g, rows, now, before in sorted(found, key=lambda x: -(x[2] / (x[3] + 25)))[:8]:
+        sample = ""
+        with contextlib.suppress(Exception):
+            hits = _insights(ctx, region, [g], f"fields substr(@message, 0, 160) as msg | filter @message like "
+                             f"{ERROR_RE} | stats count(*) as n by msg | sort n desc | limit 3",
+                             ctx.start, ctx.end, sizes[g])  # fmt: skip
+            sample = "; most common: " + " | ".join(f"{_redact(h.get('msg') or '')} ×{int(float(h['n']))}"
+                                                    for h in hits[:2])  # fmt: skip
+        ctx.add(
+            region,
+            area="Logs",
+            service="app",
+            title=f"Errors jumped in log group {g}",
+            resource=g,
+            severity="high" if now >= 20 * (before + 25) else "medium",
+            started=_t(_first_bin(rows, "n", max(5.0, 4 * before / _bins(ctx)))),
+            ongoing=True,
+            evidence=(f"{int(now):,} error lines in the window against {int(before):,} the day before{sample}")[:500],
+            next="Read the first errors after the start time: they usually name the dependency that failed.",
+            source="CloudWatch Logs Insights",
+            check="log_errors",
+        )
+
+
+def check_risks(ctx: Ctx, regions: list[str]) -> None:
+    """The Outage Risk checks for this account: quotas near their limit, single points of failure, hot
+    databases. Not the live fault, but other issues the deep dive should name."""
+    from .. import outage as outage_report
+    from .outage import account_checks
+
+    raw, _issues = account_checks(ctx.clients.session, ctx.account, regions)
+    if not raw:
+        return
+    scan = {"accounts": [{"id": ctx.account, "name": ctx.name, "status": "ACTIVE", "ou_path": "-"}],
+            "outage": {"accounts": {ctx.account: raw}}}  # fmt: skip
+    # An account in an outage is treated as production: its name is its own production pattern.
+    report = outage_report.build_outage(
+        scan, a=outage_report.OutageAnswers(production_patterns=(ctx.name or ctx.account).replace(",", " ")[:200])
+    )
+    keys = ("rule", "title", "res", "region", "severity", "why", "note", "service_label", "area")
+    with ctx._lock:
+        ctx.risks.extend(
+            {"account": ctx.account, "account_name": ctx.name, **{k: f.get(k) for k in keys}}
+            for f in report.get("findings") or []
+            if f.get("severity") in ("critical", "high", "medium")
+        )
+
+
 # ------------------------------------------------------------------------------------------ runner
 def chain_metrics(ctx: Ctx, region: str) -> None:
     check_metrics(ctx, region)
@@ -1970,6 +2326,9 @@ def chain_metrics(ctx: Ctx, region: str) -> None:
 
 REGION_CHECKS = [  # the slowest first
     ("quotas", check_quotas),
+    ("logs", check_log_errors),
+    ("flowlogs", check_flowlogs),
+    ("dns", check_dns),
     ("cloudtrail", check_trail),
     ("metrics", chain_metrics),
     ("alarms", check_alarms),
@@ -2002,6 +2361,10 @@ CHECK_LABELS = {
     "health": "AWS Health events",
     "route53": "Route 53 health checks",
     "targets": "target health reasons",
+    "logs": "error spikes in application logs (Logs Insights)",
+    "flowlogs": "rejected traffic in VPC flow logs",
+    "dns": "Route 53 Resolver and DNS query logs",
+    "risks": "other risks (the Outage Risk checks)",
 }
 
 
@@ -2031,6 +2394,8 @@ def account_tasks(ctx: Ctx, regions: list[str]) -> list[tuple]:
     tasks = [(r, n, f) for r in regions for n, f in REGION_CHECKS]
     tasks.append(("us-east-1", "health", lambda c, _r, regs=regions: check_health(c, regs)))
     tasks.append(("global", "route53", check_route53))
+    if ctx.deep:
+        tasks.insert(0, ("global", "risks", lambda c, regs=regions: check_risks(c, regs)))
     return tasks
 
 
@@ -2042,4 +2407,7 @@ def result(ctx: Ctx, regions: list[str]) -> dict:
         "signals": ctx.signals,
         "changes": sorted(ctx.changes, key=lambda c: c["time"], reverse=True),
         "gaps": ctx.gaps,
+        "readiness": ctx.readiness,
+        "risks": ctx.risks,
+        "scanned_gb": round(ctx.scanned_gb, 2),
     }

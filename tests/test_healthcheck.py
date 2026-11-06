@@ -167,3 +167,23 @@ def test_saved_keys_read_their_own_account_without_a_role(monkeypatch):
     assert aws_session.member_session(base, "keys", "222222222222", None, "t") is base
     with pytest.raises(ValueError):
         aws_session.member_session(base, "keys", "999999999999", None, "t")
+
+
+def test_access_check_names_refused_reads_as_a_policy(monkeypatch):
+    from exitrisk import preflight
+
+    monkeypatch.setattr(healthcheck, "make_session", lambda p: object())
+    monkeypatch.setattr(healthcheck, "caller_identity", lambda s: {"account_id": "111111111111"})
+    monkeypatch.setattr(healthcheck, "_session_for", lambda *a: object())
+    monkeypatch.setattr(preflight, "probe_actions", lambda s, a, p: (["logs:StartQuery"], []) if a == "2" else ([], []))
+    r = healthcheck.check_access("keys", [{"id": "1", "name": "a"}, {"id": "2", "name": "b"}])
+    assert not r["ready"] and r["missing"] == ["logs:StartQuery"]
+    assert r["policy"]["Statement"][0]["Action"] == ["logs:StartQuery"]
+    assert healthcheck.check_access("keys", [{"id": "1", "name": "a"}])["ready"]
+
+
+def test_log_samples_are_redacted_and_spikes_need_a_floor():
+    assert hc._redact("card 4111111111111111 for a@b.co") == "card <n> for <email>"
+    assert hc._spike(600, 50, 500, 3) and not hc._spike(400, 0, 500, 3) and not hc._spike(900, 400, 500, 3)
+    keep, big = hc._fit({"small": 1.0, "huge": 100.0}, 60)
+    assert keep == ["small"] and big == ["huge"]

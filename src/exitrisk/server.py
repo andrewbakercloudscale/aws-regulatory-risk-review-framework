@@ -1035,6 +1035,21 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             log.warning("health check accounts failed: %s %s", err.code, err.msg, exc_info=not _aws_error(exc))
             raise err from exc
 
+    @app.post("/api/health-check/access")
+    def health_check_access(req: HealthCheckRequest):
+        """Each read the health check makes, tried once in each chosen account: what is refused, as a policy."""
+        try:
+            return healthcheck.check_access(req.profile or None, [a.model_dump() for a in req.accounts],
+                                            req.role_name or None)  # fmt: skip
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except sso.SSOFailure as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            err = UpstreamError(exc)
+            log.warning("health check access failed: %s %s", err.code, err.msg, exc_info=not _aws_error(exc))
+            raise err from exc
+
     @app.post("/api/health-check")
     def health_check_start(req: HealthCheckRequest):
         try:

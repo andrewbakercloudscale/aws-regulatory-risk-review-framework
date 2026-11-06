@@ -992,3 +992,4 @@ body[data-view="compromise"] #btnJumpAi { display: none; }
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .seg.sign-mode button[aria-pressed="true"] b { color: var(--accent); }
 @media (max-width: 520px) { .seg.sign-mode { grid-template-columns: 1fr; } }
+a.vtab { text-decoration: none; }

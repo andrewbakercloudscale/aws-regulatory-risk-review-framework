@@ -572,6 +572,11 @@ def _lower_to(f: dict, severity: str, why: str) -> None:
     f["why"] += f"; {why}"
 
 
+# Faults read over the lookback that are measured again for the last hour: once recovered they are history,
+# not an issue (a broker restart, a deployment, an incident already fixed).
+RECOVERS = {"msk_offline", "msk_under_replicated", "lb_no_healthy"}
+
+
 def _temper(f: dict, row: dict, profiles: dict) -> None:
     """Lower a finding the evidence beside it does not bear out, and say why. Critical and high are kept
     for what is likely to cause an outage at the peak; the rest stays listed, lower, with the reason."""
@@ -630,13 +635,8 @@ def _temper(f: dict, row: dict, profiles: dict) -> None:
     elif rule == "nat_drops" and (row.get("used") or 0) < NAT_DROPS:
         sev = "medium" if (row.get("used") or 0) >= MIN_EVENTS else "low"
         _lower_to(f, sev, "a few packets in 35 days: TCP sends them again, so nothing fails")
-    elif rule in ("msk_under_replicated", "lb_no_healthy") and not row.get("now"):
-        what = (
-            "it recovered: brief under-replication is what a broker restart, such as AWS patching, looks like"
-            if rule == "msk_under_replicated"
-            else "it recovered: a brief gap is usually a deployment or scale-in; check it is not a failing health check"
-        )
-        _lower_to(f, "medium", what)
+    elif rule in RECOVERS and not row.get("now") and ("now" in row or rule != "msk_offline"):  # older scans: no now
+        f["recovered"] = True  # a past fault that has since been fixed: not an issue to report
     elif rule in ("lambda_reserved", "lambda_pc_util"):
         prof = profiles.get(("lambda", res))
         rare = _rare(prof, "Throttles", "Invocations")
@@ -705,6 +705,15 @@ def _temper(f: dict, row: dict, profiles: dict) -> None:
 NON_PROD_WEIGHT = 0.1  # a non-production account's weight in the overall score
 
 
+def _offline_now(rows: list[dict]) -> None:
+    """Scans before the last hour was kept for offline partitions: an offline partition is also
+    under-replicated, so the cluster's under-replication now (read in the same scan) says whether it recovered."""
+    urp = {r["res"]: r["now"] for r in rows if r["rule"] == "msk_under_replicated" and "now" in r}
+    for r in rows:
+        if r["rule"] == "msk_offline" and "now" not in r and r["res"] in urp:
+            r["now"] = urp[r["res"]]
+
+
 def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak) -> tuple[list[dict], list[dict]]:
     points = catalog()["points"]
     prod_p = _patterns(a.production_patterns)
@@ -720,6 +729,7 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
         for c in raw.get("clusters") or []:
             rows += workload_rows(c, a)
         profiles = {(p["svc"], p["res"]): p for p in raw.get("profiles") or []}
+        _offline_now(rows)
         found = []
         for row in rows:
             rule = rules.get(row["rule"])
@@ -737,6 +747,8 @@ def _accounts_and_findings(scan, accounts, checked, rules, a, peak, days_to_peak
                     f["why"] = f"{f['why']}; {advice}"
                     f["advice"] = advice
                 _temper(f, based, profiles)
+                if f.get("recovered"):
+                    continue
                 found.append(
                     {
                         **f,

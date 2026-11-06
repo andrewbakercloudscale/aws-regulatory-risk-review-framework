@@ -354,7 +354,11 @@ def msk_profile(ctx: OutageCtx, client, c: dict, region: str, m: dict) -> None:
         )
     off = m["msk_offline"].get(name)
     if off and off.n and off.high > 0:
-        ctx.add("msk_offline", name, region, used=round(off.high), unit="partitions offline at the worst")
+        now = round(off.last) if off.last > 0 else 0  # offline in the last hour; 0 means it recovered
+        ctx.add(
+            "msk_offline", name, region, used=round(off.high), unit="partitions offline at the worst", now=now,
+            note=f"{now} still offline in the last hour" if now else "none offline in the last hour",
+        )  # fmt: skip
     mb = 1 / 1024**2
     stats = [
         stat(_busiest(m["msk_disk"], name), "Fullest broker disk", "%", limit=100),

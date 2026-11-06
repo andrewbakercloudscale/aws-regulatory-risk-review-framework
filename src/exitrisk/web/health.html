@@ -37,6 +37,10 @@
     .hc-signin { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 13px; }
     @media (max-width: 760px) { .hc-form { grid-template-columns: 1fr; } table.hc-top td.why { min-width: 220px; } }
     @media print { .hc-setup, .hc-runs-card { display: none !important; } details.hc-more { display: block; } details.hc-more > summary { display: none; } }
+    .hc-access { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--surface-2); }
+    .hc-access p { margin: 4px 0; }
+    .hc-ok { color: var(--good, #1a7f37); font-weight: 600; }
+    .hc-policy { max-height: 260px; overflow: auto; font-size: 12px; background: var(--surface); padding: 10px; border-radius: 8px; border: 1px solid var(--border); }
   </style>
   <script src="/static/health.js" defer></script>
 </head>
@@ -56,7 +60,7 @@
 <main class="report">
   <section class="card hc-setup no-print" aria-labelledby="hcSetupTitle">
     <h2 id="hcSetupTitle">What is wrong, and where?</h2>
-    <p class="muted small">Pick the accounts having trouble. The check reads every region in use: alarms, AWS Health, recent changes, refused calls, load balancers, containers, functions, databases, queues, networks, certificates, DNS and quotas, then ranks the ten most likely causes. Read only.</p>
+    <p class="muted small">Pick the accounts having trouble. The check reads every region in use: alarms, AWS Health, recent changes, refused calls, load balancers, containers, functions, databases, queues, networks, certificates, DNS, VPC flow logs, error spikes in the busiest log groups (Logs Insights) and quotas, then ranks the ten most likely causes. It also runs the Outage Risk checks for other issues in the accounts, and lists data sources to turn on. Read only; Logs Insights is billed by AWS at US$0.005 a GB read.</p>
     <div class="hc-form">
       <div class="field">
         <label for="hcProfile">Credentials</label>
@@ -87,9 +91,11 @@
       </div>
       <div class="span-2 hc-row">
         <button id="hcRun" class="btn primary" disabled>Run health check</button>
+        <button id="hcAccessBtn" class="btn" disabled title="Try each read once in each ticked account and list any permission missing">Check access</button>
         <button id="hcStop" class="btn" hidden>Stop</button>
         <span id="hcError" class="error-text" role="alert"></span>
       </div>
+      <div id="hcAccess" class="span-2 hc-access" hidden></div>
       <div id="hcProgress" class="span-2 progress" hidden>
         <div class="muted small" id="hcProgMsg"></div>
         <div class="bar"><div id="hcProgBar"></div></div>

@@ -3400,7 +3400,7 @@
   function setView(v) {
     state.view = VIEWS.includes(v) ? v : "exit";
     document.body.dataset.view = state.view;
-    for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
+    for (const b of document.querySelectorAll(".vtab[data-view]")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
     syncLoading();
     $("#content").hidden = state.view !== "exit" || !state.report;
     $("#mrContent").hidden = state.view !== "multiregion" || !state.mr;
@@ -3793,7 +3793,7 @@
   function bindMultiRegion() {
     $("#btnMrRetry").addEventListener("click", () => loadMultiRegion());
     $("#btnMrLog").addEventListener("click", () => $("#btnLogs").click());
-    for (const b of document.querySelectorAll(".vtab")) b.addEventListener("click", () => setView(b.dataset.view));
+    for (const b of document.querySelectorAll(".vtab[data-view]")) b.addEventListener("click", () => setView(b.dataset.view));
     $("#mrForm").addEventListener("change", (ev) => {
       const el = ev.target;
       state.mrConfirmed = true;
@@ -4978,7 +4978,7 @@
     fillQuestionnaire(loadQuestionnaire());
     state.view = VIEWS.includes(params.get("view")) ? params.get("view") : "exit";
     document.body.dataset.view = state.view;
-    for (const b of document.querySelectorAll(".vtab")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
+    for (const b of document.querySelectorAll(".vtab[data-view]")) b.setAttribute("aria-pressed", String(b.dataset.view === state.view));
     bindMultiRegion();
     bindAssurance();
     bindOutage();
