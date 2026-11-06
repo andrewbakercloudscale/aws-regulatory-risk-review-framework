@@ -30,12 +30,12 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, preflight, rulesets, schedule, sso, store
+from . import __version__, healthcheck, preflight, rulesets, schedule, sso, store
 from .ai import insights as ai_insights
 from .ai import providers as ai_providers
 from .ai import review as ai_review
 from .assurance import AssuranceAnswers, build_assurance, evidence, ownership_export
-from .aws_session import available_profiles, make_session, profile_accounts
+from .aws_session import available_profiles, make_session, profile_accounts, profile_details
 from .build_info import build_info
 from .catalog import load_catalog
 from .collectors import organizations
@@ -126,6 +126,20 @@ class CompromiseRequest(BaseModel):
 
 class CompromiseRunRequest(BaseModel):
     accounts: list[Annotated[str, Field(pattern=r"^\d{12}$")]] = Field(min_length=1, max_length=40)
+
+
+class HealthAccount(BaseModel):
+    id: str = Field(..., pattern=r"^\d{12}$")
+    name: str = Field("", max_length=200)
+
+
+class HealthCheckRequest(BaseModel):
+    profile: str | None = Field(None, max_length=200)
+    accounts: list[HealthAccount] = Field(min_length=1, max_length=healthcheck.MAX_ACCOUNTS)
+    hours: float = 6
+    symptoms: str = Field("", max_length=2000)
+    role_name: str | None = Field(None, max_length=64, pattern=r"^[A-Za-z0-9+=,.@_/-]*$")
+    regions: list[Annotated[str, Field(pattern=r"^[a-z]{2}(-[a-z]+)+-\d$")]] | None = None
 
 
 class SSOSessionRequest(BaseModel):
@@ -315,11 +329,14 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
             "scans_running": running_scans(),
             "reviews_running": ai_review.running_reviews(),
             "insights_running": ai_insights.running(),
+            "health_checks_running": healthcheck.running(),
         }
 
     @app.get("/api/profiles")
     def profiles():
-        return {"profiles": available_profiles(), "accounts": profile_accounts()}
+        details = profile_details()
+        names = sorted(set(available_profiles()) | set(details))
+        return {"profiles": names, "accounts": profile_accounts(), "details": details}
 
     @app.get("/api/sign-in")
     def sign_in_state(profile: str | None = None):
@@ -1005,6 +1022,63 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
     @app.get("/api/logs")
     def logs(lines: int = 200, run_id: str | None = None):
         return {"records": tail_log(min(max(lines, 1), 2000), run_id)}
+
+    # ------------------------------------------------------------------ health check
+    @app.get("/api/health-check/accounts")
+    def health_check_accounts(profile: str | None = None, role_name: str | None = None):
+        try:
+            return healthcheck.reachable_accounts(profile or None, role_name or None)
+        except sso.SSOFailure as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            err = UpstreamError(exc)
+            log.warning("health check accounts failed: %s %s", err.code, err.msg, exc_info=not _aws_error(exc))
+            raise err from exc
+
+    @app.post("/api/health-check")
+    def health_check_start(req: HealthCheckRequest):
+        try:
+            job = healthcheck.start(
+                req.profile or None,
+                [a.model_dump() for a in req.accounts],
+                req.hours,
+                req.symptoms,
+                req.role_name or None,
+                req.regions or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return job.snapshot()
+
+    @app.get("/api/health-checks")
+    def health_check_list():
+        return {"runs": healthcheck.list_runs(), "running": healthcheck.running()}
+
+    @app.get("/api/health-check/{run_id}")
+    def health_check_get(run_id: str):
+        job = healthcheck.get_job(run_id)
+        if job and job.status == "running":
+            return {"run": job.snapshot(), "report": None}
+        try:
+            doc = healthcheck.load(run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "no such health check") from exc
+        return {"run": job.snapshot() if job else {"id": run_id, "status": doc.get("status")},
+                "report": healthcheck.build_report(doc)}  # fmt: skip
+
+    @app.delete("/api/health-check/{run_id}")
+    def health_check_delete(run_id: str):
+        if healthcheck.cancel(run_id):
+            return {"cancelled": True}
+        try:
+            healthcheck.delete(run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "no such health check") from exc
+        return {"deleted": True}
+
+    @app.get("/health")
+    def health_page():
+        return FileResponse(str(WEB_DIR.joinpath("health.html")), headers={"Cache-Control": "no-store"})
 
     @app.get("/")
     def index():

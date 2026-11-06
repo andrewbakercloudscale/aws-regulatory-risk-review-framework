@@ -2,12 +2,15 @@
 
 Credentials come from a named profile in ``~/.aws/config``. That includes profiles backed
 by a ``credential_process`` such as aws-cli-zsp: boto3 runs the process, the user approves
-with Touch ID once, and the 1-hour session it returns is reused for the whole scan. The
-tool never reads, stores or logs the keys themselves.
+with Touch ID once, and the 1-hour session it returns is reused for the whole scan. Access keys
+saved in ``~/.aws/credentials`` work too: the profile pickers show the key id masked; the tool
+never stores, sends or logs a secret key.
 """
 
 from __future__ import annotations
 
+import configparser
+import os
 import random
 import threading
 import time
@@ -149,6 +152,51 @@ def profile_accounts() -> dict[str, str]:
         log.exception("could not read AWS profiles")
         return {}
     return {name: str(cfg["sso_account_id"]) for name, cfg in profiles.items() if cfg.get("sso_account_id")}
+
+
+def _mask(key_id: str) -> str:
+    return f"{key_id[:4]}…{key_id[-4:]}" if len(key_id) > 8 else "…"
+
+
+def profile_details() -> dict[str, dict]:
+    """How each profile signs in, for the profile pickers: an access key (shown masked, never the secret), an
+    IAM Identity Center sign-in, a role it assumes, or a credential process. Reads ~/.aws/credentials as
+    well as ~/.aws/config, so a key someone gave you appears once it is saved with ``aws configure``."""
+    try:
+        s = botocore.session.Session()
+        config = s.full_config.get("profiles", {})
+        creds_file = os.path.expanduser(s.get_config_variable("credentials_file") or "~/.aws/credentials")
+    except Exception:
+        log.exception("could not read AWS profiles")
+        return {}
+    parser = configparser.RawConfigParser()
+    try:
+        parser.read(creds_file)
+    except (configparser.Error, OSError):
+        log.warning("could not read %s", creds_file)
+    out: dict[str, dict] = {}
+    for name in sorted(set(config) | set(parser.sections())):
+        cfg = {**(config.get(name) or {}), **(dict(parser.items(name)) if parser.has_section(name) else {})}
+        key = cfg.get("aws_access_key_id") or ""
+        if cfg.get("sso_session") or cfg.get("sso_start_url"):
+            kind, label = "sso", f"SSO {cfg.get('sso_role_name') or ''}".strip()
+        elif cfg.get("role_arn"):
+            kind, label = "role", f"assumes {cfg['role_arn'].split(':')[-1]}"
+        elif key:
+            kind = "session key" if cfg.get("aws_session_token") else "access key"
+            label = f"{kind} {_mask(key)}"
+        elif cfg.get("credential_process"):
+            kind, label = "process", "credential process"
+        else:
+            kind, label = "other", ""
+        out[name] = {
+            "kind": kind,
+            "label": label,
+            "account": str(cfg.get("sso_account_id") or "") or None,
+            "region": cfg.get("region") or cfg.get("sso_region"),
+            "key": _mask(key) if key else None,
+        }
+    return out
 
 
 def make_session(profile: str | None, region: str | None = None) -> boto3.Session:
