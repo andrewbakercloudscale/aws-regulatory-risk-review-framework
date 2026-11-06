@@ -364,3 +364,8 @@ def test_a_cluster_operation_explains_the_partition_trouble_inside_it():
                check="msk_urp", started="2026-01-01T06:05:00+00:00")  # fmt: skip
     out = healthcheck.rank([op, urp], [], "", "2026-01-01T06:00:00+00:00")
     assert len(out) == 1 and out[0]["title"].startswith("Kafka cluster orders") and out[0]["likelihood"] == "high"
+
+
+def test_a_function_that_keeps_load_balancer_targets_current_is_routine():
+    assert hc.is_routine("DeregisterTargets", "nlb-role (shop-update-targets)")
+    assert not hc.is_routine("DeregisterTargets", "deployer")

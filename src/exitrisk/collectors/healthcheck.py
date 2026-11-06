@@ -757,7 +757,8 @@ HOUSEKEEPING = re.compile(
 # balancer targets, volumes, DNS records). Their changes stay listed but are routine, not risky.
 CONTROLLERS = re.compile(
     r"(karpenter|cluster-autoscaler|aws-load-balancer-controller|load-balancer-controller|ebs-csi|efs-csi|"
-    r"external-dns|aws-node|vpc-cni|AWSServiceRoleForAutoScaling|AmazonEKS)",
+    r"external-dns|aws-node|vpc-cni|AWSServiceRoleForAutoScaling|AmazonEKS|"
+    r"update-?targets|target-?updater|populate-?nlb|nlb-?populate)",  # functions that keep NLB IP targets current
     re.I,
 )
 

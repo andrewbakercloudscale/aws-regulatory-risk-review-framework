@@ -353,7 +353,7 @@ PROBES: list[dict] = [
       svc="network", title="Transit gateway {r} drops traffic it has no route for",
       next="A route was removed or never added: compare the route tables with recent changes."),
     P("resolver_eni", "AWS/Route53Resolver", ["EndpointId"], "EndpointUnhealthyENICount", "high", at=1,
-      sustain=2, sev="high", role="cause", area="DNS", svc="network",
+      sustain=3, sev="medium", role="cause", area="DNS", svc="network",
       title="Resolver endpoint {r} has unhealthy addresses",
       next="DNS forwarding through it fails in part: check the endpoint's subnets and security group."),
     P("resolver_capacity", "AWS/Route53Resolver", ["EndpointId"], "ResolverEndpointCapacityStatus", "high", at=2,
@@ -863,8 +863,9 @@ def check_routes(ctx: Ctx, region: str) -> None:
         ctx.add(region, area="Network", service="network", role="cause",
                 title=f"Route table {name} sends traffic to a target that no longer exists",
                 resource=f"{rt['RouteTableId']} {rt.get('VpcId', '')}",
-                severity="medium" if subnets else "low", started=None, ongoing=True,
-                evidence=f"blackhole routes: {dests}; used by {len(subnets)} subnet association(s)",
+                severity="medium" if subnets else "low", started=None, ongoing=True, chronic=True,
+                evidence=f"blackhole routes: {dests}; used by {len(subnets)} subnet association(s). How long it has "
+                         "been so is unknown: a deletion in the window shows under Changes",
                 next="Traffic to those addresses is dropped. If it should flow, point the route at the new NAT "
                      "gateway, transit gateway or peering; if not, delete the route.",
                 source="EC2 route tables", check="route_blackhole",
@@ -883,8 +884,9 @@ def check_routes(ctx: Ctx, region: str) -> None:
                 ctx.add(region, area="Network", service="network", role="cause",
                         title=f"Transit gateway route table {rtb['TransitGatewayRouteTableId']} has blackhole routes",
                         resource=f"{tgw['TransitGatewayId']} {rtb['TransitGatewayRouteTableId']}",
-                        severity="medium", started=None, ongoing=True,
-                        evidence="dropped: " + ", ".join(r.get("DestinationCidrBlock") or "" for r in routes[:6]),
+                        severity="low", started=None, ongoing=True, chronic=True,
+                        evidence="dropped: " + ", ".join(r.get("DestinationCidrBlock") or "" for r in routes[:6])
+                        + ". Static blackhole routes are often deliberate (to block a range)",
                         next="Traffic to those ranges is dropped by the transit gateway: fix or remove the routes.",
                         source="Transit gateway", check="tgw_blackhole_route")  # fmt: skip
     for ep in _pages(ec2, "describe_vpc_endpoints", "VpcEndpoints", 1000):
