@@ -6,6 +6,8 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-06
+
 ### Added
 - Outage Risk: Aurora Serverless findings say the current minimum and maximum ACUs and what to set the maximum to: the busiest hour's CPU in ACUs, at the expected peak load, with the warning level's headroom (for example "now 4 to 128 ACUs ... raise the maximum to 200 ACUs"). Past 256 ACUs, the most Serverless v2 allows, it says to move reads to a reader or the writer to a provisioned class.
 - Outage Risk: Risk by owner opens the report. One bubble per owner, up = the risk points of all their accounts, right = their monthly spend as a proxy for importance, size = how many accounts they own; start at the top right. Selecting an owner lists their findings, and the findings search now matches owners.
