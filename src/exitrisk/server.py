@@ -571,7 +571,9 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         pair = sso.profile_permission_set(params.get("profile"))
         if pair and not sso.load_token(pair[0]):
             raise HTTPException(401, f"Your AWS sign-in ({pair[0]}) has ended. Sign in again, then run the checks.")
-        params["label"] = f"Developer compromise, {len(req.accounts)} account(s)"[:120]
+        params["label"] = f"Developer Compromise: {len(req.accounts)} account{'s' if len(req.accounts) != 1 else ''}"[
+            :120
+        ]
         try:
             job = start_scan(ScanParams(**params, completes=scan_id, compromise_accounts=sorted(set(req.accounts))))
         except ValueError as exc:

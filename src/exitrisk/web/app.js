@@ -3712,6 +3712,7 @@
       if (!on && box.checked) box.checked = false;
     }
     const names = [exit && "exit risk", mr && "multi-region", assurance && "cloud assurance", outage && "outage risk"].filter(Boolean);
+    $("#scanForm").label.placeholder = `${scanType() || "Report"}: e.g. Q4 board pack`;
     $("#scanWhat").textContent = names.length ? `For the ${names.join(", ")} report${names.length > 1 ? "s" : ""}.` : "";
     state.scanNoReport = !names.length && !state.runningScan;
     if (!state.scanNoReport && $("#scanError").textContent === NO_REPORT) $("#scanError").textContent = "";
@@ -3719,6 +3720,16 @@
     showScanRunning();
   }
   const NO_REPORT = "Tick at least one report.";
+  // The scan's label always names the reports it is for, so the scan list tells an outage scan from an exit one.
+  function scanType() {
+    return [["#sRepExit", "Exit Risk"], ["#sRepMr", "Multi-Region"], ["#sAssurance", "Cloud Assurance"], ["#sOutage", "Outage Risk"]]
+      .filter(([id]) => $(id).checked).map(([, n]) => n).join(" + ");
+  }
+  function scanLabel(text) {
+    const type = scanType(), own = (text || "").trim();
+    if (!own) return type;
+    return !type || own.toLowerCase().includes(type.toLowerCase()) ? own : `${type}: ${own}`;
+  }
 
   // New scan always starts from the sign-in: nothing is read with a sign-in that has ended, and the
   // sign-in opens by itself. The OUs load once it is live.
@@ -3829,7 +3840,7 @@
       inventory: $("#sRepExit").checked && f.depth.value !== "quick", dependencies: $("#sRepExit").checked && f.depth.value === "dependency",
       inventory_scope: $("#sRepExit").checked && f.material_only.checked ? "material" : "all", role_name: f.role_name.value || null,
       region_scope: f.spend_regions.checked ? "spend" : "all",
-      regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: f.label.value,
+      regions: f.regions.value ? f.regions.value.split(",").map((s) => s.trim()).filter(Boolean) : null, label: scanLabel(f.label.value).slice(0, 120),
       target: f.target.value || "azure", assurance: f.assurance.checked, outage: f.outage.checked,
     };
     $("#qForm").target.value = body.target;

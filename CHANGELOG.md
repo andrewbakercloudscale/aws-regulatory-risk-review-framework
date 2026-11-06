@@ -6,6 +6,12 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-06
+
+### Changed
+- New scan: the label always names the report type, put in front of your own text ("Outage Risk: Q4 board pack"), or on its own when the label is left blank, so the scan list tells the reports apart.
+- New scan and Check access: the member account role field no longer shows ExitRiskReadOnly as if it were expected. Blank, the default, reads each account with your sign-in's permission set; the hint says when a role name is needed.
+
 ### Added
 - Outage Risk: end of life software, a new area. Database engines (RDS and Aurora PostgreSQL, MySQL, MariaDB) against AWS's published standard and Extended Support dates, high when AWS forces the major upgrade within 180 days; Redis OSS 4 and 5 in ElastiCache Extended Support; MSK on a deprecated Kafka version; EKS versions where AWS upgrades the control plane itself, and node groups on Amazon Linux 2 images; operating systems from Systems Manager against vendor end of support dates (instances it does not manage are counted, not guessed).
 - Outage Risk: container images, a new area. EKS workloads pulling from a registry other than ECR, pulling again on every start (Always, latest or no tag), or waiting on a failed pull; ECS services with images outside ECR and tasks stopped because the image could not be pulled. Needs the scan identity to have a read only access entry on the cluster.
