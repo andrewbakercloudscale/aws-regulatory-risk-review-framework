@@ -193,3 +193,22 @@ def test_a_search_that_cannot_be_read_whole_is_shown_as_not_measured(monkeypatch
     assert fixed["status"] == "unknown" and "disk_used in eu-west-1" in fixed["note"]  # the report counts it unread
     ctx.r.ok("fixed")  # the other reads passed: still shown as measured only in part
     assert "not measured" in ctx.r.finish()["fixed"]["note"]
+
+
+def test_aws_default_quotas_are_read_once_per_region_and_service():
+    from exitrisk.collectors import outage
+
+    calls = []
+
+    class SQ:
+        def can_paginate(self, op):
+            return False
+
+        def list_aws_default_service_quotas(self, **kw):
+            calls.append(kw["ServiceCode"])
+            return {"Quotas": [{"QuotaCode": "L-1", "Value": 5.0}]}
+
+    for _ in range(3):
+        assert outage._default_quotas(SQ(), "eu-west-1", "ec2") == [{"QuotaCode": "L-1", "Value": 5.0}]
+    outage._default_quotas(SQ(), "us-east-1", "ec2")
+    assert calls == ["ec2", "ec2"]

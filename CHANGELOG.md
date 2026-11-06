@@ -6,6 +6,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- Outage Risk: scans are about three times faster per account. Service quotas took most of each account's time: AWS's default quotas, the same in every account (EC2 alone lists about 1,750, 100 to a page), are now read once per region and service instead of again in every account, and the services of a region are read four at a time.
+
 ## [0.31.0] - 2026-11-06
 
 ### Changed

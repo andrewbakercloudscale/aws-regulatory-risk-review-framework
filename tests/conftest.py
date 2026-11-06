@@ -32,3 +32,12 @@ def _fresh_ou_tree_cache():
 
     organizations.clear_tree_cache()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _fresh_quota_defaults():
+    """AWS's default quotas are kept for the process; one test's fake answers must not reach the next."""
+    from exitrisk.collectors import outage
+
+    outage.clear_quota_defaults()
+    yield

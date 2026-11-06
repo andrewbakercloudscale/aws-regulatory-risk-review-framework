@@ -618,24 +618,63 @@ def _short(arn_or_id: str) -> str:
 
 
 # ------------------------------------------------------------------------------------------ limits
+# AWS's default quotas are the same in every account of a region, so they are read once per region and
+# service for the life of the process, not again in each of hundreds of accounts. Only the values applied
+# in the account are read per account. EC2 alone lists about 1,750 quotas, 100 to a page.
+_DEFAULTS: dict[tuple[str, str], list[dict]] = {}
+_DEFAULTS_LOCK = threading.Lock()
+_DEFAULTS_KEYS: dict[tuple[str, str], threading.Lock] = {}
+QUOTA_WORKERS = 4  # services read at once in a region; Service Quotas throttles beyond a few calls a second
+
+
+def clear_quota_defaults() -> None:
+    with _DEFAULTS_LOCK:
+        _DEFAULTS.clear()
+        _DEFAULTS_KEYS.clear()
+
+
+def _default_quotas(sq, region: str, code: str) -> list[dict]:
+    key = (region, code)
+    with _DEFAULTS_LOCK:
+        if key in _DEFAULTS:
+            return _DEFAULTS[key]
+        one = _DEFAULTS_KEYS.setdefault(key, threading.Lock())
+    with one:  # one account reads it; the others in this region wait for that read
+        with _DEFAULTS_LOCK:
+            if key in _DEFAULTS:
+                return _DEFAULTS[key]
+        found = _pages(sq, "list_aws_default_service_quotas", "Quotas", ServiceCode=code)
+        if found:  # an empty answer is not kept: the next account asks again
+            with _DEFAULTS_LOCK:
+                _DEFAULTS[key] = found
+        return found
+
+
+def _service_quotas(sq, region: str, code: str) -> dict[str, dict] | None:
+    try:
+        quotas = {q["QuotaCode"]: dict(q) for q in _default_quotas(sq, region, code)}
+        for q in _pages(sq, "list_service_quotas", "Quotas", ServiceCode=code):
+            # An applied quota has the value; the default list has the usage metric, and either may lack it.
+            quotas[q["QuotaCode"]] = {**quotas.get(q["QuotaCode"], {}), **{k: v for k, v in q.items() if v}}
+    except ClientError as exc:
+        if _code(exc) in ("NoSuchResourceException", *_NOT_HERE):
+            return None
+        raise
+    return quotas
+
+
 def task_quotas(ctx: OutageCtx, region: str) -> None:
     """Every quota that publishes a usage metric, against the value that applies in this account."""
     sq = ctx.client("service-quotas", region)
     found: list[tuple[str, dict]] = []
-    for code, needs in QUOTA_SERVICES.items():
-        if needs and not ctx.billed(needs):
+    codes = [code for code, needs in QUOTA_SERVICES.items() if not needs or ctx.billed(needs)]
+    base = contextvars.copy_context()  # each thread runs in its own copy, so log lines keep the scan's run id
+    with ThreadPoolExecutor(max_workers=QUOTA_WORKERS) as pool:
+        futures = [pool.submit(base.copy().run, _service_quotas, sq, region, code) for code in codes]
+        read = [f.result() for f in futures]
+    for code, quotas in zip(codes, read, strict=True):
+        if quotas is None:
             continue
-        try:
-            quotas = {
-                q["QuotaCode"]: q for q in _pages(sq, "list_aws_default_service_quotas", "Quotas", ServiceCode=code)
-            }
-            for q in _pages(sq, "list_service_quotas", "Quotas", ServiceCode=code):
-                # An applied quota has the value; the default list has the usage metric, and either may lack it.
-                quotas[q["QuotaCode"]] = {**quotas.get(q["QuotaCode"], {}), **{k: v for k, v in q.items() if v}}
-        except ClientError as exc:
-            if _code(exc) in ("NoSuchResourceException", *_NOT_HERE):
-                continue
-            raise
         for q in quotas.values():
             with ctx._lock:
                 if q.get("Value"):
@@ -771,11 +810,10 @@ def task_s3_limits(ctx: OutageCtx) -> None:
     buckets = ctx.client("s3").list_buckets().get("Buckets") or []
     sq = ctx.client("service-quotas", ctx.home)
     limit = None
-    for op in ("list_aws_default_service_quotas", "list_service_quotas"):
-        for q in _pages(sq, op, "Quotas", ServiceCode="s3"):
-            name = q.get("QuotaName", "").lower()
-            if q.get("Value") and "bucket" in name and ("general purpose" in name or name == "buckets"):
-                limit = q["Value"]
+    for q in _default_quotas(sq, ctx.home, "s3") + _pages(sq, "list_service_quotas", "Quotas", ServiceCode="s3"):
+        name = q.get("QuotaName", "").lower()
+        if q.get("Value") and "bucket" in name and ("general purpose" in name or name == "buckets"):
+            limit = q["Value"]
     if limit:
         ctx.add(
             "limit_s3",
@@ -881,10 +919,12 @@ def task_connect(ctx: OutageCtx, region: str) -> None:
         ctx.r.ok("connect")
         return
     quotas = {}
-    for op in ("list_aws_default_service_quotas", "list_service_quotas"):
-        for q in _pages(ctx.client("service-quotas", region), op, "Quotas", ServiceCode="connect"):
-            if q.get("Value"):
-                quotas[q.get("QuotaName", "").lower()] = q["Value"]
+    sq = ctx.client("service-quotas", region)
+    for q in _default_quotas(sq, region, "connect") + _pages(
+        sq, "list_service_quotas", "Quotas", ServiceCode="connect"
+    ):
+        if q.get("Value"):
+            quotas[q.get("QuotaName", "").lower()] = q["Value"]
     m = ctx.metrics(region)
     for inst in instances:
         iid, name = inst["Id"], inst.get("InstanceAlias") or inst["Id"]
