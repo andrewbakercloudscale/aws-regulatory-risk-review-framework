@@ -83,14 +83,28 @@
     state.chosen.clear();
     renderChosen();
     $("#hcSearch").disabled = true;
-    $("#hcAcctList").innerHTML = `<label class="muted">Finding the accounts these credentials reach…</label>`;
+    $("#hcSearch").placeholder = "Loading accounts, one moment…";
     const mine = ++acctReq;
+    const sso = state.details[profile]?.kind === "sso";
+    const t0 = Date.now();
+    $("#hcAcctList").innerHTML = `<div class="busy" role="status" aria-live="polite"><div class="busy-head"><span class="spin" aria-hidden="true"></span>`
+      + `<span>Finding the accounts these credentials reach…</span><span class="busy-time" id="hcAcctTime">0s</span></div>`
+      + `<div class="busy-sub">${sso ? "Reading the account list from your access portal; a large organisation takes 10 to 20 seconds." : "Asking AWS which accounts this key can read."} Search opens when it is done.</div>`
+      + `<span class="busy-bar"><i></i></span></div>`;
+    const timer = setInterval(() => {
+      const el = $("#hcAcctTime");
+      if (!el || mine !== acctReq) return clearInterval(timer);
+      el.textContent = `${Math.round((Date.now() - t0) / 1000)}s`;
+    }, 500);
+    const done = () => { clearInterval(timer); if (mine === acctReq) $("#hcSearch").placeholder = "Type to search"; };
     try {
       const q = new URLSearchParams({ profile, role_name: $("#hcRole").value.trim() });
       const r = await api(`/api/health-check/accounts?${q}`);
       if (mine !== acctReq) return;
+      done();
       state.accounts = r.accounts || [];
       $("#hcSearch").disabled = false;
+      $("#hcSearch").focus();
       if (state.accounts.length === 1) state.chosen.set(state.accounts[0].id, state.accounts[0]);
       let note = "";
       if (r.needs_role) note = `These credentials can list ${plural(state.accounts.length, "account")} in the organisation, but reach only ${r.caller.account_id} directly. To check another, give a role to assume above.`;
@@ -100,6 +114,7 @@
       renderChosen();
     } catch (e) {
       if (mine !== acctReq) return;
+      done();
       $("#hcAcctList").innerHTML = "";
       showAccessError(e, profile);
     }
