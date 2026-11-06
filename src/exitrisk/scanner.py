@@ -139,15 +139,6 @@ class ScanParams:
             raise ValueError(f"region_scope must be one of {', '.join(REGION_SCOPES)}")
         if not 1 <= self.months <= 12:
             raise ValueError("months must be between 1 and 12")
-        if (
-            (self.inventory or self.assurance or self.outage)
-            and not self.role_name
-            and not sso.profile_permission_set(self.profile)
-        ):
-            raise ValueError(
-                "a member-account role name is required for the resource inventory, assurance and outage risk checks "
-                "(or use an IAM Identity Center profile, whose permission set is then used in each account)"
-            )
 
 
 # How long a deep scan waits for the user to sign in again when the sign-in ends part-way.
@@ -1112,6 +1103,19 @@ def _each_account(
     saved_at = time.monotonic()
 
     pair = None if p.role_name else sso.profile_permission_set(p.profile)
+    if not p.role_name and not pair and any(a.id != caller for a in active):
+        # Saved keys with no role reach their own account only: deep-read that one, and say so once.
+        if not any(i.category == "inventory" and i.message.startswith("Keys without a role") for i in job.issues):
+            job.add_issue(
+                Issue(
+                    "info",
+                    "inventory",
+                    f"Keys without a role read their own account ({caller}) only, so the deep checks cover that "
+                    "account.",
+                    "Give a member role to assume to deep-read the other accounts.",
+                )
+            )
+        active = [a for a in active if a.id == caller]
     access = p.role_name or (f"permission set {pair[1]}" if pair else "your sign-in")
     if pair and not any(i.category == "inventory" and i.message.startswith("Heads up") for i in job.issues):
         job.add_issue(

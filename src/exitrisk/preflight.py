@@ -558,8 +558,9 @@ def run_checks(
     except Exception as exc:
         code = describe_exception(exc)[0]
         if code == "AWSOrganizationsNotInUseException":
+            ctx["standalone"] = True
             checks.append(
-                Check("organization", "Management account", "warn", "This account is not in an AWS organisation.")
+                Check("organization", "Management account", "ok", "This account is not in an AWS organisation.")
             )
         else:
             checks.append(_fail("organization", "Management account", exc, "organizations:DescribeOrganization"))
@@ -572,14 +573,34 @@ def run_checks(
             Check("ou_tree", "Read the OU tree", "ok", f"Root {root_id}; {len(ous)} top-level OU(s) readable")
         )
     except Exception as exc:
-        checks.append(
-            _fail(
-                "ou_tree",
-                "Read the OU tree",
-                exc,
-                "organizations:ListRoots, organizations:ListOrganizationalUnitsForParent",
+        code = describe_exception(exc)[0]
+        if ctx.get("standalone") or (
+            code in DENIED | {"AWSOrganizationsNotInUseException"}
+            and ctx.get("management_account_id") != ctx["account_id"]
+        ):
+            # A key into one account (your own, or a customer's): the scan covers that account, as the
+            # scanner does when Organizations refuses. Not a fault, so nothing here blocks it.
+            ctx["single_account"] = True
+        else:
+            checks.append(
+                _fail(
+                    "ou_tree",
+                    "Read the OU tree",
+                    exc,
+                    "organizations:ListRoots, organizations:ListOrganizationalUnitsForParent",
+                )
             )
-        )
+    if ctx.get("single_account"):
+        own = ctx["account_id"]
+        for i, c in enumerate(checks):
+            if c.id == "organization":  # the management account only matters for a whole organisation
+                mgmt = ctx.get("management_account_id")
+                checks[i] = Check("organization", "Management account", "ok",
+                                  f"Single account: these credentials reach account {own} only, so scans cover "
+                                  "that account.",
+                                  f"For an organisation wide view, use credentials in management account {mgmt}."
+                                  if mgmt and mgmt != own else "")  # fmt: skip
+        checks.append(Check("ou_tree", "Read the OU tree", "skip", "Not needed for a single account."))
 
     member_id = None
     if root_id:
@@ -589,12 +610,15 @@ def run_checks(
             checks.append(Check("accounts", "List accounts", "ok", "Account names are readable for the name filter."))
         except Exception as exc:
             checks.append(_fail("accounts", "List accounts", exc, "organizations:ListAccountsForParent"))
+    elif ctx.get("single_account"):
+        skip("accounts", "List accounts", "Not needed for a single account.")
     else:
         skip("accounts", "List accounts", "Needs the OU tree.")
 
     tags_label = "Read account tags"
     if not member_id:
-        skip("account_tags", tags_label, "No member account found to test against.")
+        skip("account_tags", tags_label, "Not needed for a single account." if ctx.get("single_account")
+             else "No member account found to test against.")  # fmt: skip
     else:
         try:
             org.list_tags_for_resource(ResourceId=member_id)
@@ -619,7 +643,11 @@ def run_checks(
         n_regions = len({g["Keys"][1] for g in groups if g["Keys"][1] not in ("global", "NoRegion", "")})
         ctx["cost_accounts"] = n
         ctx["cost_regions"] = n_regions
-        few = n <= 1 and ctx.get("management_account_id") not in (None, ctx["account_id"])
+        few = (
+            n <= 1
+            and ctx.get("management_account_id") not in (None, ctx["account_id"])
+            and not ctx.get("single_account")
+        )
         checks.append(
             Check(
                 "cost",
@@ -719,7 +747,10 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
         else:
             ctx["count_assignments"] = True
 
-    if not role_name and not pair:
+    if ctx.get("single_account") and not role_name:
+        checks.append(Check("deep_scan", DEEP_LABEL, "ok", f"Deep scans read account {ctx['account_id']} directly."))
+        member, member_id = session, ctx["account_id"]
+    elif not role_name and not pair:
         checks.append(
             Check(
                 "deep_scan",
@@ -729,8 +760,11 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
             )
         )
         return skip_rest("Needs deep scan access.", "Only for a deep scan with your own sign-in.")
+    single = ctx.get("single_account") and not role_name
     try:
-        if pair:
+        if single:
+            pass
+        elif pair:
             member_id = _member_with_role(pair, member_id, ctx.get("account_id"))
             if not member_id:
                 checks.append(
@@ -747,9 +781,10 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
         elif not member_id:
             checks.append(Check("deep_scan", DEEP_LABEL, "skip", "No member account found to test against."))
             return skip_rest("Needs a member account.", f"Using role {role_name}, not a permission set.")
-        member = member_session(session, profile, member_id, role_name, "preflight")
-        how = f"Assumed {role_name}" if role_name else f"Signed in with permission set {pair[1]}"
-        checks.append(Check("deep_scan", DEEP_LABEL, "ok", f"{how} in member account {member_id}."))
+        if not single:
+            member = member_session(session, profile, member_id, role_name, "preflight")
+            how = f"Assumed {role_name}" if role_name else f"Signed in with permission set {pair[1]}"
+            checks.append(Check("deep_scan", DEEP_LABEL, "ok", f"{how} in member account {member_id}."))
     except Exception as exc:
         checks.append(
             _fail(
@@ -785,7 +820,9 @@ def _member_checks(checks, session, profile, role_name, member_id, ctx, counted=
         if cid not in ("assurance_reads", "outage_reads", "compromise_reads") and denied:
             check.fix = f"{what}. Grant them ({policy})."
         checks.append(check)
-    if role_name:
+    if single:
+        checks.append(Check("assignments", ASSIGN_LABEL, "skip", "Not needed for a single account."))
+    elif role_name:
         checks.append(
             Check(
                 "assignments",
@@ -881,11 +918,16 @@ def _result(checks: list[Check], ctx: dict) -> dict:
     if not any(c.id == "ai" for c in checks):
         checks.append(_ai_check())  # last on every path, whatever happened with AWS
     required = [c for c in checks if c.id not in OPTIONAL]
-    ready = all(c.status == "ok" for c in required)
+    ok = ("ok", "skip") if ctx.get("single_account") else ("ok",)  # one account needs no organisation reads
+    ready = all(c.status in ok for c in required)
     gaps = [c for c in checks if c.id in OPTIONAL and c.status in ("warn", "fail")]
     partial = not ready and all(c.status in ("ok", "warn") for c in required)
+    one = ctx.get("single_account") and f"account {ctx.get('account_id')}"
     verdict = (
-        f"Ready for a quick scan; {len(gaps)} optional check(s) show missing permissions, listed below."
+        f"Ready: scans cover {one} only, the one account these credentials reach"
+        + (f"; {len(gaps)} optional check(s) show missing permissions, listed below." if gaps else ".")
+        if ready and one
+        else f"Ready for a quick scan; {len(gaps)} optional check(s) show missing permissions, listed below."
         if ready and gaps
         else "Ready: a scan will cover the whole organisation."
         if ready

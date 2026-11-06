@@ -11,7 +11,7 @@ def test_params_validation():
     with pytest.raises(ValueError):
         ScanParams(months=0).validate()
     with pytest.raises(ValueError):
-        ScanParams(inventory=True).validate()
+        ScanParams(months=13).validate()
 
 
 def test_auth_failure_is_recorded_and_saved(monkeypatch):
@@ -316,8 +316,7 @@ def test_bad_worker_setting_falls_back():
 def test_inventory_without_role_uses_identity_center_permission_set(monkeypatch):
     monkeypatch.setattr(scanner.sso, "profile_permission_set", lambda p: ("corp", "CTO-Read") if p == "sso" else None)
     ScanParams(inventory=True, profile="sso").validate()
-    with pytest.raises(ValueError, match="IAM Identity Center"):
-        ScanParams(inventory=True, profile="keys").validate()
+    ScanParams(inventory=True, profile="keys").validate()  # saved keys deep-read their own account
 
 
 def test_deep_scan_waits_for_a_new_sign_in_then_carries_on(monkeypatch):

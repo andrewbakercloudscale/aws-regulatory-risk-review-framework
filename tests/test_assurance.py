@@ -387,12 +387,12 @@ def test_assurance_api_roundtrip():
 # ---------------------------------------------------------------------------------- scanner
 
 
-def test_assurance_scan_needs_member_access(monkeypatch):
+def test_assurance_scan_with_saved_keys_and_no_role_is_allowed(monkeypatch):
+    """Saved keys with no role deep-read their own account, so no role is demanded up front."""
     from exitrisk import scanner
 
     monkeypatch.setattr(scanner.sso, "profile_permission_set", lambda p: None)
-    with pytest.raises(ValueError, match="assurance"):
-        ScanParams(assurance=True).validate()
+    ScanParams(assurance=True).validate()
     ScanParams(assurance=True, role_name="ExitRiskReadOnly").validate()
 
 

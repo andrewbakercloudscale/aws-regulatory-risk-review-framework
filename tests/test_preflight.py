@@ -139,7 +139,7 @@ def test_management_account_with_full_access_is_ready(monkeypatch):
     assert "40 accounts in 1 region " in cost["detail"]  # one call proves the multi-region data too
 
 
-def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):
+def test_member_account_without_org_reads_runs_as_a_single_account(monkeypatch):
     _session(
         monkeypatch,
         SSO_ARN.replace("111111111111", "333333333333"),
@@ -147,21 +147,15 @@ def test_member_account_is_flagged_and_admin_request_is_specific(monkeypatch):
         _ce(1),
     )
     monkeypatch.setattr(preflight.sso, "profile_permission_set", lambda p: None)
+    monkeypatch.setattr(preflight, "probe_actions", lambda session, account_id, probes: ([], []))
     r = preflight.run_checks("p")
     status = {c["id"]: c["status"] for c in r["checks"]}
-    assert not r["ready"] and not r["partial"]
-    assert status == {
-        "identity": "ok", "organization": "warn", "ou_tree": "fail", "accounts": "skip", "account_tags": "skip",
-        "cost": "warn", "commitments": "ok", "assurance_org": "skip", "deep_scan": "skip", "inventory_reads": "skip",
-        "dependency_reads": "skip", "assurance_reads": "skip", "outage_reads": "skip", "compromise_reads": "skip",
-        "assignments": "skip",
-        "ai": "skip",
-    }  # fmt: skip
+    assert r["ready"] and r["single_account"]
+    assert "333333333333 only" in r["verdict"]
+    assert status["organization"] == "ok" and status["ou_tree"] == "skip" and status["accounts"] == "skip"
+    assert status["deep_scan"] == "ok" and status["outage_reads"] == "ok" and status["assignments"] == "skip"
     org = next(c for c in r["checks"] if c["id"] == "organization")
     assert "111111111111" in org["fix"]
-    text = r["admin_request"]
-    assert "management account, 111111111111" in text
-    assert "organizations:ListRoots" in text and "'CTO-Read'" in text and '"ce:GetCostAndUsage"' in text
 
 
 class MemberSession:

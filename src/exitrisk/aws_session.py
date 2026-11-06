@@ -234,5 +234,8 @@ def member_session(
 
     pair = sso.profile_permission_set(profile)
     if not pair:
+        # An access key reads its own account directly: a single account scan needs no role.
+        if base.client("sts").get_caller_identity()["Account"] == account_id:
+            return base
         raise ValueError("no member role given and the profile is not an IAM Identity Center profile")
     return sso.role_session(pair[0], account_id, pair[1])

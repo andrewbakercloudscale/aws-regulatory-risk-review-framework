@@ -1370,9 +1370,10 @@
 <dialog id="ssoDialog" class="dialog" aria-labelledby="ssoTitle">
   <form method="dialog" id="ssoForm" autocomplete="off">
     <h2 id="ssoTitle">AWS sign-in</h2>
+    <p class="sign-mode-q">How do you sign in?</p>
     <div class="seg sign-mode" role="group" aria-label="How to sign in">
-      <button type="button" data-sign-mode="sso" aria-pressed="true">Access portal (SSO)</button>
-      <button type="button" data-sign-mode="keys" aria-pressed="false">Keys on this Mac</button>
+      <button type="button" data-sign-mode="sso" aria-pressed="true"><span class="sm-ico" aria-hidden="true">&#x1F310;</span><b>Access portal (SSO)</b><small>IAM Identity Center, your whole organisation</small></button>
+      <button type="button" data-sign-mode="keys" aria-pressed="false"><span class="sm-ico" aria-hidden="true">&#x1F511;</span><b>Keys on this Mac</b><small>An access key or profile in ~/.aws, any account</small></button>
     </div>
     <div id="keysPane" hidden>
       <p class="muted small">Uses credentials already saved on this machine in <code>~/.aws/credentials</code> or <code>~/.aws/config</code>: an access key, temporary keys, a role or a credential process. Only the key ID is shown, masked; the secret never leaves the AWS CLI files.</p>

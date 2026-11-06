@@ -3986,18 +3986,20 @@
     } catch (e) {
       if (seq !== state.ouSeq) return;
       if (SIGNED_OUT_RE.test(`${e.code} ${e.message}`)) { scanSignedOut((await signInState($("#sProfile").value))?.session); return; }
-      $("#sOu").innerHTML = `<p class="muted small">Whole organisation</p>`;
+      const denied = /AccessDenied|NotInUse|AWSOrganizationsNotInUse/i.test(e.code || e.message);
+      $("#sOu").innerHTML = `<p class="muted small">${denied ? "Single account" : "Whole organisation"}</p>`;
       $("#ouChosen").textContent = "";
       const cur = $("#sProfile").value;
       const others = [...$("#sProfile").options].map((o) => o.value).filter((v) => v && v !== cur);
       const known = others.filter((v) => state.profileAccounts?.[v] && state.mgmtAccount && state.profileAccounts[v] === state.mgmtAccount);
       const likely = known.length ? known : others.filter((v) => MGMT_RE.test(v));
-      const denied = /AccessDenied|NotInUse|AWSOrganizationsNotInUse/i.test(e.code || e.message);
-      $("#ouStatus").innerHTML = (denied
-        ? `<strong>${esc(cur || "This profile")}</strong> cannot list OUs (${esc(e.code || e.message)}): it is probably not in the organisation's <strong>management account</strong>. `
-        : `OUs unavailable with this profile (${esc(e.code || e.message)}). `) +
-        (likely.length ? `Try ${likely.map((v) => `<a href="#" class="ou-try" data-p="${esc(v)}">${esc(v)}</a>`).join(" or ")}. ` : "Pick a management-account profile, or sign in with SSO and choose the management account. ") +
-        "Without OUs the scan covers only what this profile can see.";
+      const acct = state.profileAccounts?.[cur];
+      $("#ouStatus").innerHTML = denied
+        ? `<strong>${esc(cur || "This profile")}</strong> reads ${acct ? `account ${esc(acct)}` : "its own account"} only, not the organisation, so the scan covers that one account. That is fine; carry on.` +
+          (likely.length ? ` For a whole organisation instead, try ${likely.map((v) => `<a href="#" class="ou-try" data-p="${esc(v)}">${esc(v)}</a>`).join(" or ")}.` : "")
+        : `OUs unavailable with this profile (${esc(e.code || e.message)}). ` +
+          (likely.length ? `Try ${likely.map((v) => `<a href="#" class="ou-try" data-p="${esc(v)}">${esc(v)}</a>`).join(" or ")}. ` : "Pick a management-account profile, or sign in with SSO and choose the management account. ") +
+          "Without OUs the scan covers only what this profile can see.";
       $("#ouStatus").querySelectorAll(".ou-try").forEach((a) => a.addEventListener("click", (ev) => {
         ev.preventDefault(); $("#sProfile").value = a.dataset.p; state.scanSignInAsked = false; scanProfileChanged();
       }));

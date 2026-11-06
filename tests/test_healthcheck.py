@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from exitrisk import aws_session, healthcheck
@@ -68,7 +69,8 @@ def test_judge_flags_new_errors_and_marks_old_ones_chronic():
 # ------------------------------------------------------------------ ranking
 def _sig(**kw):
     base = {"account": "123456789012", "account_name": "shop", "region": "eu-west-1", "role": "symptom",
-            "chronic": False, "severity": "high", "service": "app", "check": "lambda_errors", "evidence": "x"}  # fmt: skip
+            "chronic": False, "severity": "high", "service": "app", "check": "lambda_errors",
+            "evidence": "x"}  # fmt: skip
     return {**base, **kw}
 
 
@@ -147,3 +149,21 @@ def test_api_runs_lists_reads_and_deletes(monkeypatch):
     assert any(r["id"] == run_id for r in c.get("/api/health-checks").json()["runs"])
     assert c.delete(f"/api/health-check/{run_id}", headers=H).json() == {"deleted": True}
     assert c.get(f"/api/health-check/{run_id}").status_code == 404
+
+
+def test_saved_keys_read_their_own_account_without_a_role(monkeypatch):
+    from exitrisk import sso
+
+    class Sts:
+        def get_caller_identity(self):
+            return {"Account": "222222222222"}
+
+    class Base:
+        def client(self, name, **_kw):
+            return Sts()
+
+    monkeypatch.setattr(sso, "profile_permission_set", lambda p: None)
+    base = Base()
+    assert aws_session.member_session(base, "keys", "222222222222", None, "t") is base
+    with pytest.raises(ValueError):
+        aws_session.member_session(base, "keys", "999999999999", None, "t")
