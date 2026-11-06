@@ -58,7 +58,13 @@ Each row names the worst risk, where it is, and what to do.
 
 ## Risk map
 
-The report opens with Immediate attention: the production findings that need someone now (at or past a limit,
+The report opens with Risk by owner: one bubble per owner (from the account owner tag), up = the risk points of
+all their accounts, right = their monthly spend as a proxy for importance, size = how many accounts they own, both
+scales logarithmic. The top right, at least a critical's worth of risk and above the middle owner's spend, is
+where to start; selecting a bubble lists that owner's findings. Spend places owners on the chart only; nothing
+else in the report is ranked by it.
+
+Next comes Immediate attention: the production findings that need someone now (at or past a limit,
 failed in the last 35 days, failing now, filling before the peak, or a change AWS will make in the next two weeks),
 each with why now, the account and its owner, what to do and the date to do it by.
 
@@ -74,8 +80,8 @@ first. An account that could not be read at all is rated Not measured, listed fi
 - **Actions by owner** (section 9): production critical and high findings, one action per finding type for each
   owner, with the resources and accounts it covers and when to start. The owner comes from the account's owner
   tag; accounts with none are one group, so tag them to route their actions.
-- **Export table to PDF** on Immediate attention, Top risks and Actions by owner prints just that table, to send
-  to the team that owns it.
+- **Export table to PDF** on every table (and on Risk by owner and each risk card) prints just that part, to send
+  to the team that owns it. The accounts and findings tables export every row; findings follow the filters.
 - **Complete the scan** reads again only the accounts that could not be read, or had a check refused or failing,
   and keeps the rest. It saves a new scan, so the partial one stays in the history.
 - **Shared network and DNS** (section 4) names the accounts that own the transit gateways, shared subnets and

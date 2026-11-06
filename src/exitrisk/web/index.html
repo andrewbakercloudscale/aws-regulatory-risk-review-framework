@@ -675,6 +675,16 @@
       <dl id="orMeta" class="meta"></dl>
     </section>
 
+    <section class="section" id="or-owner-map">
+      <h2>Risk by owner</h2>
+      <figure class="card chart-card">
+        <figcaption><h3>Outage risk vs importance, by owner</h3><p class="muted">Each bubble is an owner with a finding, from the account owner tag. Up = more risk: the risk points of all their accounts (a hundred per critical, ten per high, one per medium, one per risk per account, a non-production finding a tenth). Right = more important, with monthly spend as the proxy. Bubble size = how many accounts they own. Both scales are logarithmic. Start at the top right. Select a bubble to see that owner's findings.</p></figcaption>
+        <div class="chart-box tall"><canvas id="chOrOwners" role="img" aria-label="Bubble chart of each owner's outage risk points against the monthly spend of their accounts"></canvas></div>
+        <p id="orOwnersNote" class="muted small"></p>
+        <p class="no-print table-pdf"><button type="button" class="btn" data-pdf-section="or-owner-map">Export chart to PDF</button></p>
+      </figure>
+    </section>
+
     <section class="section" id="or-now">
       <h2><span class="num urgent">!</span>Immediate attention</h2>
       <div class="card or-now">
@@ -819,7 +829,7 @@
           <label class="inline">Severity<select id="orSev"><option value="outage" selected>Critical and high: outage risk</option><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
           <label class="inline">Service<select id="orService"></select></label>
           <label class="inline">Finding<select id="orRule"></select></label>
-          <label class="inline">Search<input id="orSearch" type="search" placeholder="Account, resource or region"></label>
+          <label class="inline">Search<input id="orSearch" type="search" placeholder="Account, owner, resource or region"></label>
           <label class="check"><input type="checkbox" id="orProd" checked> Production only</label>
           <button type="button" class="btn" id="btnOrCsv">Export CSV</button>
         </div>

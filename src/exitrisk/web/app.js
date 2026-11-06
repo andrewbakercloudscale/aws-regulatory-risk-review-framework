@@ -2741,6 +2741,7 @@
   const orSev = (sev) => pill(null, cap(sev), OR_SEV_COLOR[sev]);
 
   function renderOrMap(r) {
+    renderOrOwnerMap(r);
     renderOrMatrix(r);
     renderOrBubbles(r);
     renderOrExposure(r);
@@ -2894,6 +2895,149 @@
         },
       }],
     });
+  }
+
+  // Owners as bubbles: up = the risk points of their accounts, right = their monthly spend (a proxy for
+  // importance), size = how many accounts. Both logarithmic, as both span several orders of magnitude.
+  const NO_OWNER = "No owner tag";
+  function orOwnerGroups(r) {
+    const groups = new Map();
+    for (const a of r.accounts) {
+      const k = a.owner || NO_OWNER;
+      const g = groups.get(k) || { name: k, accounts: 0, spend: 0, risk: 0, critical: 0, high: 0, medium: 0, production: false, worst: null, ratings: new Set() };
+      g.accounts += 1;
+      g.spend += a.monthly_spend || 0;
+      g.risk += a.risk || 0;
+      g.critical += a.critical; g.high += a.high; g.medium += a.medium;
+      g.production ||= a.production;
+      if (a.risk > 0 && (!g.worst || a.risk > g.worst.risk)) g.worst = a;
+      if (a.production || !groups.has(k)) g.ratings.add(a.rating);
+      groups.set(k, g);
+    }
+    const order = ["Critical", "High", "Medium", "Low"];
+    for (const g of groups.values()) g.rating = order.find((x) => g.ratings.has(x)) || "Low";
+    return [...groups.values()];
+  }
+
+  function renderOrOwnerMap(r) {
+    const all = orOwnerGroups(r);
+    const risky = all.filter((g) => g.risk > 0).sort((p, q) => q.accounts - p.accounts);
+    const clean = all.length - risky.length;
+    const untagged = all.find((g) => g.name === NO_OWNER);
+    const legend = ["Critical", "High", "Medium", "Low"].map((k) => pill(null, k, OR_RATING_COLOR[k])).join(" ");
+    $("#orOwnersNote").innerHTML = `${legend} <span>Colour: the worst production account rating. Hollow: owns only non-production accounts.${clean ? ` ${plural(clean, "owner")} with no finding ${clean === 1 ? "is" : "are"} not drawn.` : ""}${untagged ? ` ${plural(untagged.accounts, "account")} ${untagged.accounts === 1 ? "has" : "have"} no owner tag and ${untagged.accounts === 1 ? "is" : "are"} drawn as “${NO_OWNER}”.` : ""} Spend is only a proxy for importance; the rest of the report ranks by risk and how far an outage would spread.</span>`;
+    const box = $("#chOrOwners").parentElement;
+    box.querySelector(".chart-empty")?.remove();
+    if (!risky.length) {
+      state.charts.chOrOwners?.destroy();
+      box.insertAdjacentHTML("beforeend", '<p class="muted small chart-empty">No owner has a finding.</p>');
+      return;
+    }
+    const maxN = Math.max(...risky.map((g) => g.accounts), 1);
+    const spendOf = (g) => Math.max(g.spend, 10);
+    const spends = risky.map(spendOf).sort((p, q) => p - q);
+    const midSpend = spends[Math.floor(spends.length / 2)];
+    const xMin = 10 ** Math.floor(Math.log10(spends[0])), xMax = 10 ** Math.ceil(Math.log10(spends[spends.length - 1]) + 0.05);
+    const yMin = 10 ** Math.floor(Math.log10(Math.min(...risky.map((g) => g.risk)))), yMax = 10 ** Math.ceil(Math.log10(Math.max(...risky.map((g) => g.risk))) + 0.05);
+    const colour = (g) => css(OR_RATING_VAR[g.rating] || "--t3");
+    const top = [...risky].sort((p, q) => Math.log10(q.risk) + Math.log10(spendOf(q)) - Math.log10(p.risk) - Math.log10(spendOf(p))).slice(0, 10).map((g) => g.name);
+    const decade = (v) => (Math.abs(Math.log10(v) - Math.round(Math.log10(v))) < 1e-6);
+    chart("chOrOwners", {
+      type: "bubble",
+      data: {
+        datasets: [{
+          label: "Owners",
+          data: risky.map((g) => ({ x: spendOf(g), y: g.risk, r: 5 + 22 * Math.sqrt(g.accounts / maxN), g })),
+          backgroundColor: risky.map((g) => (g.production ? colour(g) + "cc" : colour(g) + "22")),
+          borderColor: risky.map((g) => (g.production ? css("--surface") : colour(g))),
+          borderWidth: risky.map((g) => (g.production ? 1.5 : 2)),
+          hoverBorderWidth: 2,
+          clip: 30,
+        }],
+      },
+      options: {
+        layout: { padding: 12 },
+        onHover: (e, els) => { e.native.target.style.cursor = els.length ? "pointer" : "default"; },
+        onClick: (e, els) => { if (els.length) openOrOwner(risky[els[0].index].name); },
+        scales: {
+          x: { type: "logarithmic", min: xMin, max: xMax, title: { display: true, text: "Importance: monthly spend of the owner's accounts" }, ticks: { maxRotation: 0, autoSkip: false, callback: (v) => (decade(v) ? money(v) : "") }, grid: { color: (c) => (decade(c.tick?.value || 0) ? css("--grid") : "transparent") } },
+          y: { type: "logarithmic", min: yMin, max: yMax, title: { display: true, text: "Outage risk points" }, ticks: { autoSkip: false, callback: (v) => (decade(v) ? num(v, v < 1 ? 1 : 0) : "") }, grid: { color: (c) => (decade(c.tick?.value || 0) ? css("--grid") : "transparent") } },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: {
+            title: (items) => items[0].raw.g.name,
+            label: (c) => {
+              const g = c.raw.g;
+              return [` ${num(g.risk, g.risk % 1 ? 1 : 0)} risk points · ${money(g.spend)} a month`, ` ${plural(g.accounts, "account")}${g.production ? "" : ", none in production"}`, ` ${num(g.critical)} critical, ${num(g.high)} high, ${num(g.medium)} medium`, g.worst ? ` Most risk: ${g.worst.name}` : "", " Select to see their findings"].filter(Boolean);
+            },
+          } },
+        },
+      },
+      plugins: [{
+        id: "orOwnerZones",
+        beforeDatasetsDraw(ch) {
+          const { ctx, chartArea: ca, scales: { x, y } } = ch;
+          ctx.save();
+          // The corner to start in: at least a critical's worth of risk, and more than the middle owner's spend.
+          ctx.fillStyle = css("--sev-critical") + "12";
+          const x0 = Math.max(ca.left, x.getPixelForValue(midSpend)), y0 = Math.min(ca.bottom, y.getPixelForValue(100));
+          if (y0 > ca.top) ctx.fillRect(x0, ca.top, ca.right - x0, y0 - ca.top);
+          ctx.strokeStyle = css("--axis");
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.fillStyle = css("--muted");
+          ctx.font = `11px ${css("--font")}`;
+          for (const [v, label] of [[100, "A critical ↑"], [10, "A high ↑"]]) {
+            if (v <= yMin || v >= yMax) continue;
+            const yy = y.getPixelForValue(v);
+            ctx.beginPath(); ctx.moveTo(ca.left, yy); ctx.lineTo(ca.right, yy); ctx.stroke();
+            ctx.fillText(label, ca.left + 6, yy - 6);
+          }
+          ctx.beginPath(); ctx.moveTo(x0, ca.top); ctx.lineTo(x0, ca.bottom); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.textAlign = "center";
+          ctx.fillText("Middle owner's spend", x0, ca.bottom - 6);
+          ctx.font = `600 11px ${css("--font")}`;
+          ctx.textAlign = "right";
+          ctx.fillText("Start here", ca.right - 6, ca.top + 14);
+          ctx.restore();
+        },
+      }, {
+        id: "orOwnerLabels",
+        afterDatasetsDraw(ch) {
+          const ctx = ch.ctx, meta = ch.getDatasetMeta(0);
+          ctx.save();
+          ctx.font = `600 11px ${css("--font")}`;
+          ctx.fillStyle = css("--ink");
+          ctx.strokeStyle = css("--surface");
+          ctx.lineWidth = 3;
+          const placed = [];
+          meta.data.map((pt, i) => ({ pt, g: risky[i] })).filter((o) => top.includes(o.g.name)).sort((p, q) => p.pt.y - q.pt.y).forEach(({ pt, g }) => {
+            const rad = pt.options.radius || 6;
+            const w = ctx.measureText(g.name).width;
+            const left = pt.x > ch.chartArea.right - 180;
+            const x0 = left ? pt.x - rad - 6 - w : pt.x + rad + 6;
+            // Beside its bubble, nudged up or down past a label already placed; never far from it.
+            const clash = (y) => placed.some((b) => x0 < b.x + b.w && x0 + w > b.x && Math.abs(y - b.y) < 13);
+            const y = [0, -13, 13, -26, 26].map((d) => pt.y + 4 + d).find((yy) => !clash(yy));
+            if (y == null) return;
+            placed.push({ x: x0, y, w });
+            ctx.strokeText(g.name, x0, y);
+            ctx.fillText(g.name, x0, y);
+          });
+          ctx.restore();
+        },
+      }],
+    });
+  }
+
+  function openOrOwner(name) {
+    state.orAccount = "";
+    for (const id of ["#orArea", "#orService", "#orRule"]) $(id).value = "";
+    $("#orSearch").value = name === NO_OWNER ? "" : name;
+    renderOrFindings();
+    $("#or-findings").scrollIntoView({ behavior: "smooth" });
   }
 
   function openOrAccount(name) {
@@ -3064,8 +3208,9 @@
   function orShown() {
     const area = $("#orArea").value, sev = $("#orSev").value, rule = $("#orRule").value, service = $("#orService").value, prod = $("#orProd").checked;
     const q = $("#orSearch").value.trim().toLowerCase();
+    const owner = Object.fromEntries(state.or.accounts.map((a) => [a.id, a.owner || ""]));
     return state.or.findings.filter((f) => (!area || f.area === area) && (!service || f.service === service) && (!sev || (sev === "outage" ? f.severity === "critical" || f.severity === "high" : f.severity === sev)) && (!rule || f.rule === rule) && (!prod || f.production)
-      && (!q || `${f.account} ${f.res} ${f.region} ${f.title}`.toLowerCase().includes(q)));
+      && (!q || `${f.account} ${owner[f.account_id]} ${f.res} ${f.region} ${f.title}`.toLowerCase().includes(q)));
   }
 
   function renderOrFindings(more) {

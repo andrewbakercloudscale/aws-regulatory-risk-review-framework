@@ -115,6 +115,15 @@ def test_export_table_to_pdf_prints_that_table_alone(page):
     assert not page.errors
 
 
+def test_risk_by_owner_comes_first_and_draws_its_owners(page):
+    first = page.evaluate("document.querySelector('#orContent .section')?.id")
+    assert first == "or-owner-map"
+    page.wait_for_function("document.querySelector('#chOrOwners').width > 300")
+    assert "Critical" in page.locator("#orOwnersNote").inner_text()
+    assert not page.locator("#or-owner-map .chart-empty, #or-owner-map .chart-error").count()
+    assert not page.errors
+
+
 def test_the_other_tabs_hide_it(page):
     page.locator(".vtab[data-view='exit']").click()
     assert page.locator("#orContent").is_hidden()

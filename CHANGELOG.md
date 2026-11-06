@@ -6,6 +6,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- Outage Risk: Risk by owner opens the report. One bubble per owner, up = the risk points of all their accounts, right = their monthly spend as a proxy for importance, size = how many accounts they own; start at the top right. Selecting an owner lists their findings, and the findings search now matches owners.
+
 ### Changed
 - Outage Risk: each risk card (Kinesis readers falling behind, Lambda near its reserved concurrency, and so on) now lists its worst findings, with account, resource, region and value, and a link that opens the findings table filtered to that risk. The cards had shown only the explanation.
 - Export table to PDF on every table: Outage Risk findings, accounts, coverage, EKS and causes, each risk card, and Developer Compromise areas, accounts, people and changes. The accounts and findings tables export every row, not only the first page.
