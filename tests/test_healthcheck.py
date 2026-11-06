@@ -240,3 +240,13 @@ def test_accounts_carry_owner_tags_from_the_newest_scan(monkeypatch):
     assert got[0]["owner"] == "Ann" and got[0]["executive"] == "Bo"
     assert got[1]["owner"] == "Cy" and "owner" not in got[2]
     healthcheck._owner_cache["key"] = None
+
+
+def test_controller_and_housekeeping_changes_are_routine_not_risky():
+    from exitrisk.collectors import healthcheck as col
+
+    assert not col.is_sharp("DeleteLaunchTemplate", "eks-karpenter-role (session)")
+    assert col.is_routine("DeleteLaunchTemplate", "deployer")
+    assert not col.is_sharp("TerminateInstances", "prd-karpenter-role (s)")
+    assert col.is_sharp("TerminateInstances", "ops-admin (alice)")
+    assert col.is_sharp("DeleteDBInstance", "deployer") and not col.is_routine("DeleteDBInstance", "deployer")

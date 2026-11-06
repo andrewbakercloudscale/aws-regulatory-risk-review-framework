@@ -330,7 +330,7 @@
       ["High now", s.high, "tone-risk", "Problems at high level in the window, new since yesterday."],
       ["Medium now", s.medium, "", "Problems at medium level in the window, new since yesterday."],
       ["Risky changes", `${s.sharp_changes}<span class="muted small"> of ${s.changes}</span>`, "tone-est",
-        `Changes made by people or pipelines in the window that can break things straight away: deletes, stops, detaches, revoked access, failovers, key deletion. "of ${s.changes}" counts every change that can affect availability. AWS's own actions are left out. See Recent changes below.`],
+        `Changes made in the window that can break something straight away: deletes, stops, detaches, revoked access, failovers, key deletion, route and DNS changes. "of ${s.changes}" is every change that can affect availability. Changes by AWS itself, housekeeping (old launch templates, snapshots) and cluster controllers doing their normal work (Karpenter, autoscaler, load balancer controller) are never counted as risky. Listed in Changes in the window; click to go there.`, "#hcChanges"],
       ["Long standing", s.chronic, "", "Problems already at about the same level a day earlier."],
       ["Could not check", s.gaps, s.gaps ? "tone-risk" : "", "Checks that could not read something; listed at the end with the fix."],
     ];
@@ -352,8 +352,8 @@
         ${status}
         ${r.unreachable?.length ? `<p class="error-text">Not reached: ${r.unreachable.map((u) => `${esc(u.name || u.account)} (${esc(u.code)}: ${esc(u.message)})`).join("; ")}</p>` : ""}
         ${intro(`<b>About this report.</b> A read only health check of the AWS account${r.accounts.length > 1 ? "s" : ""} above over the last ${esc(r.window?.hours)} hours, in every region in use. It reads alarms, AWS Health, CloudTrail changes and refused calls, load balancers, containers, functions, databases, queues, networks, certificates, DNS, VPC flow logs, error spikes in the busiest log groups, and service quotas. Each finding is compared with the same hours a day earlier, so new problems stand apart from ones that were already there. Nothing in the accounts was changed.`)}
-        <div class="tiles" style="grid-template-columns:repeat(6,minmax(0,1fr))">${tiles.map(([l, v, t, tip]) => `<div class="tile ${t}" title="${esc(tip)}"><div class="tile-label">${l}</div><div class="tile-value">${v}</div></div>`).join("")}</div>
-        <dl class="hc-legend">${tiles.map(([l, , , tip]) => `<dt>${l}</dt><dd>${esc(tip)}</dd>`).join("")}</dl>
+        <div class="tiles" style="grid-template-columns:repeat(6,minmax(0,1fr))">${tiles.map(([l, v, t, tip, go]) => `<div class="tile ${t}${go ? " hc-go" : ""}" title="${esc(tip)}"${go ? ` data-go="${go}" role="link" tabindex="0"` : ""}><div class="tile-label">${l}</div><div class="tile-value">${v}</div></div>`).join("")}</div>
+        <dl class="hc-legend">${tiles.map(([l, , , tip]) => `<dt>${l}</dt><dd>${esc(tip.replace("; click to go there", ""))}</dd>`).join("")}</dl>
       </section>
 
       <section class="card">
@@ -401,9 +401,15 @@
         </tbody></table></div>
       </section>` : ""}
 
-      ${r.changes.length ? `<section class="card">
-        <h2>Changes in the window (${r.changes.length})</h2>
-        ${intro(`<b>What this is.</b> Changes made by people or pipelines during the window that can affect availability, read from CloudTrail: deletes, stops, detaches, scaling and configuration changes, permission and network changes. Changes AWS makes itself are left out. Those marked <i>risky</i> can break things straight away (a delete, a revoked permission, a failover). Repeats of one action are grouped with a count. A change is not a fault in itself; it matters when a failure follows it, and the top issues show that link when there is one.`)}
+      ${r.changes.length ? `<section class="card" id="hcChanges">
+        <h2>Changes in the window: ${r.changes.length} (${s.sharp_changes} risky${s.routine_changes ? `, ${s.routine_changes} routine` : ""})</h2>
+        ${intro(`<b>What this is.</b> Changes made during the window that can affect availability, read from CloudTrail: deletes, stops, detaches, scaling and configuration changes, permission and network changes. Changes AWS makes itself are left out.
+          <ul>
+            <li><b>risky</b>: can break something straight away, such as a delete, a stop, a revoked permission, a route or DNS change, or a failover.</li>
+            <li><b>routine</b>: housekeeping (removing old launch templates or snapshots) or a cluster controller doing its normal work (Karpenter replacing nodes, the autoscaler, the load balancer controller). Expected all day; listed only so the record is complete.</li>
+            <li>No tag: an ordinary change, such as a deployment or a permission added.</li>
+          </ul>
+          Repeats of one action by one actor are grouped into one row with a count (×20), so the rows add up to the total. A change is not a fault in itself; it matters when a failure follows it, and the top issues show that link when there is one.`)}
         <details class="hc-more"><summary>Show the ${r.changes.length} changes</summary>
         ${changesTable(r.changes)}</details>
       </section>` : ""}
@@ -445,14 +451,15 @@
     if (!changes.length) return `<p class="muted">No risky change was made in the window.</p>`;
     const groups = new Map();
     for (const c of changes) {
-      const k = `${c.account}|${c.region}|${c.event}|${c.who}`;
+      const k = `${c.account}|${c.region}|${c.event}|${(c.who || "").split(" (")[0]}`; // one role, any session
       const g = groups.get(k);
       if (g) { g.n += 1; g.first = c.time < g.first ? c.time : g.first; g.last = c.time > g.last ? c.time : g.last; if (g.res.length < 4 && c.resource) g.res.push(c.resource); }
       else groups.set(k, { ...c, n: 1, first: c.time, last: c.time, res: c.resource ? [c.resource] : [] });
+      if (g) { g.sharp = g.sharp || c.sharp; g.routine = g.routine && c.routine; }
     }
     const rows = [...groups.values()].sort((a, b) => (b.sharp - a.sharp) || (b.last > a.last ? 1 : -1));
     return `<div class="table-wrap"><table class="data compact"><thead><tr><th>When</th><th>Change</th><th>On</th><th>By</th><th>Where</th></tr></thead><tbody>
-      ${rows.map((g) => `<tr><td class="nowrap small">${when(g.last)}${g.n > 1 ? `<div class="muted">from ${when(g.first)}</div>` : ""}</td><td class="small"><b>${esc(g.event)}</b>${g.n > 1 ? ` <span class="hc-tag">×${g.n}</span>` : ""}${g.sharp ? `<span class="hc-tag">risky</span>` : ""}<div class="muted">${esc(g.service)}</div></td><td class="small">${esc(g.res.join(", "))}${g.n > g.res.length && g.res.length ? " …" : ""}</td><td class="small">${esc(g.who)}</td><td class="small">${esc(g.account_name || g.account)}<div class="muted">${esc(g.region)}</div></td></tr>`).join("")}
+      ${rows.map((g) => `<tr><td class="nowrap small">${when(g.last)}${g.n > 1 ? `<div class="muted">from ${when(g.first)}</div>` : ""}</td><td class="small"><b>${esc(g.event)}</b>${g.n > 1 ? ` <span class="hc-tag">×${g.n}</span>` : ""}${g.sharp ? `<span class="hc-tag risky">risky</span>` : g.routine ? `<span class="hc-tag">routine</span>` : ""}<div class="muted">${esc(g.service)}</div></td><td class="small">${esc(g.res.join(", "))}${g.n > g.res.length && g.res.length ? " …" : ""}</td><td class="small">${esc(g.who)}</td><td class="small">${esc(g.account_name || g.account)}<div class="muted">${esc(g.region)}</div></td></tr>`).join("")}
     </tbody></table></div>`;
   }
 
@@ -517,6 +524,15 @@
     for (const d of document.querySelectorAll("details.hc-more")) d.open = true;
     setTimeout(() => window.print(), 200);
   });
+  // A tile that points at a part of the report opens and scrolls to it.
+  const goTo = (el) => {
+    const target = document.querySelector(el.dataset.go);
+    if (!target) return;
+    for (const d of target.querySelectorAll("details.hc-more")) d.open = true;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  $("#hcReport").addEventListener("click", (e) => { const t = e.target.closest(".hc-go"); if (t) goTo(t); });
+  $("#hcReport").addEventListener("keydown", (e) => { const t = e.target.closest(".hc-go"); if (t && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); goTo(t); } });
   $("#hcRuns").addEventListener("click", async (e) => {
     const del = e.target.closest("button[data-del]");
     if (del) {

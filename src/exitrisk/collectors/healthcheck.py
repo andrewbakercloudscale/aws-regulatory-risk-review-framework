@@ -737,17 +737,40 @@ RISKY_EVENTS = re.compile(
     r"PutClusterCapacityProviders|UpdateDomainConfig|UpdateBroker|RebootBroker|UpdateApi|UpdateIntegration|"
     r"UpdateRoute|UpdateCertificateOptions|ImportCertificate|SetLoadBalancerPoliciesOfListener|SetVpcEndpoint)"
 )
-# Changes that cut capacity or access outright; the others are ordinary deployments.
 # MSK with IAM sign-in logs every Kafka request it authorises, named after the IAM action it checked
 # (a DescribeTopicPartitions request can be logged as DeleteTopic). The real request is kafkaAPI; only
 # these ones change anything.
 KAFKA_WRITES = re.compile(r"^(Create|Delete|Alter|IncrementalAlter|ElectLeaders|AlterPartitionReassignments)")
 
+# Changes that cut capacity or access outright; the others are ordinary deployments.
 SHARP_EVENTS = re.compile(
     r"^(Revoke|Delete|Disable|Deregister|Detach|Disassociate|Terminate|Stop|ScheduleKeyDeletion|"
     r"PutFunctionConcurrency|ReplaceNetworkAclEntry|ReplaceRoute|SetDesiredCapacity|PutKeyPolicy|"
     r"UpdateAssumeRolePolicy|ChangeResourceRecordSets|ModifyListener|ModifyRule|Failover|Reboot)"
 )
+# Deletes that never touch anything running: housekeeping, not risk.
+HOUSEKEEPING = re.compile(
+    r"^(DeleteLaunchTemplate|DeleteLaunchTemplateVersions|DeleteTags|DeleteSnapshot|DeregisterImage|"
+    r"DeleteLogStream|DeleteNetworkInsightsAnalysis|DeleteFleets)$"
+)
+# Cluster controllers that create, rotate and delete resources all day as designed (node templates, load
+# balancer targets, volumes, DNS records). Their changes stay listed but are routine, not risky.
+CONTROLLERS = re.compile(
+    r"(karpenter|cluster-autoscaler|aws-load-balancer-controller|load-balancer-controller|ebs-csi|efs-csi|"
+    r"external-dns|aws-node|vpc-cni|AWSServiceRoleForAutoScaling|AmazonEKS)",
+    re.I,
+)
+
+
+def is_sharp(event: str, who: str) -> bool:
+    """A change that can break something straight away: not housekeeping, not a cluster controller at work."""
+    return bool(SHARP_EVENTS.match(event)) and not HOUSEKEEPING.match(event) and not CONTROLLERS.search(who or "")
+
+
+def is_routine(event: str, who: str) -> bool:
+    return bool(HOUSEKEEPING.match(event) or CONTROLLERS.search(who or ""))
+
+
 # Calls AWS refused for want of capacity, quota or rate, or because the network is full.
 REFUSED = re.compile(
     r"(InsufficientInstanceCapacity|InsufficientCapacity|InsufficientFreeAddresses|UnfulfillableCapacity|"
@@ -1267,7 +1290,8 @@ def check_trail(ctx: Ctx, region: str) -> None:
                     "service": source,
                     "who": _who(d),
                     "resource": _resource_of(ev, d),
-                    "sharp": bool(SHARP_EVENTS.match(name)),
+                    "sharp": is_sharp(name, _who(d)),
+                    "routine": is_routine(name, _who(d)),
                 }
             )
     if seen >= TRAIL_PAGES * 50:

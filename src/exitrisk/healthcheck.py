@@ -708,7 +708,9 @@ def build_report(doc: dict) -> dict:
     signals = [_legacy_title(s) for a in accounts for s in a.get("signals") or []]
     # Runs saved before MSK reads were told apart logged them under the IAM action checked (DeleteTopic);
     # the Kafka requests that really change something are plural (DeleteTopics) and are kept.
-    changes = [c for a in accounts for c in a.get("changes") or []
+    changes = [{**c, "sharp": hc.is_sharp(c["event"], c.get("who", "")),
+                "routine": hc.is_routine(c["event"], c.get("who", ""))}
+               for a in accounts for c in a.get("changes") or []
                if not (c.get("service") == "kafka-cluster" and c.get("event") in KAFKA_IAM_ACTIONS)]  # fmt: skip
     gaps = [g for a in accounts for g in a.get("gaps") or []]
     readiness = [r for a in accounts for r in a.get("readiness") or []]
@@ -757,6 +759,7 @@ def build_report(doc: dict) -> dict:
             "chronic": sum(1 for s in signals if s.get("chronic")),
             "changes": len(changes),
             "sharp_changes": sum(1 for c in changes if c["sharp"]),
+            "routine_changes": sum(1 for c in changes if c.get("routine")),
             "gaps": len(gaps),
             "risks": len(risks),
             "readiness": len(readiness),
