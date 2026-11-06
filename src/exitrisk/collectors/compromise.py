@@ -687,6 +687,84 @@ def _eni_kind(eni: dict) -> str:
     return kind or "network interface"
 
 
+# A database proxy run by the account itself: pg-proxy, PgBouncer, Pgpool or PgCat. Names are matched on the
+# load balancer target group (Kubernetes cuts it to eight letters, so "gkpgprox"), the ECS service or image,
+# or a security group's name or description. A named group counts only where compute uses it: the group of
+# the proxy's own cache or database is not the proxy.
+PROXY_NAME = re.compile(r"pg[-_]?prox|pgbounc|pgpool|pgcat|db[-_]?proxy", re.I)
+PROXY_RUNS_ON = {"EC2 instance", "ECS task", "Lambda function", "load balancer"}
+
+
+def _db_proxies(ctx: CompromiseCtx, region: str, ec2) -> list[dict]:
+    """Every self run database proxy in this region, with the security groups its traffic leaves from. A read
+    that is refused or fails only loses that source; the database is then judged as before."""
+    found: list[dict] = []
+
+    def read(fn) -> None:
+        try:
+            fn()
+        except ClientError as exc:
+            log.info("compromise %s %s: proxy read skipped: %s", ctx.account_id, region, _code(exc))
+
+    def balancers() -> None:
+        elb = ctx.client("elbv2", region)
+        for tg in _pages(elb, "describe_target_groups", "TargetGroups", cap=MAX_ITEMS):
+            if not PROXY_NAME.search(tg["TargetGroupName"]):
+                continue
+            health = elb.describe_target_health(TargetGroupArn=tg["TargetGroupArn"])
+            targets = [t["Target"]["Id"] for t in health.get("TargetHealthDescriptions") or []]
+            groups: set[str] = set()
+            if tg.get("TargetType") == "instance" and targets:
+                for res in _pages(ec2, "describe_instances", "Reservations", InstanceIds=targets[:100]):
+                    for i in res.get("Instances") or []:
+                        groups |= {g["GroupId"] for g in i.get("SecurityGroups") or []}
+            elif tg.get("TargetType") == "ip" and targets:
+                flt = [{"Name": "addresses.private-ip-address", "Values": targets[:200]}]
+                for eni in _pages(ec2, "describe_network_interfaces", "NetworkInterfaces", Filters=flt):
+                    groups |= {g["GroupId"] for g in eni.get("Groups") or []}
+            if groups:
+                found.append({"kind": "load balanced proxy", "name": tg["TargetGroupName"], "groups": sorted(groups)})
+
+    def services() -> None:
+        ecs = ctx.client("ecs", region)
+        for cluster in _pages(ecs, "list_clusters", "clusterArns", cap=100):
+            arns = _pages(ecs, "list_services", "serviceArns", cap=MAX_ITEMS, cluster=cluster)
+            for at in range(0, len(arns), 10):
+                for sv in ecs.describe_services(cluster=cluster, services=arns[at : at + 10]).get("services") or []:
+                    groups = ((sv.get("networkConfiguration") or {}).get("awsvpcConfiguration") or {}).get(
+                        "securityGroups"
+                    ) or []
+                    if not groups:
+                        continue
+                    hit = PROXY_NAME.search(sv["serviceName"])
+                    if not hit:
+                        td = ecs.describe_task_definition(taskDefinition=sv["taskDefinition"])["taskDefinition"]
+                        hit = any(PROXY_NAME.search(c.get("image", "")) for c in td.get("containerDefinitions") or [])
+                    if hit:
+                        found.append({"kind": "ECS service", "name": sv["serviceName"], "groups": sorted(groups)})
+
+    def named() -> None:
+        hits = {
+            g["GroupId"]: g["GroupName"]
+            for g in _pages(ec2, "describe_security_groups", "SecurityGroups", cap=5000)
+            if PROXY_NAME.search(f"{g['GroupName']} {g.get('Description', '')}")
+        }
+        if not hits:
+            return
+        kinds: dict[str, set[str]] = {}
+        flt = [{"Name": "group-id", "Values": sorted(hits)[:150]}]
+        for eni in _pages(ec2, "describe_network_interfaces", "NetworkInterfaces", cap=2000, Filters=flt):
+            for g in eni.get("Groups") or []:
+                kinds.setdefault(g["GroupId"], set()).add(_eni_kind(eni))
+        for gid, name in sorted(hits.items()):
+            if kinds.get(gid, set()) & PROXY_RUNS_ON:
+                found.append({"kind": "security group", "name": name, "groups": [gid]})
+
+    for fn in (balancers, services, named):
+        read(fn)
+    return found
+
+
 def _database_network(ctx: CompromiseCtx, region: str, dbs: list[dict], rds) -> None:
     """Who can reach each database's port: every source in its security groups. A security group used by this
     account's workloads is a known path; an address range (a CIDR or a prefix list) is not, because anything
@@ -742,13 +820,18 @@ def _database_network(ctx: CompromiseCtx, region: str, dbs: list[dict], rds) -> 
         except ClientError:
             entries[pl] = []
     proxied: dict[str, list[str]] = {}
+    proxies: list[dict] = []
     try:
         for px in _pages(rds, "describe_db_proxies", "DBProxies", cap=MAX_ITEMS):
+            proxies.append(
+                {"kind": "RDS Proxy", "name": px["DBProxyName"], "groups": px.get("VpcSecurityGroupIds") or []}
+            )
             for t in _pages(rds, "describe_db_proxy_targets", "Targets", DBProxyName=px["DBProxyName"]):
                 proxied.setdefault(t.get("RdsResourceId") or "", []).append(px["DBProxyName"])
     except ClientError as exc:
         if _code(exc) not in ("AccessDenied", "AccessDeniedException"):
             raise
+    proxies += _db_proxies(ctx, region, ec2)
     for a in dbs:
         for src in a["facts"]["ingress"]:
             if src.get("sg"):
@@ -759,6 +842,7 @@ def _database_network(ctx: CompromiseCtx, region: str, dbs: list[dict], rds) -> 
             if src.get("pl"):
                 src["cidrs"] = entries.get(src["pl"], [])
         a["facts"]["rds_proxy"] = proxied.get(a["name"], [])
+        a["facts"]["proxies"] = proxies
 
 
 def _database_targets(ctx, a, secret, arn, resource_id, iam_auth, data_api, region) -> None:

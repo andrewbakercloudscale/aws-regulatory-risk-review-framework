@@ -2413,7 +2413,7 @@
     $("#cpKnownList").value = a.known.join(", ");
     $("#cpLaptop").value = a.laptop.join(", ");
     $("#cpZscaler").checked = a.zscaler;
-    $("#cpKnownSum").textContent = a.proxy.length ? `proxy ${a.proxy.join(", ")}` : "no proxy set yet";
+    $("#cpKnownSum").textContent = a.proxy.length ? `proxy found automatically, plus ${a.proxy.join(", ")}` : "proxy found automatically";
   }
 
   const CP_DETECT = { alert: ["Alert fires", "var(--good)"], logged: ["Logged, no alert", "var(--sev-warning)"], "not logged": ["Not recorded", "var(--sev-critical)"], unknown: ["Cannot tell", "var(--t3)"] };

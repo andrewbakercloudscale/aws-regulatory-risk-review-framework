@@ -907,7 +907,7 @@
       <summary><strong>Database access: the proxy and the known paths</strong> <span id="cpKnownSum" class="muted small"></span></summary>
       <p class="muted small">Only known paths may reach a database directly; every other source is treated like a laptop and must go through the proxy. A security group used by this account's workloads is known. Every address range is unknown unless listed here.</p>
       <div class="form-grid">
-        <label>Proxy security groups <span class="muted small">IDs (sg-...) or part of the name, comma separated</span><input type="text" id="cpProxy" placeholder="sg-0abc..., pg-proxy"></label>
+        <label>Other proxy security groups <span class="muted small">optional: RDS Proxy and pg-proxy, PgBouncer, Pgpool or PgCat in the same account are found by themselves. IDs (sg-...) or part of the name, comma separated</span><input type="text" id="cpProxy" placeholder="sg-0abc..., pg-proxy"></label>
         <label>Known direct sources <span class="muted small">CIDRs, prefix lists (pl-...) or groups (sg-...) allowed to reach databases directly</span><input type="text" id="cpKnownList" placeholder="10.20.0.0/16, pl-0abc..."></label>
         <label>More laptop ranges <span class="muted small">your dedicated Zscaler or VPN egress CIDRs, to label them</span><input type="text" id="cpLaptop" placeholder="196.x.x.x/27"></label>
         <label class="check"><input type="checkbox" id="cpZscaler" checked> Label Zscaler's published ranges as laptop ranges</label>

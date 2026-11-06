@@ -109,11 +109,15 @@ def db_sources(a: dict, known: dict) -> list[dict]:
     address range, a prefix list, or a group with nothing known behind it). Unknown is treated as a laptop:
     it must go through the proxy."""
     out = []
+    found = proxy_groups(a)
     for src in a["facts"].get("ingress") or []:
         label = src.get("cidr") or src.get("pl") or src.get("sg")
         name = src.get("name") or ""
         if src.get("sg"):
-            if src["sg"] in known["ids"] or any(p and p.lower() in name.lower() for p in known["proxy_names"]):
+            same = not src.get("account") or src["account"] == a.get("account_id", src["account"])
+            if src["sg"] in found and same and src["sg"] not in known["ids"]:
+                verdict, why = "proxy", found[src["sg"]]
+            elif src["sg"] in known["ids"] or any(p and p.lower() in name.lower() for p in known["proxy_names"]):
                 verdict, why = (
                     (
                         "proxy"
@@ -145,6 +149,28 @@ def db_sources(a: dict, known: dict) -> list[dict]:
             {"source": label, "verdict": verdict, "why": why, "note": src.get("note", ""), "via": src.get("via")}
         )
     return out
+
+
+def proxy_groups(a: dict) -> dict[str, str]:
+    """The security groups of the database proxies found in the database's account and region, each with what
+    the proxy is: an RDS Proxy, or a self run proxy such as pg-proxy found by its load balancer, ECS service or
+    group name. Nothing has to be set: the proxy is always in the same account."""
+    out: dict[str, str] = {}
+    for px in a["facts"].get("proxies") or []:
+        for g in px.get("groups") or []:
+            out.setdefault(g, f"{px['kind']} {px['name']}")
+    return out
+
+
+def _proxy_note(a: dict) -> str:
+    seen = sorted({f"{px['kind']} {px['name']}" for px in a["facts"].get("proxies") or []})
+    if a["facts"].get("rds_proxy"):
+        return f"an RDS Proxy already fronts it ({', '.join(a['facts']['rds_proxy'])}): route access through it"
+    if seen:
+        return f"a proxy runs in this account ({', '.join(seen[:3])}): route access through it"
+    if "proxies" in a["facts"]:
+        return "no database proxy found in this account"
+    return ""
 
 
 def _known(answers: dict | None) -> dict:
@@ -454,7 +480,9 @@ def _account_findings(account: dict, raw: dict, known: dict | None = None) -> tu
                     payment=a["payment"],
                     what=f"port {a['facts'].get('port') or 'any'} open to {len(bad)} source(s) not known"
                     + (", including a laptop range" if laptop else ""),
-                    evidence=[f"{r['source']}: {r['why']}" + (f" ({r['note']})" if r["note"] else "") for r in bad][:8],
+                    evidence=([_proxy_note(a)] if _proxy_note(a) else [])
+                    + [f"{r['source']}: {r['why']}" + (f" ({r['note']})" if r["note"] else "") for r in bad][:8],
+                    proxy_note=_proxy_note(a),
                     proxy=sorted({r["source"] for r in reach if r["verdict"] == "proxy"}),
                 )
             )
@@ -536,7 +564,15 @@ def _merge(found: list[dict]) -> list[dict]:
         if not f.get("action") and f.get("asset_kind") in ("account", "user", "role", "permission set", None, ""):
             out.append(f)
             continue
-        key = (f["rule"], f.get("action"), f["severity"], f.get("detect"), tuple(f.get("who") or ()), f.get("network"))
+        key = (
+            f["rule"],
+            f.get("action"),
+            f["severity"],
+            f.get("detect"),
+            tuple(f.get("who") or ()),
+            f.get("network"),
+            f.get("proxy_note"),
+        )
         if key not in keyed:
             keyed[key] = {**f, "assets": [f["asset"]], "count": 1}
             out.append(keyed[key])

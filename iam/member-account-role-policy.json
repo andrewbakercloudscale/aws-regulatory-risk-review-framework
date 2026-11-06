@@ -260,7 +260,8 @@
         "s3:GetBucketNotification",
         "rds:DescribeDBProxies",
         "rds:DescribeDBProxyTargets",
-        "ec2:GetManagedPrefixListEntries"
+        "ec2:GetManagedPrefixListEntries",
+        "elasticloadbalancing:DescribeTargetHealth"
       ],
       "Resource": "*"
     }

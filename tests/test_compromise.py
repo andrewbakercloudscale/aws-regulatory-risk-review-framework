@@ -108,6 +108,17 @@ ANSWERS = {
             {"NetworkInterfaceId": "eni-1", "InterfaceType": "lambda", "Groups": [{"GroupId": "sg-app"}]},
             {"NetworkInterfaceId": "eni-2", "Attachment": {"InstanceId": "i-1"}, "Groups": [{"GroupId": "sg-proxy"}]},
         ]},
+        # pg-proxy on Kubernetes nodes, behind a load balancer whose target group name carries it.
+        "describe_instances": {"Reservations": [{"Instances": [{"InstanceId": "i-1", "SecurityGroups": [{"GroupId": "sg-proxy"}]}]}]},
+    },
+    "elbv2": {
+        "describe_target_groups": {"TargetGroups": [
+            {"TargetGroupName": "k8s-data-gkpgprox-0a1b2c", "TargetType": "instance", "Port": 31966,
+             "TargetGroupArn": f"arn:aws:elasticloadbalancing:eu-west-1:{ACCT}:targetgroup/k8s-data-gkpgprox-0a1b2c/1"},
+            {"TargetGroupName": "k8s-web-frontend-9f8e7d", "TargetType": "instance", "Port": 30080,
+             "TargetGroupArn": f"arn:aws:elasticloadbalancing:eu-west-1:{ACCT}:targetgroup/k8s-web-frontend-9f8e7d/2"},
+        ]},
+        "describe_target_health": {"TargetHealthDescriptions": [{"Target": {"Id": "i-1", "Port": 31966}}]},
     },
     "lambda": {
         "list_functions": {"Functions": [{"FunctionName": "pay-out", "FunctionArn": f"arn:aws:lambda:eu-west-1:{ACCT}:function:pay-out",
@@ -301,8 +312,26 @@ def test_the_report_names_who_can_change_what_and_whether_anyone_would_see(read)
     flows = {(x["kind"], x["name"]): x for x in r["flows"]}
     assert flows[("bucket", "payments-outbound")]["verdict"] == "neither"
     direct = by["db_direct"][0]
-    assert direct["severity"] == "critical" and len(direct["evidence"]) == 2  # Zscaler and the /16, not the groups
+    sources = [e for e in direct["evidence"] if ": " in e and not e.startswith("a proxy")]
+    assert direct["severity"] == "critical" and len(sources) == 2  # Zscaler and the /16, not the groups
     assert any("laptop range" in e for e in direct["evidence"])
+    # The proxy is found with nothing set, and the fix points at it.
+    assert direct["proxy"] == ["sg-proxy"]
+    assert direct["evidence"][0].startswith("a proxy runs in this account (load balanced proxy k8s-data-gkpgprox")
+
+
+def test_the_proxy_is_found_without_settings_and_only_in_the_same_account(read):
+    from exitrisk.compromise import _known, db_sources
+
+    out, _, _ = read
+    db = next(a for a in out["assets"] if a["kind"] == "database")
+    assert [p["name"] for p in db["facts"]["proxies"]] == ["k8s-data-gkpgprox-0a1b2c"]  # not the frontend
+    verdicts = {r["source"]: r for r in db_sources(db, _known(None))}
+    assert verdicts["sg-proxy"]["verdict"] == "proxy" and "gkpgprox" in verdicts["sg-proxy"]["why"]
+    assert verdicts["sg-app"]["verdict"] == "known"
+    other = {**db, "facts": {**db["facts"], "ingress": [
+        {**s, "account": "222222222222"} for s in db["facts"]["ingress"] if s.get("sg") == "sg-proxy"]}}  # fmt: skip
+    assert db_sources(other, _known(None))[0]["verdict"] == "unknown"
 
 
 def test_a_database_open_only_to_the_proxy_and_known_ranges_is_not_direct(read):

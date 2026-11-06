@@ -90,6 +90,7 @@ Resources:
                   - rds:DescribeDBProxies
                   - rds:DescribeDBProxyTargets
                   - ec2:GetManagedPrefixListEntries
+                  - elasticloadbalancing:DescribeTargetHealth
                   - iam:SimulatePrincipalPolicy
                   - iam:ListRoles
                   - iam:GetPolicy

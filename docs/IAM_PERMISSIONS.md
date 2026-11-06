@@ -172,7 +172,7 @@ Only for the accounts picked in the Developer Compromise report. All reads. The 
 `ExitRiskDeveloperCompromise` statement adds what the other statements do not have, chiefly
 `iam:SimulatePrincipalPolicy` (to decide each path with AWS's policy simulator) and
 `iam:GetAccountAuthorizationDetails`, plus resource policies, Object Lock, code signing, function URLs,
-repository policies, key policies and CloudTrail event history. Check access tests them as "Developer
+repository policies, key policies, CloudTrail event history and the health of load balancer target groups (to find a self run database proxy and the instances behind it). Check access tests them as "Developer
 compromise reads in a member account". The management account's `organizations:ListAccounts`, already
 granted, tells roles trusted by another account of the organisation from those trusted by an outsider.
 

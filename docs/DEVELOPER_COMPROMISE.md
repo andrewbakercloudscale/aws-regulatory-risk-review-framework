@@ -79,14 +79,20 @@ through the database proxy. For each database the scan reads every source its se
 its port:
 
 - a security group used by this account's workloads (Lambda, ECS tasks, EC2 instances) is a **known** path;
-- the proxy's security group, named in the report's settings, is the **proxy**;
+- the proxy's security group is the **proxy**. Nothing has to be set: the proxy is always in the same
+  account, and the scan finds it by itself as an RDS Proxy, a load balancer target group whose name carries
+  pg-proxy, PgBouncer, Pgpool or PgCat (Kubernetes shortens it, for example `gkpgprox`) with the groups of the
+  instances or addresses behind it, an ECS service running such an image, or a security group with such a
+  name that compute uses (the group of the proxy's own cache or database does not count). Any other proxy
+  group can be added in the settings;
 - every address range (a CIDR or a prefix list), a group in another account, or a group nothing here uses is
   **unknown**: anything behind it, laptops through Zscaler or the VPN included, can connect directly. A range
   can be listed as known in the settings, with its reason.
 
 Zscaler's published egress ranges (from config.zscaler.com, cached for a day) and any dedicated ranges you
 add label an unknown range as a laptop range. An open port to an unknown source on a payment database is
-critical. When a database is reachable only by the proxy and known workloads, a person's IAM or password
+critical; the finding says which proxy already runs in the account, so the fix is to route access through
+it, or that no proxy was found. When a database is reachable only by the proxy and known workloads, a person's IAM or password
 path to it is lowered one level.
 
 ## How severity is set

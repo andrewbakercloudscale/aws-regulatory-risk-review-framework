@@ -14,6 +14,7 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 ### Fixed
 - Outage Risk: CloudWatch metrics are no longer lost in busy accounts. One GetMetricData call returns at most 500 series across its searches, and the searches past that came back empty, so database, cache and CPU figures were silently missing in accounts with many instances or volumes. Batches are now split until every search fits, a single search with more series than that is listed and read by name, and anything still unread marks the check as not measured instead of passing.
 
+- Developer Compromise: the database proxy is found by itself, with nothing to set: an RDS Proxy, or a self run pg-proxy, PgBouncer, Pgpool or PgCat found by its load balancer target group (and the instances or addresses behind it), its ECS service or image, or a security group named for it that compute uses. Its groups are labelled proxy, and each "reached without the proxy" finding names the proxy already running in the account, or says none was found. Needs `elasticloadbalancing:DescribeTargetHealth`, added to the member role policy.
 - Developer Compromise: picking accounts again pre-ticks the accounts checked last time, so Run reads them all again; "Clear all" unticks every account; the count shows how many are read again, new and kept; "Back to the report" leaves the picker.
 
 ## [0.30.0] - 2026-11-05

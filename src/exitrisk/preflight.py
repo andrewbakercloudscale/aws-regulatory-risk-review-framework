@@ -183,6 +183,8 @@ ASSURANCE_PROBES = [
      {"DBProxyName": _NO_SUCH}),
     ("ec2:GetManagedPrefixListEntries", "ec2", "get_managed_prefix_list_entries",
      {"PrefixListId": "pl-0123456789abcdef0", "MaxResults": 5}),
+    ("elasticloadbalancing:DescribeTargetHealth", "elbv2", "describe_target_health",
+     {"TargetGroupArn": _ARN.format("elasticloadbalancing", "targetgroup/exitrisk-no-such/0123456789abcdef")}),
     ("cloudtrail:LookupEvents", "cloudtrail", "lookup_events", {"MaxResults": 1}),
     ("cloudtrail:GetEventSelectors", "cloudtrail", "get_event_selectors", {"TrailName": _NO_SUCH}),
     ("account:GetAlternateContact", "account", "get_alternate_contact", {"AlternateContactType": "SECURITY"}),
