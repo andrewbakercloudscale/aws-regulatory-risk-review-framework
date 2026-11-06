@@ -24,6 +24,9 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 - Health Check: metric reads no longer lose data in large accounts. AWS returns at most 500 series a call and silently drops the rest; batches that overflow are now split, so every probe is judged (in one test account three times as many series were read).
 - Health Check: findings that are the account's normal are no longer raised: Aurora swap and load are judged by their rise, the buffer cache hit ratio by a drop below its usual level, EBS limits ignore a new node's first 30 minutes, a VPC endpoint or event source mapping broken for days is marked long standing, and MSK patching or broker changes are shown as the cause of the partition alerts they produce.
 - Health Check: MSK reads logged under a write permission (IAM authorisation records the action checked) are no longer listed as changes.
+- Health Check: standing problems no longer lead the top 10. Load balancers down all window and the day before,
+  counts at their usual daily and weekly level, blackhole routes of unknown age and short Resolver blips are
+  kept in All signals at a lower severity; functions that keep load balancer IP targets current are routine.
 
 ## [0.32.1] - 2026-11-06
 
