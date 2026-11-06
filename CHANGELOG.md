@@ -6,6 +6,15 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- Health Check, a sixth report (`/health`, or Health check in the top bar): search by account number, name or owner, tick up to 10 accounts, choose how far to look back and optionally describe the symptoms. It reads metrics, alarms, CloudTrail changes, ECS, EKS, Auto Scaling, EC2, Lambda, load balancer targets, RDS, ElastiCache, VPN, transit gateway, Direct Connect, flow logs, DNS, application log errors, quotas, certificates and AWS Health, and returns the top issues by severity and outage likelihood, with everything found, changes, a timeline and what could not be checked. See docs/HEALTH_CHECK.md.
+- Sign in with an access key: the console lists the profiles in your AWS credentials and config files with their kind and the key masked, and uses the one you choose. Secrets never leave the machine.
+- Health Check: Check access tries every read once per account and gives a policy for any refused.
+
+### Changed
+- Health Check: changes by cluster controllers (Karpenter, the autoscaler, the load balancer controller) and housekeeping (old launch templates, snapshots) are tagged routine and never counted as risky. The Risky changes tile opens the changes list, which explains that repeats are grouped.
+- Health Check: MSK reads logged under a write permission (IAM authorisation records the action checked) are no longer listed as changes.
+
 ## [0.32.1] - 2026-11-06
 
 - README opens with a one paste install script: it clones, sets up a virtual environment and starts the console, and updates an existing install when run again.

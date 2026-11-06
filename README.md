@@ -99,6 +99,10 @@ exit" (a fact a board can govern).
 ## What it does
 
 > **Recent additions**
+> - **[Health Check](docs/HEALTH_CHECK.md)**: a new report for an outage going on now. Search and tick up to
+>   10 accounts; it reads metrics, alarms, changes, logs, load balancer targets, network, DNS and quotas, and
+>   ranks the top issues by how likely each is to cause an outage. Works with SSO or an access key from your
+>   credentials file.
 > - **Outage Risk**: an Immediate attention section, Actions by owner, Export table to PDF and Complete the
 >   scan; shared network and DNS accounts, transit gateway, DNS failover and certificate renewal checks; end of
 >   life databases, EKS versions, Amazon Linux 2 nodes and operating systems; container images pulled from
@@ -376,6 +380,7 @@ Full detail, including the estimate model and its limitations: [docs/METHODOLOGY
 | [AI_REVIEW.md](docs/AI_REVIEW.md) | The optional AI review: providers, passes, what is sent, keys |
 | [CLOUD_ASSURANCE.md](docs/CLOUD_ASSURANCE.md) | The Cloud Assurance Framework Report: every rule, rulesets, scoring, permissions |
 | [DEVELOPER_COMPROMISE.md](docs/DEVELOPER_COMPROMISE.md) | The Developer Compromise Report: assumes laptops and pipelines are compromised, and checks each money moving flow is immutable or observed |
+| [HEALTH_CHECK.md](docs/HEALTH_CHECK.md) | The Health Check Report: a deep check of one to ten accounts during an outage, top issues ranked by outage likelihood, access keys or SSO |
 | [OUTAGE_RISK.md](docs/OUTAGE_RISK.md) | The Outage Risk Report: what is checked, how severity is set, the evidence on outage causes, what is not measured |
 | [MULTI_REGION.md](docs/MULTI_REGION.md) | The Multi-Region Report: run and build cost, team growth, recovery time per service, region choice |
 | [SERVICE_CATALOG.md](docs/SERVICE_CATALOG.md) | Every service's tier, rationale, migration path, equivalents, duration |
