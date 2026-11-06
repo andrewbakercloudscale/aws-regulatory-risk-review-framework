@@ -633,6 +633,22 @@ def clear_quota_defaults() -> None:
         _DEFAULTS_KEYS.clear()
 
 
+QUOTA_PAGE = 100  # the largest page Service Quotas returns; its default of 20 needs five times the calls
+
+
+def _quota_pages(sq, op: str, code: str) -> list[dict]:
+    """Every quota ``op`` lists for ``code``, 100 to a page. A throttled page is retried on its own:
+    retrying the whole read restarted EC2's 17 pages (83 at the default size) from the first."""
+    out: list[dict] = []
+    kwargs = {"ServiceCode": code, "MaxResults": QUOTA_PAGE}
+    while True:
+        page = with_backoff(getattr(sq, op), transient=True, **kwargs)
+        out.extend(page.get("Quotas") or [])
+        if not page.get("NextToken"):
+            return out
+        kwargs["NextToken"] = page["NextToken"]
+
+
 def _default_quotas(sq, region: str, code: str) -> list[dict]:
     key = (region, code)
     with _DEFAULTS_LOCK:
@@ -643,7 +659,7 @@ def _default_quotas(sq, region: str, code: str) -> list[dict]:
         with _DEFAULTS_LOCK:
             if key in _DEFAULTS:
                 return _DEFAULTS[key]
-        found = _pages(sq, "list_aws_default_service_quotas", "Quotas", ServiceCode=code)
+        found = _quota_pages(sq, "list_aws_default_service_quotas", code)
         if found:  # an empty answer is not kept: the next account asks again
             with _DEFAULTS_LOCK:
                 _DEFAULTS[key] = found
@@ -653,7 +669,7 @@ def _default_quotas(sq, region: str, code: str) -> list[dict]:
 def _service_quotas(sq, region: str, code: str) -> dict[str, dict] | None:
     try:
         quotas = {q["QuotaCode"]: dict(q) for q in _default_quotas(sq, region, code)}
-        for q in _pages(sq, "list_service_quotas", "Quotas", ServiceCode=code):
+        for q in _quota_pages(sq, "list_service_quotas", code):
             # An applied quota has the value; the default list has the usage metric, and either may lack it.
             quotas[q["QuotaCode"]] = {**quotas.get(q["QuotaCode"], {}), **{k: v for k, v in q.items() if v}}
     except ClientError as exc:
@@ -810,7 +826,7 @@ def task_s3_limits(ctx: OutageCtx) -> None:
     buckets = ctx.client("s3").list_buckets().get("Buckets") or []
     sq = ctx.client("service-quotas", ctx.home)
     limit = None
-    for q in _default_quotas(sq, ctx.home, "s3") + _pages(sq, "list_service_quotas", "Quotas", ServiceCode="s3"):
+    for q in _default_quotas(sq, ctx.home, "s3") + _quota_pages(sq, "list_service_quotas", "s3"):
         name = q.get("QuotaName", "").lower()
         if q.get("Value") and "bucket" in name and ("general purpose" in name or name == "buckets"):
             limit = q["Value"]
@@ -920,9 +936,7 @@ def task_connect(ctx: OutageCtx, region: str) -> None:
         return
     quotas = {}
     sq = ctx.client("service-quotas", region)
-    for q in _default_quotas(sq, region, "connect") + _pages(
-        sq, "list_service_quotas", "Quotas", ServiceCode="connect"
-    ):
+    for q in _default_quotas(sq, region, "connect") + _quota_pages(sq, "list_service_quotas", "connect"):
         if q.get("Value"):
             quotas[q.get("QuotaName", "").lower()] = q["Value"]
     m = ctx.metrics(region)
