@@ -6,24 +6,24 @@
    To restart it (e.g. after an upgrade) run `exitrisk serve --replace`: it stops the running console
    once its scans have finished, then starts. Stopping the console any other way also waits for running
    scans; a second Ctrl+C stops at once and loses them.
-2. With AWS SSO: **AWS sign-in** → pick or add the access portal → **Sign in** (approve on the AWS
-   page that opens) → choose the management account and a read-only role → **Use for a new scan**.
+2. With AWS SSO: **AWS sign in** → pick or add the access portal → **Sign in** (approve on the AWS
+   page that opens) → choose the management account and a read only role → **Use for a new scan**.
    Otherwise: **New scan** → choose the profile for the management account → **Load OUs** (first AWS call; with
    aws-cli-zsp, approve Touch ID) → pick an OU or leave the root → months of history (12, the default,
    shows a year of growth by product type) → optionally tick **Deep scan** and give the member role name.
-3. Watch the progress bar. A spend-only scan of a few hundred accounts takes seconds; a deep scan takes
+3. Watch the progress bar. A spend only scan of a few hundred accounts takes seconds; a deep scan takes
    about 20 seconds per account with 18 regions enabled (every service in every region read in parallel), with
    16 accounts at a time (`EXITRISK_MAX_WORKERS`, default 16), each in its own worker process
    (`EXITRISK_PROCESSES`, default twice the cores up to 16). The scan saves what it has read every 25
-   accounts or 5 minutes, and on Stop: a scan cut short opens as interrupted, with the accounts it read. Behind a TLS-inspecting
+   accounts or 5 minutes, and on Stop: a scan cut short opens as interrupted, with the accounts it read. Behind a TLS inspecting
    proxy the proxy sets the pace, and a scan can take twice that. Tick
    **Only regions with spend** to read just the regions billing US$1 a month or more (about half the time;
-   resources that cost nothing yet, and the landing-zone baseline elsewhere, are then not counted).
+   resources that cost nothing yet, and the landing zone baseline elsewhere, are then not counted).
 4. Filter to production in the bar at the top, open **Exit model** in the top bar to answer the delivery questions, the notice period and the critical accounts, check section 9,
    and **Export PDF** (browser print → Save as PDF) or `exitrisk pdf <scan-id> --include prod`.
 
-Scans are kept until deleted (`DELETE /api/scans/<id>` or remove the file). Re-scan quarterly to show
-whether lock-in is growing; the trend chart covers the months in each scan. **Settings → Compare
+Scans are kept until deleted (`DELETE /api/scans/<id>` or remove the file). Rescan quarterly to show
+whether lock in is growing; the trend chart covers the months in each scan. **Settings → Compare
 scans** shows what changed between two scans (score, spend, tiers, accounts and services), with both
 scored on the current filter and Exit model answers; `POST /api/compare` with `before_id` and
 `after_id` returns the same as JSON.
@@ -35,7 +35,7 @@ exit target) on a day of the month you pick, so **Compare scans** shows the tren
 lets Cost Explorer close the previous month.
 
 - It runs while the console is open (checked at start and every 10 minutes).
-- It uses your own AWS sign-in. An SSO session lasts hours, so the attempt usually fails when you
+- It uses your own AWS sign in. An SSO session lasts hours, so the attempt usually fails when you
   have not signed in that day: the failure is recorded, a red banner says so, and it retries a day
   later. Sign in, then **Run now**. A failed attempt that read nothing is not kept in the scan list.
 - `exitrisk schedule show` prints the schedule; `exitrisk schedule run` runs it only when due
@@ -64,8 +64,8 @@ Two data files ship with the tool and can be refreshed from AWS's public files (
 
 | File | Used for | Refresh |
 |---|---|---|
-| `data/region_services.json` | Which services each region offers (Multi-region) | `python scripts/refresh_region_services.py` |
-| `data/direct_connect.json` | Direct Connect port and data-out list prices by region, and location names (links for the migration) | `python scripts/refresh_direct_connect.py` (downloads AWS's ~100 MB price list; or pass a saved copy) |
+| `data/region_services.json` | Which services each region offers (Multi region) | `python scripts/refresh_region_services.py` |
+| `data/direct_connect.json` | Direct Connect port and data out list prices by region, and location names (links for the migration) | `python scripts/refresh_direct_connect.py` (downloads AWS's ~100 MB price list; or pass a saved copy) |
 
 Each file records the date AWS published it, which the report shows next to the figures.
 
@@ -74,14 +74,14 @@ Each file records the date AWS published it, which the report shows next to the 
 | Variable | Default | Meaning |
 |---|---|---|
 | `EXITRISK_DATA_DIR` | `~/.exitrisk` | Scans (`scans/`) and logs (`logs/`) |
-| `EXITRISK_LOG_LEVEL` | `INFO` | `DEBUG` adds per-call detail |
+| `EXITRISK_LOG_LEVEL` | `INFO` | `DEBUG` adds per call detail |
 | `EXITRISK_MAX_WORKERS` | `16` | Parallel accounts in a deep scan; lower it if throttled |
 | `EXITRISK_PROCESSES` | CPU cores, up to 8 | Worker processes a deep scan parses AWS answers in; `1` keeps it in the console process |
 | `AWS_PROFILE`, `AWS_CONFIG_FILE` | standard | Honoured by boto3 as usual |
 
 ## Logs
 
-- Console: one human-readable line per event, prefixed with the scan id.
+- Console: one human readable line per event, prefixed with the scan id.
 - File: `~/.exitrisk/logs/exitrisk.log`, JSON lines, rotated at 5 MB, five generations kept.
 - In the UI: **Settings** (gear, top right) → **Application log** shows recent records, filtered to the current scan by default.
 
@@ -94,20 +94,20 @@ jq -r 'select(.level=="ERROR" or .level=="WARNING")' ~/.exitrisk/logs/exitrisk.l
 
 | Message / code | Cause | Fix |
 |---|---|---|
-| `ExpiredToken`, `ExpiredTokenException` | Session older than its lifetime | Re-run; aws-cli-zsp prompts for Touch ID again |
-| `credential_process` failed / cancelled | Touch ID prompt dismissed or the ZSP helper not running | Re-run and approve; check the aws-cli-zsp menu-bar status |
-| `SSOToken` / "Not signed in" | No AWS SSO sign-in for the profile's portal, or it expired | **AWS sign-in** in the header, or `aws sso login --sso-session <name>` |
-| Account appears in SSO but "management account not visible" | The roles you hold cannot call `organizations:DescribeOrganization` | Pick the payer account by name; ask for a read-only role there |
+| `ExpiredToken`, `ExpiredTokenException` | Session older than its lifetime | Rerun; aws-cli-zsp prompts for Touch ID again |
+| `credential_process` failed / cancelled | Touch ID prompt dismissed or the ZSP helper not running | Rerun and approve; check the aws-cli-zsp menu bar status |
+| `SSOToken` / "Not signed in" | No AWS SSO sign in for the profile's portal, or it expired | **AWS sign in** in the header, or `aws sso login --sso-session <name>` |
+| Account appears in SSO but "management account not visible" | The roles you hold cannot call `organizations:DescribeOrganization` | Pick the payer account by name; ask for a read only role there |
 | `ProfileNotFound` | Typo in the profile | `aws configure list-profiles` |
 | `AccessDeniedException` on Organizations | Not the management account, or missing permissions | Use the payer account profile; see IAM_PERMISSIONS.md. The scan continues for the calling account only |
 | `AWSOrganizationsNotInUseException` | Standalone account | Expected; the report covers that one account |
 | `DataUnavailableException` | Cost Explorer not enabled | Enable it in the Billing console; data appears within 24 hours |
 | `AccessDenied` on `sts:AssumeRole` | Member role missing or trust wrong | Deploy the StackSet; check the trust names your scanner account |
-| `ThrottlingException`, `Rate exceeded` | API limits during a deep scan | Already retried 10× adaptively; lower `EXITRISK_MAX_WORKERS` and re-run |
+| `ThrottlingException`, `Rate exceeded` | API limits during a deep scan | Already retried 10× adaptively; lower `EXITRISK_MAX_WORKERS` and rerun |
 | `OptInRequired` | Region not enabled for the account | Skipped automatically |
 | `'X' is not in the service catalog` | New or rare AWS service | Scored as tier 3; add it to the catalog (CONTRIBUTING.md) |
 | `address already in use` on serve | Port 8740 taken | `exitrisk serve --port 8750` |
-| "The console restarted while this scan was running" | The console was stopped mid-scan; scans run in memory | Start the scan again. Restart with `exitrisk serve --replace`, which waits for running scans |
+| "The console restarted while this scan was running" | The console was stopped mid scan; scans run in memory | Start the scan again. Restart with `exitrisk serve --replace`, which waits for running scans |
 | PDF command: `needs Playwright` | Optional dependency missing | `pip install '.[pdf]' && playwright install chromium` |
 
 Report anything else as a GitHub issue with the scan's log lines (they contain account ids and service

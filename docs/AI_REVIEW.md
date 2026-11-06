@@ -34,7 +34,7 @@ warns that the view will be thin.
 | OpenRouter | Claude Fable 5.1, Opus 5.5 or GLM 5.3 | `OPENROUTER_API_KEY` |
 | AI gateway (Portkey, LiteLLM or your own) | Whatever the gateway routes to | Base URL, a key (`EXITRISK_AI_GATEWAY_KEY`) and optional extra headers |
 
-**AI gateway** calls any OpenAI-compatible endpoint (`<base URL>/chat/completions`, `/models`), so a
+**AI gateway** calls any OpenAI compatible endpoint (`<base URL>/chat/completions`, `/models`), so a
 firm that routes model traffic through Portkey, LiteLLM or its own gateway can use the same guardrails,
 logging and billing it already has. Set the base URL (https only), choose how the key is sent
 (`Authorization: Bearer` for LiteLLM and most gateways, `x-portkey-api-key` for Portkey, or `api-key` /
@@ -94,11 +94,11 @@ A summary of the report as filtered: per account its name, OU path, spend, servi
 model's effort, data size, counts of integrations, critical flag and owner tag; and the estate totals,
 estimate, answers and assumptions. Never resource names, ARNs, configuration or AWS credentials.
 
-**Hide account names and owners** (on by default for third-party providers) swaps every account id,
+**Hide account names and owners** (on by default for third party providers) swaps every account id,
 name and owner for a code, everywhere in the text sent, and restores them in the answer. The model then
 judges accounts by their services alone, so its insight is a little thinner.
 
-Check that the provider is approved for this data before using a third-party provider. Bedrock keeps
+Check that the provider is approved for this data before using a third party provider. Bedrock keeps
 it in your AWS account.
 
 ## Keys
@@ -117,7 +117,7 @@ shorter AI read, written for their own readers:
   accounts (up to 40 by spend, with their failover risks), the cost and people ranges, each team's
   growth, the services that miss the recovery target and the candidate regions.
 - **Cloud Assurance Report**: for the CISO, risk and audit. The model sees the summary, the control
-  areas, the 25 most serious failing rules and the 40 highest-risk accounts with their top findings.
+  areas, the 25 most serious failing rules and the 40 highest risk accounts with their top findings.
 
 Each answer has a headline, key points, risks (with accounts), actions (owner, when), questions to
 ask and the model's confidence. One call, asked again if cut off or not JSON; account ids the model

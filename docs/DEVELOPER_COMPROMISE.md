@@ -3,10 +3,10 @@
 The fifth report. Its premise: **developers' laptops and the pipelines are already compromised**, as in
 the 2026 Binance attack, where a tampered developer tool on one engineer's laptop led to a deployment token
 on another's, a container deployed by hand, and the wallet signing service signing the attacker's
-transactions. So no money-moving flow may rest on trusting who changes it. Each must be:
+transactions. So no money moving flow may rest on trusting who changes it. Each must be:
 
 - **immutable**: it cannot be changed, or every change can be undone and proven (Object Lock in compliance
-  mode, Lambda code signing, immutable image tags, point-in-time recovery); or
+  mode, Lambda code signing, immutable image tags, point in time recovery); or
 - **observable**: every change is recorded by CloudTrail and raises an alert.
 
 It runs only in the accounts you pick, with strict rules.
@@ -14,12 +14,30 @@ It runs only in the accounts you pick, with strict rules.
 ## Running it
 
 1. Open a live scan of the organisation (any scan; it needs the accounts list).
-2. Choose **Developer Compromise**, tick the payment and channel accounts (production accounts whose names
-   look like payment or channel accounts are ticked to start with; up to 40), and **Run the checks**.
+2. Choose **Developer Compromise**. The picker lists every account in the organisation:
+   - on a scan with no checks yet, production accounts whose names look like payment or channel accounts are
+     ticked to start with;
+   - on a scan that already has checks, the accounts checked last time are ticked, so **Run the checks** reads
+     them all again. Untick one to keep its earlier result; tick a new one to add it;
+   - **Clear all** unticks everything, and the count line says how many accounts are read again, new and kept;
+   - up to 40 accounts in one run. **Back to the report** leaves the picker without running.
 3. A new scan is saved: the earlier scan's other reports are kept, with the checks for the picked accounts
    added. Each account takes a few minutes.
 
 PDF: `exitrisk pdf <scan-id> --view compromise`.
+
+## Reading the report
+
+- **Executive summary**: how many money moving flows have a gap, the worst accounts, and what to fix first.
+- **Where to focus**: four charts (accounts by risk, gaps by account, gaps by kind of resource and findings by
+  control area). Select an account in any of them to narrow every table to it; **Show all accounts** clears it.
+- **Show only critical** hides everything below critical.
+- **Money moving resources with a gap** lists only what needs action: **Unseen** (nothing prevents a change and
+  nothing records it) and **Recorded, no alert** (CloudTrail records it but nobody is told). Resources that are
+  immutable or alerted are counted, not listed.
+- Rules AWS services create for themselves (Inspector, Auto Scaling and others marked as managed) never count as
+  alerts: they watch for their own purposes, not for a person changing a payment flow.
+- **Export table to PDF** prints the flows table on its own.
 
 ## How a path is decided
 
@@ -42,17 +60,17 @@ SCP that names them is weighed. An organisation trail cannot be changed from a m
 
 | Area | Checks |
 |---|---|
-| Who can change money-moving resources | Write S3 objects, delete versions or stop versioning; write DynamoDB items; read the database admin password, reset it, connect with IAM auth, run SQL through the Data API; replace function code or settings; call a payment function; deploy an ECS service; push an image; read a secret; sign with a KMS signing key; call an IAM-protected API |
-| Credentials on a laptop | IAM user access keys that can change production, console users without MFA, root keys or no MFA, sign-in sessions over 4 hours for people with write access |
+| Who can change money moving resources | Write S3 objects, delete versions or stop versioning; write DynamoDB items; read the database admin password, reset it, connect with IAM auth, run SQL through the Data API; replace function code or settings; call a payment function; deploy an ECS service; push an image; read a secret; sign with a KMS signing key; call an IAM protected API |
+| Credentials on a laptop | IAM user access keys that can change production, console users without MFA, root keys or no MFA, sign in sessions over 4 hours for people with write access |
 | Pipelines | OIDC trust with no subject, a wildcard subject or every branch; outside accounts with no external ID; payment functions without code signing; mutable image tags where services deploy by tag |
-| Open to a laptop | APIs with methods that need no sign-in, function URLs with no auth, function policies open to anyone, public databases |
-| Observability | No trail; trail log file validation off; data events off for payment buckets and tables; read events off (secret reads, signatures); GuardDuty and its S3 protection; alerts on changes by people; alerts on becoming a high-risk role; alerts on payment file changes; API access logs |
-| Tamper evidence | Payment buckets without versioning or Object Lock; payment tables without point-in-time recovery; payment databases without activity streams; payment secrets not rotated |
+| Open to a laptop | APIs with methods that need no sign in, function URLs with no auth, function policies open to anyone, public databases |
+| Observability | No trail; trail log file validation off; data events off for payment buckets and tables; read events off (secret reads, signatures); GuardDuty and its S3 protection; alerts on changes by people; alerts on becoming a high risk role; alerts on payment file changes; API access logs |
+| Tamper evidence | Payment buckets without versioning or Object Lock; payment tables without point in time recovery; payment databases without activity streams; payment secrets not rotated |
 | Changes by hand | Writes by people's own sessions in the last 30 days, from CloudTrail, with the tool: CLI, SDK and Terraform from a laptop stand out from the console |
 
-"Money-moving" is decided from names and tags (payment, card, ledger, settlement, EFT, DebiCheck, SWIFT,
+"Money moving" is decided from names and tags (payment, card, ledger, settlement, EFT, DebiCheck, SWIFT,
 wallet, signer and similar), with the account's own name taken out first. Every resource in a picked
-account is checked; money-moving raises the severity. Access logs and Athena results are left out.
+account is checked; money moving raises the severity. Access logs and Athena results are left out.
 
 ## Databases: the proxy and the known paths
 

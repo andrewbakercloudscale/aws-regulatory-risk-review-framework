@@ -4,7 +4,7 @@ The Cloud Assurance Framework Report scores every account against the controls a
 board asks about: who holds administrator access, what is reachable from the internet, whether changes
 are logged, alerted and made through pipelines, whether production survives the loss of a data centre
 or region and is restored in tests, whether sensitive data is protected against silent change, and who
-owns each account. It is a separate report from the exit-risk review, in the same console and the same
+owns each account. It is a separate report from the exit risk review, in the same console and the same
 scan.
 
 It answers questions such as:
@@ -38,7 +38,7 @@ The catalogue, [`src/exitrisk/data/assurance.yaml`](../src/exitrisk/data/assuran
 in 13 areas. Each has a severity, an optional scope (production only, accounts that are not
 the internet edge, or accounts holding sensitive data), why it matters, how to fix it, public references
 (CIS AWS Foundations Benchmark v3.0 and the AWS Foundational Security Best Practices controls) and the
-read-only calls it is evaluated from.
+read only calls it is evaluated from.
 
 **Choose rules** in section 2 shows every rule, searchable by name, id or reference, filterable by area,
 severity and framework. Tick the rules that apply to the OU or accounts in the report, change a rule's
@@ -49,7 +49,7 @@ severity if your policy rates it differently, then:
   `~/.exitrisk/rulesets.json` (or `$EXITRISK_DATA_DIR`), appear in the Ruleset list for every scan, and
   can be deleted from there.
 
-Built-in rulesets: All rules, Regulator essentials (critical and high), CIS AWS Foundations, AWS
+Built in rulesets: All rules, Regulator essentials (critical and high), CIS AWS Foundations, AWS
 Foundational Security Best Practices, Resilience and disaster recovery, Sensitive data, Identity and
 access. They follow the catalogue and cannot be changed; save a copy to adapt one.
 
@@ -86,13 +86,13 @@ Points and severities are in the catalogue and can be changed there.
 
 ## Where the results come from
 
-Every call is read-only (list, describe, get). Nothing is stored but counts, names and settings: no
+Every call is read only (list, describe, get). Nothing is stored but counts, names and settings: no
 object, log line, item or secret value is read. The checks read each service directly, so they hold
 whether or not Security Hub is on; the findings AWS itself reports are separate rules (open GuardDuty
 findings, critical Security Hub findings, high findings older than 90 days, Inspector vulnerabilities,
-Access Analyzer external access, AWS Config non-compliant rules, Trusted Advisor red and yellow checks).
+Access Analyzer external access, AWS Config non compliant rules, Trusted Advisor red and yellow checks).
 
-Organisation-level controls are read once, in the management account:
+Organisation level controls are read once, in the management account:
 
 - **Service control policies**: for each account, the SCPs on the account, every OU above it and the
   root. A guardrail counts when a Deny covers the action (with or without an exemption condition):
@@ -136,7 +136,7 @@ report names the catalogue version and the scan id.
 
 ## Limits
 
-- Organisation-level checks need a scan from the management account; from a member account they show as
+- Organisation level checks need a scan from the management account; from a member account they show as
   not measured.
 - Access Analyzer run as an organisation analyzer in a delegated administrator account is credited to
   every account (it is not read inside that account).
@@ -159,7 +159,7 @@ Hosts, data and services reachable from the internet that should not be.
 | Instances with a public IP outside the internet edge | `ec2_public_ip` | Medium | Not edge | FSBP EC2.9 |
 | Internet gateway outside the internet edge | `igw_present` | Medium | Not edge |   |
 | NAT gateway outside the internet edge | `nat_present` | Low | Not edge |   |
-| Internet-facing load balancers outside the internet edge | `public_lb` | Low | Not edge |   |
+| Internet facing load balancers outside the internet edge | `public_lb` | Low | Not edge |   |
 | Databases marked publicly accessible | `rds_public` | High | All | CIS 2.3.3, FSBP RDS.2 |
 | Disk snapshots shared with everyone | `public_snapshots` | Critical | All | FSBP EC2.1 |
 | Machine images shared with everyone | `public_amis` | High | All |   |
@@ -175,13 +175,13 @@ Hosts, data and services reachable from the internet that should not be.
 | Redshift clusters marked publicly accessible | `redshift_public` | High | All | FSBP Redshift.1 |
 | Load balancers serving plain HTTP | `elb_http` | Medium | All | FSBP ELB.1 |
 | Load balancers allowing TLS 1.0 or 1.1 | `tls_outdated` | Medium | All | FSBP ELB.8 |
-| Internet-facing applications without a web firewall | `waf_missing` | Medium | All | FSBP APIGateway.4, FSBP WAF.10 |
+| Internet facing applications without a web firewall | `waf_missing` | Medium | All | FSBP APIGateway.4, FSBP WAF.10 |
 | CloudFront serving plain HTTP | `cloudfront_http` | Medium | All | FSBP CloudFront.3 |
 | CloudFront without a web firewall | `cloudfront_no_waf` | Low | All | FSBP CloudFront.6 |
 
 ### Identity and privileged access (20)
 
-Who holds administrator rights, root and long-lived credentials, segregation of duties.
+Who holds administrator rights, root and long lived credentials, segregation of duties.
 
 | Rule | Id | Severity | Applies to | References |
 |---|---|---|---|---|
@@ -208,11 +208,11 @@ Who holds administrator rights, root and long-lived credentials, segregation of 
 
 ### Audit trail (11)
 
-Complete, tamper-evident records of who changed what, kept as evidence.
+Complete, tamper evident records of who changed what, kept as evidence.
 
 | Rule | Id | Severity | Applies to | References |
 |---|---|---|---|---|
-| No multi-region CloudTrail logging | `cloudtrail_off` | High | All | CIS 3.1, FSBP CloudTrail.1 |
+| No multi region CloudTrail logging | `cloudtrail_off` | High | All | CIS 3.1, FSBP CloudTrail.1 |
 | CloudTrail log file validation off | `cloudtrail_validation` | Medium | All | CIS 3.2, FSBP CloudTrail.4 |
 | AWS Config not recording | `config_off` | High | All | CIS 3.3, FSBP Config.1 |
 | VPCs without flow logs | `flow_logs` | Medium | All | CIS 3.7, FSBP EC2.6 |
@@ -233,7 +233,7 @@ Security services switched on, and the issues AWS itself reports being closed.
 | GuardDuty off | `guardduty_off` | High | All | FSBP GuardDuty.1 |
 | Security Hub off | `securityhub_off` | Medium | All | CIS 4.16 |
 | Inspector vulnerability scanning off | `inspector_off` | Medium | All | FSBP Inspector.1 |
-| Open high-severity GuardDuty findings | `guardduty_findings` | High | All |   |
+| Open high severity GuardDuty findings | `guardduty_findings` | High | All |   |
 | Open critical Security Hub findings | `sh_critical_findings` | Critical | All |   |
 | High Security Hub findings open for more than 90 days | `sh_high_aged` | Medium | All |   |
 | Open IAM Access Analyzer external access findings | `external_access_findings` | High | All |   |
@@ -275,7 +275,7 @@ Payment and customer files protected against change, deletion and silent tamperi
 |---|---|---|---|---|
 | People can change sensitive files with no alert | `sensitive_human_write` | High | All | CIS 3.8 |
 | Sensitive buckets without versioning | `sensitive_no_versioning` | High | All | FSBP S3.14 |
-| Sensitive buckets without object-level logging | `sensitive_no_data_events` | Medium | All | CIS 3.8 |
+| Sensitive buckets without object level logging | `sensitive_no_data_events` | Medium | All | CIS 3.8 |
 | Sensitive buckets without Object Lock | `sensitive_no_lock` | Medium | All | FSBP S3.15 |
 | Sensitive buckets not replicated | `sensitive_no_replication` | Low | Production | FSBP S3.7 |
 | Sensitive buckets not encrypted with a KMS key | `sensitive_no_kms` | Medium | All | FSBP S3.17 |
@@ -303,11 +303,11 @@ Production survives the loss of a data centre (AZ) or region, and recovery is te
 | Production databases without deletion protection | `rds_no_deletion_protection` | Low | Production | FSBP RDS.8 |
 | Auto Scaling groups in one availability zone | `asg_single_az` | High | Production | FSBP AutoScaling.2 |
 | Load balancers in one availability zone | `lb_single_az` | Medium | Production | FSBP ELB.10, FSBP ELB.13 |
-| Stand-alone servers all in one availability zone | `ec2_one_az` | Medium | Production |   |
+| Stand alone servers all in one availability zone | `ec2_one_az` | Medium | Production |   |
 | Caches without automatic failover | `elasticache_no_failover` | Medium | Production | FSBP ElastiCache.3 |
 | OpenSearch domains in one availability zone | `opensearch_single_az` | Medium | Production |   |
 | One Zone file systems in production | `efs_one_zone` | Medium | Production |   |
-| DynamoDB tables without point-in-time recovery | `dynamodb_no_pitr` | Medium | Production | FSBP DynamoDB.2 |
+| DynamoDB tables without point in time recovery | `dynamodb_no_pitr` | Medium | Production | FSBP DynamoDB.2 |
 | No AWS Backup protection | `backup_none` | Medium | Production |   |
 | Backups not copied to a second region | `backup_no_cross_region` | Medium | Production |   |
 | No restore tested in 90 days | `restore_untested` | Medium | Production |   |
@@ -316,7 +316,7 @@ Production survives the loss of a data centre (AZ) or region, and recovery is te
 | Database backups kept less than 7 days | `rds_backup_short` | Low | Production | FSBP RDS.26 |
 | DynamoDB tables without deletion protection | `dynamodb_no_deletion_protection` | Low | Production | FSBP DynamoDB.6 |
 | Internet access through one availability zone | `nat_single_az` | Medium | Production |   |
-| Site-to-site VPN without a working second tunnel | `vpn_tunnel_down` | Medium | All |   |
+| Site to site VPN without a working second tunnel | `vpn_tunnel_down` | Medium | All |   |
 | Direct Connect without redundancy | `dx_no_redundancy` | High | All |   |
 | Container services running one copy | `ecs_single_task` | Medium | Production |   |
 | Backups that can be deleted | `backup_vault_unlocked` | Medium | Production |   |
@@ -331,11 +331,11 @@ Runtimes and platform versions past their end of support.
 | Lambda functions on runtimes past end of support | `lambda_deprecated_runtime` | Medium | All | FSBP Lambda.2 |
 | EKS clusters past standard support | `eks_unsupported_version` | Medium | All | FSBP EKS.2 |
 | Databases past end of standard support | `rds_engine_eol` | Medium | All |   |
-| Servers on previous-generation instance types | `ec2_previous_generation` | Low | All |   |
+| Servers on previous generation instance types | `ec2_previous_generation` | Low | All |   |
 | Servers built from images older than 180 days | `ami_outdated` | Low | All |   |
 | Certificates expiring within 30 days | `acm_expiring` | Medium | All | FSBP ACM.1 |
 
-### Third-party and external access (2)
+### Third party and external access (2)
 
 Resources and roles shared with accounts outside the organisation.
 
@@ -353,7 +353,7 @@ Every account has a current, reachable owner and security contact.
 | No owner tagged on the account | `owner_missing` | Medium | All |   |
 | Owner not found in the directory | `owner_not_found` | High | All |   |
 | No security contact on the account | `security_contact` | Low | All | FSBP Account.1 |
-| Non-production account in a production OU | `misplaced_account` | Low | All |   |
+| Non production account in a production OU | `misplaced_account` | Low | All |   |
 | No billing contact on the account | `billing_contact` | Low | All |   |
 | No operations contact on the account | `operations_contact` | Low | All |   |
 | Required account tags missing | `account_tags_missing` | Low | All |   |

@@ -1,18 +1,20 @@
-# AWS Regulatory Risk Review Framework
+# AWS Org Level Risk Framework Reporting
 
-The console is **AWS Cloud Risk Review**: three separate reports for three audiences, from one scan.
+The console is **AWS Cloud Risk Review**: five separate reports for different audiences, from one scan of an
+AWS Organization. They are never merged into one score.
 
 | Report | For | Answers |
 |---|---|---|
 | **Exit Risk Report** | Executive committee, board | How hard, costly and slow it would be to leave AWS |
 | **Multi-Region Report** | CIO, risk, infrastructure | What a second AWS region costs to run, adds to each team, and how fast each service recovers |
 | **Cloud Assurance Report** | CISO, risk, audit | How well each account is controlled, scored against the rules you choose |
-| **Outage Risk Report** | CIO, infrastructure, SRE | What could fail at a peak such as Black Friday: limits, capacity that cannot grow, storage, MSK, Connect and EKS workloads, in every account |
+| **Outage Risk Report** | CIO, infrastructure, SRE | What could fail at a peak such as Black Friday: limits, capacity that cannot grow, storage, databases, MSK, Connect, EKS workloads, shared network and DNS, certificates, end of life software and container images, in every account, ranked by risk and blast radius |
+| **Developer Compromise Report** | CISO, payments, platform | Assuming laptops and pipelines are already compromised: whether every money moving flow is immutable or observed, who can change it, and which databases a laptop can reach directly |
 
 Each can have its own optional AI read, ticked in New scan or run later from the report.
 
 **How hard would it be to leave AWS?** This tool answers that for an entire AWS Organizational
-Unit, in a form an executive committee can act on: one exit-risk score, weighted by where the money
+Unit, in a form an executive committee can act on: one exit risk score, weighted by where the money
 is actually spent, the services and accounts that drive it, and an indicative cost and time to exit.
 
 > **Risk without transparency is just fear and anxiety.** Every bank board has heard "we are locked
@@ -32,7 +34,7 @@ rules require a documented, credible and tested exit strategy:
 
 | Regulation | What it expects |
 |---|---|
-| EU [**DORA**](https://eur-lex.europa.eu/eli/reg/2022/2554/oj) (Art. 28) | Exit strategies for ICT third-party services supporting critical or important functions, tested and documented |
+| EU [**DORA**](https://eur-lex.europa.eu/eli/reg/2022/2554/oj) (Art. 28) | Exit strategies for ICT third party services supporting critical or important functions, tested and documented |
 | [**EBA** Guidelines on outsourcing](https://www.eba.europa.eu/sites/default/files/document_library/875331/EBA%20GL%202019%2002%20-%20CT%20GLs%20on%20outsourcing%20arrangements_0.pdf) (EBA/GL/2019/02) | Documented exit plans, with an assessment of how complex and costly exit would be |
 | UK [**PRA SS2/21**](https://www.bankofengland.co.uk/prudential-regulation/publication/2021/march/outsourcing-and-third-party-risk-management-ss) | Stressed exit plans for material outsourcing, including alternative providers and timelines |
 | [**APRA CPS 230**](https://www.apra.gov.au/operational-risk-management) | Exit plans for material service providers, so critical operations continue if the provider fails or the arrangement ends |
@@ -42,13 +44,13 @@ This framework proposes **Regulatory Risk as the seventh pillar**: the measured 
 architecture keeps you free to exit, change providers, or bring workloads back in house. Like the
 other pillars, it is a design property you can measure, track and improve:
 
-- **Measure** it: a spend-weighted 0 to 100 exit-risk score per OU and per account, from your own billing
+- **Measure** it: a spend weighted 0 to 100 exit risk score per OU and per account, from your own billing
   data, against an open [catalog](docs/SERVICE_CATALOG.md) of 120 AWS services ranked by portability.
 - **Explain** it: which services (Connect, Redshift, DynamoDB, Lambda…) and which accounts drive the
   score, why each service is hard to move, the migration path, and how long it typically takes.
 - **Plan** it: indicative effort, duration and cost of a full exit, adjusted for your delivery maturity
   (CI/CD, Terraform, team size), ready for the exit plan your regulator asks to see.
-- **Track** it: rescan each quarter, so new lock-in shows up as it is adopted, not when the exit is
+- **Track** it: rescan each quarter, so new lock in shows up as it is adopted, not when the exit is
   needed. Choosing a proprietary service can still be the right call; this makes it a known,
   priced choice rather than an accident.
 
@@ -59,20 +61,30 @@ exit" (a fact a board can govern).
 
 ## What it does
 
-> **New: the [Cloud Assurance Framework Report](docs/CLOUD_ASSURANCE.md).** A second report from the same
-> scan that scores every account against 139 controls in 13 areas (internet exposure, privileged access,
-> audit trail, threat detection, data protection, sensitive data, change management, resilience and DR,
-> technology lifecycle, third parties, ownership, cost and AI), with rulesets you choose and save,
-> ownership fixes to approve and export, and an evidence file with a SHA-256.
+> **Recent additions**
+> - **Outage Risk**: an Immediate attention section, Actions by owner, Export table to PDF and Complete the
+>   scan; shared network and DNS accounts, transit gateway, DNS failover and certificate renewal checks; end of
+>   life databases, EKS versions, Amazon Linux 2 nodes and operating systems; container images pulled from
+>   outside ECR, pulled on every start, or failing to pull; Aurora Serverless reaching its maximum ACUs.
+>   CloudWatch figures are now read whole in busy accounts (one call returns at most 500 series, and the
+>   searches past that used to come back empty), and anything still unread shows as not measured.
+> - **[Developer Compromise](docs/DEVELOPER_COMPROMISE.md)**: a new report with an executive summary, Where to
+>   focus charts, Show only critical, database proxy and known path checks, and a picker that reads again the
+>   accounts checked last time.
+> - **[Cloud Assurance](docs/CLOUD_ASSURANCE.md)**: every account scored against 139 controls in 13 areas,
+>   with rulesets you choose and save, ownership fixes to approve and export, and an evidence file with a
+>   SHA-256.
+> - **Console**: the version and release time in the top bar, a flashing sign in button when signed out, an X
+>   on every window, and a pulsing button while a scan runs.
 
-- **Scores every account** by the spend-weighted exit difficulty of the AWS services it uses.
+- **Scores every account** by the spend weighted exit difficulty of the AWS services it uses.
   EKS, EC2 and Postgres/Aurora score low; DynamoDB, Lambda, Step Functions, Redshift and Connect score
   high. 120 services are classified in an open, reviewable [catalog](docs/SERVICE_CATALOG.md).
 - **Two headline scores: by spend and by number of accounts.** Weighted by spend, a small account full
   of proprietary services is flagged without distorting the number; counted per account, one very
   large account (e.g. a contact centre on Connect) cannot set the whole picture. The gap between the
   two tells you whether risk is concentrated or widespread.
-- **Counts portable vs higher-risk accounts**: how many accounts sit in each rating, against the share
+- **Counts portable vs higher risk accounts**: how many accounts sit in each rating, against the share
   of spend they hold.
 - **Filters to production** (or anything else) by account name: contains / starts with / ends with /
   regex, plus exclusions, e.g. `prod, prd` excluding `sandbox`.
@@ -84,7 +96,7 @@ exit" (a fact a board can govern).
   scan with its spend; tick any (e.g. Marketplace) and click **Apply and regenerate**. No rescan.
 - **Shows scan issues** up front: **Issues** in the top bar shows the count, coloured by the worst
   severity, and jumps to section 9.
-- **Costs a second region** (Multi-region tab): extra cost to run, cost and time to achieve, extra
+- **Costs a second region** (Multi region tab): extra cost to run, cost and time to achieve, extra
   staff, the recommended second region (service parity, latency, price), for a 3-hour recovery or
   instant failover, for the accounts you pick, with each account's failover risks (e.g. EC2 needs
   manual failover). Each candidate region says why it ranks where it does, missing services can be
@@ -93,7 +105,7 @@ exit" (a fact a board can govern).
 - **Names who owns the risk**: owner and executive from account tags, with spend at risk by
   executive.
 - **Compares scans** (Settings → Compare scans): score, spend, tiers, accounts added, removed or
-  re-rated, and services that grew or appeared between two scans. A **monthly scan** (Settings) repeats a scan each
+  rerated, and services that grew or appeared between two scans. A **monthly scan** (Settings) repeats a scan each
   month so the comparison shows a trend.
 - **Times the exit** (section 6): whether it fits a regulator or board notice period you enter under **Exit model**, which
   Savings Plans and reservations run off before it finishes, and what would be **written off**: still
@@ -103,28 +115,28 @@ exit" (a fact a board can govern).
   term stays inside the window.
 - **Tests resilience** (section 7): which accounts are critical (from account tags such as
   `Criticality = Tier1`, or names you give), how much of the critical estate one regional event would
-  take down, whether tier 1 channels are isolated from each other (anti-affinity), what could move in
+  take down, whether tier 1 channels are isolated from each other (anti affinity), what could move in
   weeks under a stressed exit, and how many terabytes an exit has to move. It counts the Direct
-  Connect links you have today (from Cost Explorer port-hours) and prices three options for new 10 Gbps
+  Connect links you have today (from Cost Explorer port hours) and prices three options for new 10 Gbps
   links dedicated to the migration, kept apart from production: Cheap (1 link), Medium (2) and Urgent
   (4), each with time to copy, AWS port cost, data out and total at AWS list price.
 - **Names the areas of focus** (section 8): the accounts whose complexity or risk will decide the
-  exit (AWS-only services with no like-for-like target, critical services, AWS-only integrations, data
+  exit (AWS only services with no like for like target, critical services, AWS only integrations, data
   to move, share of the effort, evidence and owner gaps), how to tackle each, and in which phase.
 - **Optional AI review** (section 2): tick it in New scan and it runs when the scan finishes; an overall AI summary of what matters most, the accounts to focus on and how to tackle them, as a second opinion from Claude (Bedrock, Claude Enterprise/API, OpenRouter) or
   GLM (Together AI) on entrenchment, cost, time and focus, in three passes with an independent review
   for inconsistencies. See [AI_REVIEW.md](docs/AI_REVIEW.md).
-- **Exports a board-ready PDF** with charts, an executive narrative, a data-quality section, and an
+- **Exports a board ready PDF** with charts, an executive narrative, a data quality section, and an
   appendix explaining every service's tier, recommended migration path and typical duration.
 - **Never fails silently**: every AWS API error becomes an issue on the report with a fix, and is
   written to a structured log.
 
-Everything is read-only. The core score needs only Organizations and Cost Explorer read access in the
+Everything is read only. The core score needs only Organizations and Cost Explorer read access in the
 management (payer) account; the optional deep scan counts resources, and the dependency scan the
-integrations between them, through a read-only role that stores counts only.
+integrations between them, through a read only role that stores counts only.
 
-Spend measures exposure, not difficulty. Beside the spend-weighted score the report gives **technical
-portability** (weighted by engineering effort), **exit effort** in engineer-days, the **exit window**,
+Spend measures exposure, not difficulty. Beside the spend weighted score the report gives **technical
+portability** (weighted by engineering effort), **exit effort** in engineer days, the **exit window**,
 five dimensions (service portability, dependency complexity, data gravity, engineering effort,
 operational criticality) and the readiness of each critical account.
 
@@ -142,15 +154,15 @@ exitrisk serve              # opens http://127.0.0.1:8740
 
 | Step | What happens |
 |---|---|
-| **Connect to AWS** | **AWS sign-in** for SSO / IAM Identity Center (paste your portal's start URL once), or any AWS CLI profile already on the machine, including aws-cli-zsp. Use the **management (payer) account**. |
-| **Check access** | Tests the five read-only calls a scan needs and shows ✓ / ✗ with the fix for each. If anything is missing it writes the **request to send your AWS administrator**: your identity, the account, the policy, ready to copy or download. |
+| **Connect to AWS** | **AWS sign in** for SSO / IAM Identity Center (paste your portal's start URL once), or any AWS CLI profile already on the machine, including aws-cli-zsp. Use the **management (payer) account**. |
+| **Check access** | Tests the five read only calls a scan needs and shows ✓ / ✗ with the fix for each. If anything is missing it writes the **request to send your AWS administrator**: your identity, the account, the policy, ready to copy or download. |
 | **Scan and report** | Seconds for hundreds of accounts. Type `prod` in the filter bar, answer the questions under **Exit model** in the top bar, then **Export PDF** above the report. |
 
-No AWS access yet? **Settings** (gear, top right) → **Load demo data** shows a synthetic bank estate (49 accounts, made-up numbers).
+No AWS access yet? **Settings** (gear, top right) → **Load demo data** shows a synthetic bank estate (49 accounts, made up numbers).
 
-**What your AWS administrator grants** (read-only, in the management account): an IAM Identity Center
-permission set with [this inline policy](iam/management-account-policy.json), or the AWS-managed
-`AWSOrganizationsReadOnlyAccess` + `AWSBillingReadOnlyAccess`, ready-made in
+**What your AWS administrator grants** (read only, in the management account): an IAM Identity Center
+permission set with [this inline policy](iam/management-account-policy.json), or the AWS managed
+`AWSOrganizationsReadOnlyAccess` + `AWSBillingReadOnlyAccess`, ready made in
 [Terraform](iam/identity-center/terraform/main.tf) and [CloudFormation](iam/identity-center/cloudformation/permission-set.yaml).
 Details: [docs/IAM_PERMISSIONS.md](docs/IAM_PERMISSIONS.md).
 
@@ -164,12 +176,12 @@ The scanner uses standard AWS profiles from `~/.aws/config`, so anything boto3 s
 the first API call of a scan triggers one Touch ID approval and the resulting 1-hour session is reused
 for the whole scan. The tool never reads, stores or logs keys.
 
-**AWS SSO (IAM Identity Center), no terminal needed.** Click **AWS sign-in** in the console header, add
-your access portal's start URL once (its region is found automatically), and approve the sign-in on
+**AWS SSO (IAM Identity Center), no terminal needed.** Click **AWS sign in** in the console header, add
+your access portal's start URL once (its region is found automatically), and approve the sign in on
 AWS's own page. The console lists every account you can reach, preselects the organisation's
 management account, and **Use for a new scan** creates (or reuses) a matching SSO profile in
 `~/.aws/config`. The token goes to the AWS CLI's own cache, so `aws` and `exitrisk scan --profile …`
-share the sign-in; it is never sent to the browser.
+share the sign in; it is never sent to the browser.
 
 ### Command line
 
@@ -200,7 +212,7 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 
 ![Where the work is](docs/images/where-the-work-is.png)
 
-![Critical-account readiness and integrations](docs/images/critical-readiness.png)
+![Critical account readiness and integrations](docs/images/critical-readiness.png)
 
 **Risk profile**: Spend by tier and its trend, and which product types are growing.
 
@@ -210,7 +222,7 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 
 ![Accounts](docs/images/accounts.png)
 
-**Services**: The AWS-only services that drive lock-in.
+**Services**: The AWS only services that drive lock in.
 
 ![Services](docs/images/services.png)
 
@@ -240,11 +252,11 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 
 **Multi-Region Report**: A second AWS region for the accounts you choose: run cost, people by team, recovery time per service, build, and where to put it.
 
-![Multi-region summary](docs/images/multiregion-summary.png)
+![Multi region summary](docs/images/multiregion-summary.png)
 
-**Multi-region accounts**: Sorted by spend; choose which go multi-region; each service's failover risk.
+**Multi region accounts**: Sorted by spend; choose which go multi region; each service's failover risk.
 
-![Multi-region accounts](docs/images/multiregion-accounts.png)
+![Multi region accounts](docs/images/multiregion-accounts.png)
 
 **Second region**: Candidates ranked by service parity, latency and price.
 
@@ -262,25 +274,25 @@ Where the work is: technical portability, exit effort and the five dimensions, m
 
 ![Check access](docs/images/access-check.png)
 
-**AWS sign-in**: SSO / IAM Identity Center from the header.
+**AWS sign in**: SSO / IAM Identity Center from the header.
 
-![AWS sign-in](docs/images/sso-sign-in.png)
+![AWS sign in](docs/images/sso-sign-in.png)
 
 **New scan**: Profile, one or more OUs, deep scan.
 
 ![New scan](docs/images/new-scan-dialog.png)
 
-**One-page ExCo summary**: score, headline, six tiles, tier bar, top findings and decisions, and the
-accounts that drive the exit with their owners, and who owns the risk, on one A4 page. **Export PDF → One-page summary** above the report, or `exitrisk pdf --onepage`.
+**One page ExCo summary**: score, headline, six tiles, tier bar, top findings and decisions, and the
+accounts that drive the exit with their owners, and who owns the risk, on one A4 page. **Export PDF → One page summary** above the report, or `exitrisk pdf --onepage`.
 
-![One-page summary](docs/images/one-page-summary.png)
+![One page summary](docs/images/one-page-summary.png)
 
 **Dark mode**
 
 ![Dark mode](docs/images/dashboard-dark.png)
 
 Complete sample reports generated from the demo data: [exit risk](docs/sample-report.pdf),
-[one-page summary](docs/sample-summary.pdf), [multi-region](docs/sample-multiregion.pdf).
+[one page summary](docs/sample-summary.pdf), [multi region](docs/sample-multiregion.pdf).
 
 **Cloud Assurance Framework Report**: every account scored against the selected controls, weakest areas first.
 
@@ -310,11 +322,11 @@ Owners missing or not found in the directory, with proposed owners to approve an
 | 4 | High | 75 | Lambda, Redshift, Glue, Kinesis, Step Functions, EventBridge, Cognito |
 | 5 | Critical | 95 | DynamoDB, Connect, Greengrass, SWF, QLDB |
 
-- **Inherent risk** of an account = spend-weighted mean of its services' scores (0 to 100).
-- **Weight** = the account's share of in-scope spend (or 1/N when counting by number of accounts).
+- **Inherent risk** of an account = spend weighted mean of its services' scores (0 to 100).
+- **Weight** = the account's share of in scope spend (or 1/N when counting by number of accounts).
 - **Contribution** = inherent risk × weight.
-- **OU exit-risk score** = sum of contributions, reported both **by spend** and **by number of accounts**.
-- **Spend at risk** = monthly spend × risk / 100. The account ranking sorts by it, so large, hard-to-move accounts come first.
+- **OU exit risk score** = sum of contributions, reported both **by spend** and **by number of accounts**.
+- **Spend at risk** = monthly spend × risk / 100. The account ranking sorts by it, so large, hard to move accounts come first.
 - Ratings: Low < 25 ≤ Moderate < 40 ≤ Elevated < 55 ≤ High < 70 ≤ Critical.
 
 Full detail, including the estimate model and its limitations: [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
@@ -326,7 +338,7 @@ Full detail, including the estimate model and its limitations: [docs/METHODOLOGY
 | [METHODOLOGY.md](docs/METHODOLOGY.md) | Scoring, weighting and estimate formulas; assumptions; limitations |
 | [AI_REVIEW.md](docs/AI_REVIEW.md) | The optional AI review: providers, passes, what is sent, keys |
 | [CLOUD_ASSURANCE.md](docs/CLOUD_ASSURANCE.md) | The Cloud Assurance Framework Report: every rule, rulesets, scoring, permissions |
-| [DEVELOPER_COMPROMISE.md](docs/DEVELOPER_COMPROMISE.md) | The Developer Compromise Report: assumes laptops and pipelines are compromised, and checks each money-moving flow is immutable or observed |
+| [DEVELOPER_COMPROMISE.md](docs/DEVELOPER_COMPROMISE.md) | The Developer Compromise Report: assumes laptops and pipelines are compromised, and checks each money moving flow is immutable or observed |
 | [OUTAGE_RISK.md](docs/OUTAGE_RISK.md) | The Outage Risk Report: what is checked, how severity is set, the evidence on outage causes, what is not measured |
 | [MULTI_REGION.md](docs/MULTI_REGION.md) | The Multi-Region Report: run and build cost, team growth, recovery time per service, region choice |
 | [SERVICE_CATALOG.md](docs/SERVICE_CATALOG.md) | Every service's tier, rationale, migration path, equivalents, duration |
@@ -345,5 +357,5 @@ migration path, or a challenge to a tier. See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Licence
 
-Apache 2.0. The estimate is an order-of-magnitude planning figure for an executive decision, not a
+Apache 2.0. The estimate is an order of magnitude planning figure for an executive decision, not a
 delivery quote. AWS is a trademark of Amazon.com, Inc.; this project is not affiliated with or endorsed by AWS.

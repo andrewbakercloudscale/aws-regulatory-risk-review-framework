@@ -9,12 +9,12 @@ The catalog is `src/exitrisk/data/service_catalog.yaml`. Each entry has the exac
 `SERVICE` name (find it in Cost Explorer → Group by Service, or in a scan's "not in the service
 catalog" warning), any older names as `aliases`, and:
 
-- `tier` 1–5, using the test in docs/METHODOLOGY.md §2: *how much of a workload must change to leave AWS?*
+- `tier` 1 to 5, using the test in docs/METHODOLOGY.md §2: *how much of a workload must change to leave AWS?*
 - `why`: factual, one to three sentences, naming the specific proprietary parts (APIs, data model,
   integrations). Avoid opinions about AWS.
-- `migration`: the recommended path, actionable, preferring cloud-neutral destinations where they exist.
-- `targets`: `azure`, `gcp`, `other` (cloud-neutral / self-managed).
-- `effort_weeks`: engineer-weeks for one typical workload at ~US$1k/month; compare with neighbouring
+- `migration`: the recommended path, actionable, preferring cloud neutral destinations where they exist.
+- `targets`: `azure`, `gcp`, `other` (cloud neutral / self managed).
+- `effort_weeks`: engineer weeks for one typical workload at ~US$1k/month; compare with neighbouring
   services in the same tier.
 - `duration`: elapsed time for one workload, as a range.
 

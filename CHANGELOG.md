@@ -6,6 +6,14 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Added
+- Outage Risk: end of life software, a new area. Database engines (RDS and Aurora PostgreSQL, MySQL, MariaDB) against AWS's published standard and Extended Support dates, high when AWS forces the major upgrade within 180 days; Redis OSS 4 and 5 in ElastiCache Extended Support; MSK on a deprecated Kafka version; EKS versions where AWS upgrades the control plane itself, and node groups on Amazon Linux 2 images; operating systems from Systems Manager against vendor end of support dates (instances it does not manage are counted, not guessed).
+- Outage Risk: container images, a new area. EKS workloads pulling from a registry other than ECR, pulling again on every start (Always, latest or no tag), or waiting on a failed pull; ECS services with images outside ECR and tasks stopped because the image could not be pulled. Needs the scan identity to have a read only access entry on the cluster.
+- Outage Risk: Aurora Serverless reaching its maximum ACUs, from the hourly maximum the average hides; high when CPU also hit its limit.
+
+### Fixed
+- Outage Risk: CloudWatch metrics are no longer lost in busy accounts. One GetMetricData call returns at most 500 series across its searches, and the searches past that came back empty, so database, cache and CPU figures were silently missing in accounts with many instances or volumes. Batches are now split until every search fits, a single search with more series than that is listed and read by name, and anything still unread marks the check as not measured instead of passing.
+
 - Developer Compromise: picking accounts again pre-ticks the accounts checked last time, so Run reads them all again; "Clear all" unticks every account; the count shows how many are read again, new and kept; "Back to the report" leaves the picker.
 
 ## [0.30.0] - 2026-11-05
@@ -934,7 +942,7 @@ Exit analysis review ahead of wider circulation.
   accounts hold 0%", no "across 1 accounts".
 - The headline no longer says "most workloads would move with modest change" when the exit costs half a
   year's AWS spend or more.
-- An empty scope has no cost/time ranges (they were "$0–$0" internally).
+- An empty scope has no cost/time ranges (they were "$0 to $0" internally).
 - Egress: the exclusion now states AWS's conditions (request to AWS Support, approval, move completed
   within about 60 days) instead of an unconditional waiver.
 - README: 116 classified services (not 120); APRA CPS 230 and SARB citations corrected (PA Directive
@@ -988,7 +996,7 @@ Exit analysis review ahead of wider circulation.
 
 ### Changed
 - **Exit cost, effort and time are quoted as approximate ranges, never single figures** (e.g.
-  "$7m–$16m", "2.5–5 years", "300–700 person-months"), rounded outward, everywhere: key figures,
+  "$7m to $16m", "2.5 to 5 years", "300 to 700 person-months"), rounded outward, everywhere: key figures,
   bottom line, findings, section 5 and the PDF. JSON keeps the midpoints and adds `estimate.ranges`.
 
 ### Fixed
@@ -1048,7 +1056,7 @@ Exit analysis review ahead of wider circulation.
 ### Changed
 - **Report formatting overhaul.** Executive summary rebuilt: a one-sentence bottom line, a lighter context
   line with both scores, an exit-facts strip, and findings and recommendations that each lead with a bold
-  phrase. Months read "Oct 2025", ranges use one unit ("6.3–10.9 years"), money uses `$`, plurals are
+  phrase. Months read "Oct 2025", ranges use one unit ("6.3 to 10.9 years"), money uses `$`, plurals are
   real ("1 account", not "account(s)"). Tier donut sits beside its table; growth chart and table line up;
   account ranking shows the top 15 (button for all; top 25 in the PDF) on one line per account; bubble
   labels no longer overlap; effort is in person-months everywhere; the timeline axis reads in years or
@@ -1113,7 +1121,7 @@ Exit analysis review ahead of wider circulation.
 ### Changed
 - New scan: OUs load automatically and sit with the account-name filter under **What to include**.
 - Tier table shows how many accounts use each tier (≥ $1/month).
-- With no spend in scope the estimate shows "–" instead of a fixed landing-zone figure.
+- With no spend in scope the estimate shows a blank instead of a fixed landing-zone figure.
 - Catalog 2026.10.1: Amazon Connect billing lines (Contact Lens, Customer Profiles, Contact Center
   Telecommunications) map to Connect; new entries for AppFlow, Service Catalog, IAM Access Analyzer and
   WorkSpaces Applications (AppStream); aliases for third-party fee lines and `CodeBuild`.

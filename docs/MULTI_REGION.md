@@ -1,6 +1,6 @@
 # Multi-Region Report: a second AWS region
 
-The **Multi-Region Report** is one of the three reports in AWS Cloud Risk Review, each for its own
+The **Multi-Region Report** is one of the five reports in AWS Cloud Risk Review, each for its own
 audience: the Exit Risk Report (leaving AWS), the Multi-Region Report (staying on AWS and surviving
 the loss of a region) and the Cloud Assurance Report (controls and governance). It answers
 *what would it take to survive the loss of a whole AWS region, for the accounts we choose?* It has
@@ -10,16 +10,16 @@ grouping is covered by `ce:GetCostAndUsage`).
 
 It gives, for the accounts you choose:
 
-- **Extra cost to run** a year: second-region infrastructure, replication traffic, the AWS Support
+- **Extra cost to run** a year: second region infrastructure, replication traffic, the AWS Support
   uplift and the extra people.
 - **Cost and time to achieve**: engineering effort, plus running the region while it is built.
 - **What it does to each team**: today's platform/SRE, data, security, application operations and
   DR teams, the people each gains, and the size after (for example SRE 10 to 11, +10%).
 - **Recovery time per service** (RTO and RPO) under each DR strategy (backup and restore, pilot
-  light, warm standby, active-active), and the services that would miss your target.
+  light, warm standby, active active), and the services that would miss your target.
 - **A recommended second region**, from service parity, latency and price.
-- **Per-account failover risks**: for every service in each account, whether it fails over by
-  itself, needs manual or scripted failover (EC2, most databases), must be restored or re-run
+- **Per account failover risks**: for every service in each account, whether it fails over by
+  itself, needs manual or scripted failover (EC2, most databases), must be restored or rerun
   (Redshift, Glue, EMR), or is not offered in the second region at all.
 
 Every figure is an approximate range and stays **provisional** until the questions in section 2
@@ -31,23 +31,23 @@ are confirmed.
 
 | Choice | Options | Effect |
 |---|---|---|
-| Recovery target | **Recover within 3 hours** (systemic risk event; pilot light) or **On demand: instant** (active-active) | The share of each service class run in the second region, the build effort, the staff, and how risky each service is |
+| Recovery target | **Recover within 3 hours** (systemic risk event; pilot light) or **On demand: instant** (active active) | The share of each service class run in the second region, the build effort, the staff, and how risky each service is |
 | Where may the second region be? | Anywhere, same continent, same jurisdiction, same country | Filters candidate regions (data residency) |
 | Primary region | Detected from spend, or set | Where latency and prices are measured from |
 | Second region | Recommended, or any region | The region costed |
-| AWS Support plan | Enterprise, Enterprise On-Ramp, Business, none | Support is a percentage of usage, so a second region raises it |
+| AWS Support plan | Enterprise, Enterprise On Ramp, Business, none | Support is a percentage of usage, so a second region raises it |
 | Your teams today | Platform, cloud and SRE; databases and data; cloud security and IAM; application support and operations; DR and resilience | Each team's growth, and build capacity (platform and data) |
 | Application engineers, share of time, day rate, currency, CI/CD, Terraform, regulated | This report's own answers | Build effort, capacity and cost |
 | Cost per extra FTE | 0 = day rate × 220 days | Staff cost |
 
 ## Accounts (section 3)
 
-All in-scope accounts, **sorted by spend**, ticked by default. *Select all*, *Select none*,
+All in scope accounts, **sorted by spend**, ticked by default. *Select all*, *Select none*,
 *Top 10 by spend* and *Select an OU* (an OU and everything below it) help; the choice is remembered per scan. **Readiness** is the worst failover risk
 among an account's material services for the chosen target; open the row for each service's risk
 and what has to be done, for example:
 
-> **EC2** · Manual failover: EC2 has no cross-region failover. AMIs, launch templates and capacity
+> **EC2** · Manual failover: EC2 has no cross region failover. AMIs, launch templates and capacity
 > reservations must exist in the second region, and instances are started by a runbook or
 > automation.
 
@@ -55,15 +55,15 @@ and what has to be done, for example:
 |---|---|---|
 | Low | AWS replicates and fails over (S3 CRR, DynamoDB global tables, Aurora Global Database) | same |
 | Moderate | Manual or scripted failover (EC2, RDS replicas, ECS, Lambda) | High |
-| High | No live replica: restore or re-run (Redshift, Glue, EMR, Athena) | Critical |
-| Critical | Not offered in the second region: re-architect | Critical |
+| High | No live replica: restore or rerun (Redshift, Glue, EMR, Athena) | Critical |
+| Critical | Not offered in the second region: rearchitect | Critical |
 
 Some notes depend on the second region. DynamoDB import from S3 takes up to 15 TB of source data at a
 time in us-east-1, us-west-2 and eu-west-1 but only 1 TB in every other region ([DynamoDB service
 quotas](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ServiceQuotas.html#import-limits)),
 so rebuilding a large table from an S3 export in, say, Frankfurt or Cape Town has to be batched. Export to
 S3 has the same limit everywhere (100 TB in flight), and a new global table replica backfills up to 10 TB
-per region per day. Region-specific notes live under `quota` in `risks` in `regions.yaml`.
+per region per day. Region specific notes live under `quota` in `risks` in `regions.yaml`.
 
 ![Accounts](images/multiregion-accounts.png)
 
@@ -73,22 +73,22 @@ Every region that passes the residency rule is scored 0 to 100:
 
 - **Service parity**: the share of the chosen accounts' regional spend on services offered in the
   candidate, from the AWS regional services list (`data/region_services.json`, refreshed with
-  `scripts/refresh_region_services.py`). A missing service needs re-architecture, so parity is
+  `scripts/refresh_region_services.py`). A missing service needs rearchitecture, so parity is
   penalised steeply (raised to the 6th power). AWS's list is sometimes wrong or behind (it still
   omits Amazon Lex in Ireland), so `availability_corrections` in `data/regions.yaml` overrides it,
   each with the date and evidence checked. The refresh script says when AWS's list catches up and a
-  correction can go. For a one-off view, correct a service on the page instead (below).
-- **Latency**: estimated round trip from the primary, by great-circle distance at fibre speed with
+  correction can go. For a one off view, correct a service on the page instead (below).
+- **Latency**: estimated round trip from the primary, by great circle distance at fibre speed with
   a routing overhead. Regions without a direct path (Cape Town) are routed via their hub.
 - **Price**: a regional price index against the primary.
 
 Weights: 3-hour recovery 55% parity / 20% latency / 25% price; instant 45% / 45% / 10%, because
-active-active needs low latency. A region where at least 5% of spend already runs is noted, and its
-landing-zone effort is halved.
+active active needs low latency. A region where at least 5% of spend already runs is noted, and its
+landing zone effort is halved.
 
 Each candidate says **why it ranks where it does** against the best one: the services it lacks and
 what they cost a month, how much further it is, how much dearer, or, for a near tie, what differs
-either way. The summary names the two runners-up with the same reasons.
+either way. The summary names the two runners up with the same reasons.
 
 **Corrections.** Click a service under "Not available" to correct it:
 
@@ -106,7 +106,7 @@ comes first.
 of data to the chosen second region touches: South Africa (POPIA section 72; Prudential Authority
 Directive 3 of 2018 and Guidance Note 5 of 2018; Joint Standards 1 of 2023 and 2 of 2024), the EU
 (GDPR Chapter V, DORA), the UK (UK GDPR transfers, PRA SS2/21), and a general note elsewhere.
-Cross-border items show only when the second region is in another country; regulator items only
+Cross border items show only when the second region is in another country; regulator items only
 when the organisation is regulated (section 2 of Exit model). They are pointers for the
 compliance conversation, not legal advice; edit `regulation` in `data/regions.yaml` to add yours.
 
@@ -138,7 +138,7 @@ bill at list price (Enterprise: 10% to $150k, 7% to $500k, 5% to $1m, 3% above; 
 
 | Team | Extra |
 |---|---|
-| Platform, cloud engineering and SRE | 10% or 35% of the team (on-call, two of everything) |
+| Platform, cloud engineering and SRE | 10% or 35% of the team (on call, two of everything) |
 | Databases and data engineering | 0.5 or 1.5, × √(database spend / $100k a month), at most 3× |
 | Cloud security and IAM | 10% or 25% of the team |
 | Application support and operations | 0.25 or 1.0 per 25 material accounts |
@@ -153,18 +153,18 @@ the extra, the size with two regions and the change in per cent.
 
 For every service in the chosen accounts: the estimated time to be serving again in the second
 region (**RTO**) and the data that could be lost (**RPO**), under each DR strategy. The strategy
-behind your target is highlighted: pilot light for 3 hours, active-active for instant. Services
+behind your target is highlighted: pilot light for 3 hours, active active for instant. Services
 that miss the target come first, with the strategy that would meet it or "needs a redesign".
 
 Hours come from `data/regions.yaml` (`recovery_times`) by failover type:
 
-| Failover type | Examples | Pilot light RTO | Active-active RTO |
+| Failover type | Examples | Pilot light RTO | Active active RTO |
 |---|---|---|---|
 | AWS replicates and fails over | S3, DynamoDB global tables | 15 min to 1 h | up to 5 min |
 | Manual or scripted | EC2, RDS, EKS, Lambda | 30 min to 3 h | up to 15 min |
-| No live replica: restore or re-run | Redshift, Glue, EMR, Athena | 4 to 24 h | 1 to 4 h |
+| No live replica: restore or rerun | Redshift, Glue, EMR, Athena | 4 to 24 h | 1 to 4 h |
 
-Backup and restore, and restore or re-run, take longer for large databases, storage and analytics
+Backup and restore, and restore or rerun, take longer for large databases, storage and analytics
 (× √(monthly spend / $10k), up to 3×). A service not offered in the second region has no recovery
 time. These are planning figures: prove each with a failover test.
 
@@ -172,13 +172,13 @@ time. These are planning figures: prove each with a failover test.
 
 ## Cost and time to achieve (section 7)
 
-Bottom-up, like the exit estimate:
+Bottom up, like the exit estimate:
 
-- **Per service**: the class's engineer-weeks (e.g. databases 0.75 for 3 hours, 2.5 for instant) ×
+- **Per service**: the class's engineer weeks (e.g. databases 0.75 for 3 hours, 2.5 for instant) ×
   √(monthly spend / $1k). A service missing in the second region adds its full exit effort from the
-  catalog (re-architect); one whose availability cannot be verified gets +25%.
+  catalog (rearchitect); one whose availability cannot be verified gets +25%.
 - **Per material account**: 1 or 2 weeks for DNS failover, IAM and pipelines to two regions.
-- **Second-region landing zone**: 8 or 14 weeks plus 0.25 per account (halved if the region is
+- **Second region landing zone**: 8 or 14 weeks plus 0.25 per account (halved if the region is
   already in use).
 - **DR programme**: 4 or 8 weeks plus 0.2 per account (runbooks, rehearsals, evidence).
 - × the delivery factor (CI/CD × Terraform × regulated), + 12% programme management, + contingency.
@@ -192,22 +192,22 @@ Bottom-up, like the exit estimate:
 ## Data
 
 - Scans from v0.3.0 collect spend by region. Older scans have no region split: the view assumes all
-  regional spend is in the primary region and says so. Re-scan for the real split.
+  regional spend is in the primary region and says so. Rescan for the real split.
 - The demo estate runs production 90% in London (eu-west-2) and 10% in Ireland.
 
 ## When something is wrong
 
 - **Data notes** at the top of the view say what the estimate had to assume, and are logged once per
-  scan: no spend-by-region data (older scan, or Cost Explorer refused it), an unknown primary region
+  scan: no spend by region data (older scan, or Cost Explorer refused it), an unknown primary region
   (choose it in section 2), spend in a region this version does not know, services with no
-  multi-region profile, a second region that cannot be used, or an AWS regional services list more
+  multi region profile, a second region that cannot be used, or an AWS regional services list more
   than 180 days old.
 - **A failed calculation** shows a panel in place with the error, the request id and **Try again** /
-  **Open the log**, never a blank tab. A failed PDF export exits non-zero with the reason.
+  **Open the log**, never a blank tab. A failed PDF export exits non zero with the reason.
 - **Check access** proves the region data is readable with the same Cost Explorer call it already
   makes (grouped by account and region), at no extra cost.
 - **A failure reading spend by region** never fails the scan: it becomes a warning on the Data quality
-  section; an unexpected (non-AWS) error is also logged with its traceback.
+  section; an unexpected (non AWS) error is also logged with its traceback.
 - Every calculation logs one line: scan, recovery target, accounts chosen, primary and second
   region, run cost, build weeks and time taken.
 

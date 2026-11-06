@@ -1,8 +1,8 @@
 # IAM permissions
 
-Everything the tool does is read-only. There are two levels.
+Everything the tool does is read only. There are two levels.
 
-## 1. Spend-only scan (management account)
+## 1. Spend only scan (management account)
 
 Enough for the full score, account ranking, charts and estimate. Attach
 [`iam/management-account-policy.json`](../iam/management-account-policy.json) to the identity your AWS
@@ -15,13 +15,13 @@ profile uses in the **management (payer) account**:
 | `organizations:ListAccountsForParent` | Accounts under the chosen OU, recursively, with names (for the name filter) |
 | `organizations:ListTagsForResource` | Account tags, for business criticality and channel in the resilience view. Optional: without it, name the critical accounts in the console |
 | `ce:GetSavingsPlansUtilizationDetails`, `ce:GetReservationUtilization` | Savings Plans and reservations with their end dates, to time an exit against commitments (section 6). Optional: a refusal is a warning |
-| `ce:GetCostAndUsage` | Amortised spend by account × service × month, by region (multi-region view), storage usage in GB-months (data held, resilience view), and Direct Connect port-hours and data out (links for the migration) |
+| `ce:GetCostAndUsage` | Amortised spend by account × service × month, by region (multi region view), storage usage in GB months (data held, resilience view), and Direct Connect port hours and data out (links for the migration) |
 
 Cost Explorer must be enabled in the management account (Billing console → Cost Explorer). Each
 `GetCostAndUsage` request costs US$0.01; a scan makes two per 100 accounts plus pagination.
 
 **Not the management account?** Organizations calls are refused, the scan falls back to the calling
-account only, and the report says so on its data-quality panel. A member account that is a
+account only, and the report says so on its data quality panel. A member account that is a
 [delegated administrator](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_delegate_policies.html)
 for Organizations, with Cost Explorer access to linked accounts, also works.
 
@@ -33,13 +33,13 @@ attach either:
 
 - the inline policy [`iam/management-account-policy.json`](../iam/management-account-policy.json)
   (least privilege), or
-- the AWS-managed policies `AWSOrganizationsReadOnlyAccess` and `AWSBillingReadOnlyAccess` (broader
-  read-only, often already approved).
+- the AWS managed policies `AWSOrganizationsReadOnlyAccess` and `AWSBillingReadOnlyAccess` (broader
+  read only, often already approved).
 
 Ready to apply in the Identity Center administration account:
 [Terraform](../iam/identity-center/terraform/main.tf) (`management_account_id`, optional
 `principal_id`) or [CloudFormation](../iam/identity-center/cloudformation/permission-set.yaml).
-An existing read-only permission set that already includes these actions (many organisations have a
+An existing read only permission set that already includes these actions (many organisations have a
 "ReadOnly" or "CTO-Read" set) works as it is.
 
 ### Check before you scan
@@ -57,9 +57,9 @@ actions, and the policy, ready to copy or download. The check costs US$0.03 in C
 Adds resource counts per account (Lambda functions, DynamoDB tables, state machines, CloudFormation
 stacks, RDS engines…) which sharpen the effort estimate. The scanner assumes a role in each member account:
 
-- Management-side permission: `sts:AssumeRole` on `arn:aws:iam::*:role/ExitRiskReadOnly`
+- Management side permission: `sts:AssumeRole` on `arn:aws:iam::*:role/ExitRiskReadOnly`
   (included in the management policy above as `OptionalDeepScanAssumeMemberRole`; delete that statement
-  if you will never deep-scan).
+  if you will never deep scan).
 - Member role: **list and describe** actions, [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json).
   The role cannot read data, objects, items or secrets. A few actions return configuration
   (`ec2:DescribeInstances`, `lambda:ListFunctions`, `states:DescribeStateMachine`); the scanner keeps only
@@ -72,8 +72,8 @@ stacks, RDS engines…) which sharpen the effort estimate. The scanner assumes a
   carries on.
 - Trust: the scanner account (optionally one principal), and only sessions named `exitrisk-*`.
 
-Deploy the role to every account in an OU with CloudFormation **StackSets** (service-managed
-permissions, auto-deployment on):
+Deploy the role to every account in an OU with CloudFormation **StackSets** (service managed
+permissions, auto deployment on):
 
 ```bash
 aws cloudformation create-stack-set --stack-set-name exit-risk-readonly \
@@ -86,7 +86,7 @@ aws cloudformation create-stack-instances --stack-set-name exit-risk-readonly \
   --deployment-targets OrganizationalUnitIds=ou-ab12-cdef3456 --regions us-east-1
 ```
 
-or with Terraform from your account-vending pipeline: [`iam/terraform`](../iam/terraform/main.tf).
+or with Terraform from your account vending pipeline: [`iam/terraform`](../iam/terraform/main.tf).
 
 **Signed in with IAM Identity Center?** Leave the role blank. The scanner then uses the permission set
 you signed in with (for example a "ReadOnly" or "CTO-Read" set) in each member account, through the SSO
@@ -94,28 +94,28 @@ portal, so no role or StackSet is needed, as long as that permission set is assi
 accounts and includes the list actions above. Check access counts the accounts where it is assigned and
 tests every inventory and dependency call in one of them.
 
-How long a sign-in lasts: the access token from the portal is valid for an hour, and the console renews it
-with the sign-in's refresh token as the AWS CLI does, so a long deep scan is not cut off at the hour. The
+How long a sign in lasts: the access token from the portal is valid for an hour, and the console renews it
+with the sign in's refresh token as the AWS CLI does, so a long deep scan is not cut off at the hour. The
 real limit is the **IAM Identity Center session duration**, which an Identity Center administrator sets
 (Settings, Authentication, default 8 hours, up to 90 days). If that ends during a deep scan, the scan
 waits up to 15 minutes and the console asks you to sign in again; it then carries on where it was.
-Starting a scan with an ended sign-in opens the sign-in dialog straight away.
+Starting a scan with an ended sign in opens the sign in dialog straight away.
 
-Already have a read-only role everywhere (e.g. one with `ReadOnlyAccess` or `ViewOnlyAccess`)? Enter its
+Already have a read only role everywhere (e.g. one with `ReadOnlyAccess` or `ViewOnlyAccess`)? Enter its
 name in the scan dialog instead; any role that grants the list actions above works.
 
 The management account itself is scanned with the profile's own credentials, not the role.
 
 ## 3. Cloud Assurance Framework checks
 
-Optional, for the [Cloud Assurance Framework Report](CLOUD_ASSURANCE.md). All read-only.
+Optional, for the [Cloud Assurance Framework Report](CLOUD_ASSURANCE.md). All read only.
 
 - **Member accounts**: the third statement of
   [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json), `ExitRiskCloudAssurance`
   (security and control settings: IAM, S3 bucket settings, CloudTrail, GuardDuty, Security Hub, Config,
   Inspector, Access Analyzer, backups, load balancers, KMS and more; the StackSet and Terraform include
   it). The simplest equivalent is the AWS managed policy **SecurityAudit**
-  (`arn:aws:iam::aws:policy/SecurityAudit`) on the member role or permission set; a read-only
+  (`arn:aws:iam::aws:policy/SecurityAudit`) on the member role or permission set; a read only
   permission set such as ReadOnlyAccess covers it too.
 - **Management account**: the `OptionalCloudAssuranceOrganisation` statement of
   [`iam/management-account-policy.json`](../iam/management-account-policy.json) (service control
@@ -138,15 +138,18 @@ Only for **Run the outage risk checks** (`--outage`). All reads.
 
 - **Member accounts**: the `ExitRiskOutageRisk` statement of
   [`iam/member-account-role-policy.json`](../iam/member-account-role-policy.json) (Service Quotas,
-  CloudWatch `GetMetricData` and `DescribeAlarms`, account limits, MSK, Amazon Connect, capacity and
+  CloudWatch `GetMetricData`, `ListMetrics` and `DescribeAlarms`, account limits, MSK, Amazon Connect, capacity and
   autoscaling settings, and the settings the service reviews read (RDS parameters and maintenance,
   ElastiCache, Lambda, DynamoDB, Kinesis, SQS, Amazon MQ, API Gateway, Redshift, FSx, EFS, NAT, Transit
   Gateway attachments, route tables and blackhole routes, VPN, CloudFront, Route 53 zones, records and
   health checks, Resolver forwarding rules, Route 53 domains, ACM certificate renewal, private CAs and
-  IAM server certificates);
+  IAM server certificates, and for end of life and container images: RDS major engine versions, EKS
+  cluster versions, Kafka versions, Systems Manager instance information, ECS task definitions and
+  stopped tasks);
   the StackSet and Terraform include it). On IAM Identity Center, add it to the permission set used
   in the member accounts. AWS's ReadOnlyAccess covers most of it; Check access names what is missing.
-- **EKS workloads are a separate grant.** Replica counts, requests and limits come from each cluster's
+- **EKS workloads are a separate grant.** Replica counts, requests and limits, and which registry each
+  image comes from and whether its pulls are failing, come from each cluster's
   Kubernetes API, which IAM alone does not open. The scan never changes a cluster. To let it read one,
   the cluster's owner adds an access entry for the scan's role with the view policy, which cannot
   read secrets:
@@ -176,5 +179,5 @@ granted, tells roles trusted by another account of the organisation from those t
 ## What the tool does not need
 
 No write permissions anywhere, no access to data plane APIs (S3 objects, DynamoDB items, secrets),
-no Config aggregator, no CUR bucket. The tool holds no long-lived credentials: it uses
-your profile's session, and member-account sessions last at most one hour.
+no Config aggregator, no CUR bucket. The tool holds no long lived credentials: it uses
+your profile's session, and member account sessions last at most one hour.

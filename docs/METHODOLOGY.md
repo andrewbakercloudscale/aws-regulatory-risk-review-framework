@@ -11,7 +11,7 @@ is printed on the report's assumptions list.
 |---|---|---|---|
 | AWS Organizations | `ListRoots`, `ListOrganizationalUnitsForParent`, `ListAccountsForParent`, `DescribeOrganization` | OU tree; accounts under the chosen OU, recursively; account name, status, OU path | Management account |
 | AWS Organizations (optional) | `ListTagsForResource` | Account tags, for business criticality and channel (resilience view) | Management account |
-| Cost Explorer (optional) | `GetCostAndUsage` | `UsageQuantity` in GB-months for the last complete month, by `LINKED_ACCOUNT` × `USAGE_TYPE`, for each storage service in use: data held (resilience view) | Management account |
+| Cost Explorer (optional) | `GetCostAndUsage` | `UsageQuantity` in GB months for the last complete month, by `LINKED_ACCOUNT` × `USAGE_TYPE`, for each storage service in use: data held (resilience view) | Management account |
 | Cost Explorer | `GetCostAndUsage` | **Amortised** cost, monthly, grouped by `LINKED_ACCOUNT` × `SERVICE`, for the last *N* complete months | Management account |
 | Deep scan (optional) | List/describe calls in every enabled region | Counts of Lambda functions, DynamoDB tables, state machines, Kinesis streams, SQS queues, SNS topics, EventBridge rules, API Gateway APIs, Cognito user pools, Glue jobs, Redshift clusters, CloudFormation stacks, EKS/ECS clusters, RDS instances by engine | Each member account via `ExitRiskReadOnly` |
 
@@ -19,12 +19,12 @@ Cost Explorer filters:
 
 - `RECORD_TYPE` excludes `Credit`, `Refund`, `Tax`, `Support`; the score reflects the cost of running
   workloads, not discounts or overheads.
-- `BILLING_ENTITY = AWS` for AWS services; a second query for `AWS Marketplace` groups all third-party
-  software under one line, *AWS Marketplace (third-party)*, tier 2.
+- `BILLING_ENTITY = AWS` for AWS services; a second query for `AWS Marketplace` groups all third party
+  software under one line, *AWS Marketplace (third party)*, tier 2.
 - `AmortizedCost` spreads upfront Reserved Instance and Savings Plan payments over the months they
-  cover, so a workload bought on a 3-year all-upfront RI is not invisible.
+  cover, so a workload bought on a 3-year all upfront RI is not invisible.
 - Lines of exactly zero (free tier) are ignored; negative lines that escape the filter are ignored and
-  counted on the data-quality panel. Billing-only services (tax, support plans, Savings Plan fees,
+  counted on the data quality panel. Billing only services (tax, support plans, Savings Plan fees,
   billing tools) are marked `excluded` in the catalog and reported separately.
 
 Spend is averaged per month over the months present in the data.
@@ -32,17 +32,17 @@ Spend is averaged per month over the months present in the data.
 ## 2. Service tiers
 
 Each Cost Explorer service name is looked up in the catalog (exact name, then aliases, then
-case-insensitive). The five tiers are defined by **how much of a workload must change to leave AWS**:
+case insensitive). The five tiers are defined by **how much of a workload must change to leave AWS**:
 
 | Tier | Label | Score | Test applied |
 |---|---|---|---|
 | 1 | Portable | 10 | An open standard or commodity primitive; the workload moves without code change |
-| 2 | Low | 30 | A managed flavour of an open engine or de-facto standard API; data and configuration migrate, code changes are incidental |
-| 3 | Moderate | 50 | AWS-specific API with a close equivalent on every major cloud; code changes at integration points |
+| 2 | Low | 30 | A managed flavour of an open engine or de facto standard API; data and configuration migrate, code changes are incidental |
+| 3 | Moderate | 50 | AWS specific API with a close equivalent on every major cloud; code changes at integration points |
 | 4 | High | 75 | Proprietary programming or data model; the workload must be redesigned |
-| 5 | Critical | 95 | No equivalent outside AWS; rebuild, re-platform or replace with a product |
+| 5 | Critical | 95 | No equivalent outside AWS; rebuild, replatform or replace with a product |
 
-Scores are deliberately not linear in tier: moving from "re-point" (3) to "redesign" (4) is a larger
+Scores are deliberately not linear in tier: moving from "repoint" (3) to "redesign" (4) is a larger
 step in cost and risk than moving from 1 to 2. No service scores zero, because every migration has a
 cost. A service not in the catalog scores as tier 3 and raises a warning on the report.
 
@@ -77,13 +77,13 @@ weakening the first. Showing both, side by side, keeps each honest:
 - similar → risk is spread in line with spend.
 
 The weighting selector (console *Score weighting*, CLI `--weighting spend|equal|balanced`) only chooses
-which view drives the per-account weights, contributions and bubble sizes; both headline scores are
+which view drives the per account weights, contributions and bubble sizes; both headline scores are
 always reported.
 
 **Breadth view.** Alongside the scores, the report counts accounts per rating and sets the share of
 accounts against the share of spend (section 4). *Portable* accounts are those rated Low or Moderate;
-*higher-risk* accounts are High or Critical. "10 of 145 accounts are High/Critical but hold 25% of
-spend" is a concentration to manage, not an estate-wide problem, and the chart makes that visible.
+*higher risk* accounts are High or Critical. "10 of 145 accounts are High/Critical but hold 25% of
+spend" is a concentration to manage, not an estate wide problem, and the chart makes that visible.
 
 Ratings: Low < 25 ≤ Moderate < 40 ≤ Elevated < 55 ≤ High < 70 ≤ Critical. An estate entirely on tier-1
 services scores 10; entirely on tier-2, 30.
@@ -92,8 +92,8 @@ services scores 10; entirely on tier-2, 30.
 feed the estimate (below), but they do not change the score; the score stays a pure, auditable
 function of the bill.
 
-**Bespoke services.** "AWS-only services" counts distinct High or Critical (tier 4 to 5) services
-with at least $1/month of in-scope spend: the services with no direct equivalent outside AWS.
+**Bespoke services.** "AWS only services" counts distinct High or Critical (tier 4 to 5) services
+with at least $1/month of in scope spend: the services with no direct equivalent outside AWS.
 
 **Spend growth.** Change in amortised monthly spend from the first to the last complete month scanned,
 overall, for High/Critical services, and per catalog category ("product type"). With 6+ months an
@@ -105,7 +105,7 @@ because annualising two or three months magnifies noise.
 ### Inputs from the questionnaire
 
 Until someone answers (or confirms) these questions, the estimate runs on defaults and describes a
-made-up organisation. The report then marks cost, exit window and effort **Provisional**, keeps them out
+made up organisation. The report then marks cost, exit window and effort **Provisional**, keeps them out
 of the bottom line, and makes "answer the delivery questions" the first recommendation. Changing any
 answer under Exit model, or pressing *These answers are right*, makes the figures the organisation's own;
 on the command line, `--questionnaire answers.json` does the same.
@@ -114,18 +114,18 @@ on the command line, `--questionnaire answers.json` does the same.
 |---|---|
 | Standard CI/CD pipeline used to create assets? | One standard 0.85 · Several, partially standard 1.0 · Mostly manual 1.3 |
 | Terraform used, and current? | Terraform current 0.8 · Terraform with drift 1.1 · CloudFormation/CDK 1.25 · Little or none 1.5 |
-| Target platform | Azure 1.0 · Google Cloud 1.0 · Oracle Cloud 1.1 · Sovereign/local cloud 1.2 · On-premises platform you already run 1.35 · Physical data centre 1.5 |
-| Physical data centre only: where the hardware goes, and a second site for DR? | Existing space · Colocation · Build new; DR site yes/no → lead time and one-off hardware and facility cost (below) |
-| Regulated entity | Yes 1.15 (exit-plan evidence, regulator notification, assurance testing) · No 1.0 |
+| Target platform | Azure 1.0 · Google Cloud 1.0 · Oracle Cloud 1.1 · Sovereign/local cloud 1.2 · On premises platform you already run 1.35 · Physical data centre 1.5 |
+| Physical data centre only: where the hardware goes, and a second site for DR? | Existing space · Colocation · Build new; DR site yes/no → lead time and one off hardware and facility cost (below) |
+| Regulated entity | Yes 1.15 (exit plan evidence, regulator notification, assurance testing) · No 1.0 |
 | Core cloud team size, % allocated; application engineer FTE | Capacity, not effort |
-| Blended day rate, currency, FX per USD, contingency %, parallel-run months, materiality | Cost |
+| Blended day rate, currency, FX per USD, contingency %, parallel run months, materiality | Cost |
 
-Why these questions: infrastructure-as-code that matches production lets the platform be re-created
-on the target by changing providers and modules rather than reverse-engineering consoles; a standard
+Why these questions: infrastructure as code that matches production lets the platform be recreated
+on the target by changing providers and modules rather than reverse engineering consoles; a standard
 pipeline means one deployment pattern to retarget instead of dozens. CloudFormation/CDK estates score
 worse than "Terraform with drift" because the IaC itself must be rewritten.
 
-### Effort (engineer-weeks)
+### Effort (engineer weeks)
 
 ```
 service effort   = catalog effort_weeks × size multiplier × AI agent factor × tool factor   for every service ≥ materiality, per account
@@ -142,17 +142,17 @@ programme mgmt   = 12% × (delivery + landing zone)
 contingency      = contingency% × (delivery + landing zone + programme mgmt)
 ```
 
-The square-root size multiplier encodes economies of scale: four times the spend is roughly twice the
+The square root size multiplier encodes economies of scale: four times the spend is roughly twice the
 work, because the design, tooling and testing approach are reused. Where the deep scan reached an
 account, spend no longer sizes the work: see [Effort from resources](#effort-from-resources-and-integrations).
 
 **AI coding agents.** When the Exit model says teams use AI coding agents, each service's weeks are
 multiplied by its catalog `agentic` rating: high 0.5 (code and templates an agent can translate:
 Lambda, API Gateway, Step Functions, CloudFormation, CI/CD), medium 0.75 (config and integration
-rewrites: EKS manifests, networking, AI services), low 0.9 (mostly rehosting or re-pointing: EC2, RDS,
+rewrites: EKS manifests, networking, AI services), low 0.9 (mostly rehosting or repointing: EC2, RDS,
 S3, DynamoDB redesign with its data move), none 1.0 (data moves, hardware, contracts: EFS, Glacier,
 Direct Connect, Marketplace). The factor applies before the delivery factor, so engineers reviewing
-and testing the agents' changes are still counted. It shortens the work, not the lock-in: the score
+and testing the agents' changes are still counted. It shortens the work, not the lock in: the score
 does not change. The rating per service is in [SERVICE_CATALOG.md](SERVICE_CATALOG.md).
 
 **Migration tools.** When the Exit model says migration tools will be used, each service's weeks are
@@ -165,8 +165,8 @@ tools overlap, so together they never cut a service below 30% of its work. The r
 for the chosen target for the services with the most work (section 4, Tools that shorten the move), and
 the AI review is asked to name the ones that fit.
 
-**Developer-portal templates.** When services are built from templates (golden paths, for example
-Backstage), the templates are changed once for the target and re-run: the repeat discount on resources
+**Developer portal templates.** When services are built from templates (golden paths, for example
+Backstage), the templates are changed once for the target and rerun: the repeat discount on resources
 and integrations drops from 35% to 15% of the work for each one after the first 20 of a type.
 
 **The move into AWS.** The Exit model asks how long the move into AWS took and with how many people.
@@ -174,7 +174,7 @@ It does not change the estimate: the report shows the exit beside it ("about 7 t
 check. An exit is usually bigger than the move in, because it carries everything built on AWS since.
 
 **Products left out.** **Exclusions** in the top bar can leave named AWS products out (for example Marketplace
-software re-contracted anyway, or a service being retired). Their spend is removed from the score,
+software recontracted anyway, or a service being retired). Their spend is removed from the score,
 the tiers, the estimate and the trend, and the report says what was left out and how much it spends
 a month at the top of the report.
 
@@ -191,7 +191,7 @@ calendar         = max(effort-bound, service path, data path) + 4 weeks decommis
 
 Adding people shortens the programme only until the critical path binds; the report says which one
 constrains it. Waves are sequenced easiest first (tiers 1 to 2, then 3, then 4 to 5) so the team builds the
-target platform and its patterns on low-risk workloads.
+target platform and its patterns on low risk workloads.
 
 ### Cost
 
@@ -218,9 +218,9 @@ facility         = existing 0 · colocation 2 · build new 12 months of the AWS 
 ```
 
 Hardware is sized from the bill because it is the only capacity signal the scan has; AWS prices include
-the managed-service premium, so treat it as an order of magnitude and replace it with a sizing exercise.
+the managed service premium, so treat it as an order of magnitude and replace it with a sizing exercise.
 Running the data centre after exit (power, cooling, facility and hardware staff, maintenance contracts,
-refresh every 4 to 6 years) is not in the one-off cost.
+refresh every 4 to 6 years) is not in the one off cost.
 
 **The range narrows as the evidence improves.**
 
@@ -235,9 +235,9 @@ exit cost, under Timing, so they are never counted twice.
 
 **The report quotes ranges, never single figures.** Cost, effort and duration are shown as the
 range above, widened outward to round numbers (e.g. "$7m to $16m", "2.5 to 5 years", "300 to 700
-person-months"; effort switches to person-years once the low end is two years or more, e.g. "35 to 90
-person-years"). The model's single figures are planning midpoints and appear only in the JSON
-output; an early-stage estimate quoted to the nearest $100k would claim precision it does not have.
+person months"; effort switches to person years once the low end is two years or more, e.g. "35 to 90
+person years"). The model's single figures are planning midpoints and appear only in the JSON
+output; an early stage estimate quoted to the nearest $100k would claim precision it does not have.
 
 The calendar duration is reported as the **exit window**: how long it would take to leave AWS.
 
@@ -251,35 +251,35 @@ $10,000 EC2 instance, and the report should say so. In every material account th
 each service the inventory counted is sized from its resources instead of its spend
 (`resource_effort.py`):
 
-| Resource | Engineer-days each | Resource | Engineer-days each |
+| Resource | Engineer days each | Resource | Engineer days each |
 |---|---|---|---|
 | EC2 instance | 0.5 | SQS queue, SNS topic, S3 bucket | 0.5 |
 | Lambda function | 2 | EventBridge rule, CloudFormation stack | 1 |
 | DynamoDB table | 6 | API Gateway REST / HTTP API | 3 / 2 |
 | Step Functions state machine | 4 | Glue job, Kinesis stream | 3 |
 | ECS cluster, ECS service | 2 | EKS cluster | 10 |
-| RDS instance: open-source / commercial / Aurora | 3 / 5 / 6 | Cognito user pool | 15 |
+| RDS instance: open source / commercial / Aurora | 3 / 5 / 6 | Cognito user pool | 15 |
 | Redshift cluster | 20 | | |
 
-- **Complexity**: Lambda functions on a custom runtime ×1.5, on an end-of-support runtime ×1.3, packaged
+- **Complexity**: Lambda functions on a custom runtime ×1.5, on an end of support runtime ×1.3, packaged
   as containers ×0.7. RDS by engine family, as in the table.
 - **Repeat discount**: after the first 20 of a type in an account, each further one counts 35% (templated,
-  scripted work), or 15% when services are built from developer-portal templates.
+  scripted work), or 15% when services are built from developer portal templates.
 - **CloudFormation stacks** are counted but carry no effort of their own: a stack packages resources
-  already counted, and rewriting templates is the infrastructure-as-code factor.
-- **The landing-zone baseline is left out.** AWS Control Tower, Amazon Inspector and AWS Security
+  already counted, and rewriting templates is the infrastructure as code factor.
+- **The landing zone baseline is left out.** AWS Control Tower, Amazon Inspector and AWS Security
   Incident Response put the same rules, topics, functions and stacks into every account and region
   (names starting `aws-controltower-`, `AWSControlTower`, `StackSet-AWSControlTower`,
   `DO-NOT-DELETE-AmazonInspector`, or rules marked `ManagedBy` an AWS service). They are counted apart
-  (`baseline_*`) and carry no effort, and integrations into AWS-run security and governance services
+  (`baseline_*`) and carry no effort, and integrations into AWS run security and governance services
   (Inspector, Security Incident Response, Control Tower, GuardDuty, Security Hub, Config, Auto Scaling)
   are not counted: the target platform's own landing zone replaces them.
-- **Integrations** (Dependency scan only): 1 engineer-day per AWS-specific integration (0.25 for e-mail
+- **Integrations** (Dependency scan only): 1 engineer day per AWS specific integration (0.25 for e mail
   and SMS subscriptions, 0.5 for HTTP and mobile targets), with the same repeat discount. Each integration
   is its own line, rated by the harder end (SQS to Lambda is High; DynamoDB streams to Lambda is
   Critical), so no work is counted twice.
 - Services the inventory cannot count (S3 data, CloudFront, Connect...), accounts it did not reach, and
-  accounts under the materiality cut-off stay sized from spend. The report shows the share of effort on
+  accounts under the materiality cut off stay sized from spend. The report shows the share of effort on
   each basis.
 
 These coefficients are uncalibrated planning assumptions: calibrate them against your own completed
@@ -287,17 +287,17 @@ migrations. Delivery factors, programme management and contingency then apply ex
 
 ### Measures, dimensions and scan depth
 
-The spend-weighted score stays as the measure of **exposure**. Beside it, section 1 reports exit
+The spend weighted score stays as the measure of **exposure**. Beside it, section 1 reports exit
 difficulty on its own terms:
 
 - **Technical portability** (0 to 100, higher is easier) = 100 − the tier score weighted by engineering
-  effort instead of spend. Its difficulty rating uses the same bands as the exit-risk score.
-- **Exit effort** in engineer-days, and the **exit window**, from the estimate.
+  effort instead of spend. Its difficulty rating uses the same bands as the exit risk score.
+- **Exit effort** in engineer days, and the **exit window**, from the estimate.
 - **Five dimensions**, each shown on its own so none hides another: service portability, dependency
   complexity (integrations counted), data gravity (TB to move, from Cost Explorer storage usage),
   engineering effort (and how much of it rests on counted resources, integrations or spend) and
   operational criticality (critical accounts, from tags or your list: a business judgement, not inferred).
-- **Critical-account readiness**: each critical account judged alone. Ready: portability 60 or more and
+- **Critical account readiness**: each critical account judged alone. Ready: portability 60 or more and
   no Critical (tier 5) service with work to do. Hard to move: portability under 40, or a Critical service
   to replace.
 
@@ -312,12 +312,12 @@ difficulty on its own terms:
 The dependency scan reads Lambda event source mappings, EventBridge rule targets, SNS subscriptions,
 API Gateway integrations and Step Functions task states, and stores only counts per kind of edge
 ("SQS to Lambda: 12"), never names, ARNs or definitions. It cannot see SDK calls made inside code,
-S3 event notifications, Lambda resource-policy triggers or network traffic. **Missing evidence is not
+S3 event notifications, Lambda resource policy triggers or network traffic. **Missing evidence is not
 evidence of independence**: an account with no integrations found is unmeasured on that dimension, not
 free of them. Large accounts are capped (300 EventBridge rules, 100 REST and 100 HTTP APIs, 200 state
 machines per region); a capped count is reported as a floor.
 
-**Selective deep scan**: "Only material accounts" deep-scans the accounts that make up 95% of spend plus
+**Selective deep scan**: "Only material accounts" deep scans the accounts that make up 95% of spend plus
 any spending $100 a month or more on High or Critical services; the rest stay sized from spend.
 "Only regions with spend" reads, in each account, only the regions billing $1 a month or more (an account
 under that keeps its busiest region; one with no regional spend is read everywhere). Workloads are counted
@@ -327,23 +327,23 @@ every enabled region.
 
 ## 5. Limitations
 
-- **Spend understates small-but-complex services.** A $300/month Step Functions estate can orchestrate
+- **Spend understates small but complex services.** A $300/month Step Functions estate can orchestrate
   the whole bank. The spend score is exposure, not difficulty: run a Dependency scan so effort and
-  technical portability come from resources and integrations, and read critical-account readiness.
-- **One RDS line.** Cost Explorer reports RDS and Aurora together. Aurora-specific features (Global
+  technical portability come from resources and integrations, and read critical account readiness.
+- **One RDS line.** Cost Explorer reports RDS and Aurora together. Aurora specific features (Global
   Database, Babelfish, Serverless v2 scaling) and commercial engines (Oracle, SQL Server licensing) are
   visible in the deep scan's engine breakdown.
-- **Not in the estimate:** target-cloud run cost after exit; licence changes; early termination of AWS
+- **Not in the estimate:** target cloud run cost after exit; licence changes; early termination of AWS
   commitments (EDP, Savings Plans, RIs; let them run off); the cost of copying the data out (Direct
-  Connect ports and data-out fees, sized under Resilience and shown beside the one-off cost; since March
+  Connect ports and data out fees, sized under Resilience and shown beside the one off cost; since March
   2024 AWS credits internet egress, not Direct Connect, for customers leaving AWS, on request to AWS Support
   and subject to approval, for a move completed within about 60 days); organisational change.
-- **Materiality is per account.** A service under the materiality cut-off in an account is scored but
+- **Materiality is per account.** A service under the materiality cut off in an account is scored but
   adds no effort for that account, even if it runs in many accounts.
 - **Catalog tiers are expert judgement.** They are published, versioned and open to challenge through
   pull requests; quote the catalog version with any score.
-- **Indicative only.** The estimate is an order-of-magnitude figure to support an executive decision and
-  a regulatory exit plan. A delivery commitment needs workload-level discovery.
+- **Indicative only.** The estimate is an order of magnitude figure to support an executive decision and
+  a regulatory exit plan. A delivery commitment needs workload level discovery.
 
 ## 6. Reproducibility
 
@@ -393,24 +393,24 @@ ignoring case, spaces, dashes and underscores: `Criticality`, `BusinessCriticali
 `ServiceTier`, `WorkloadTier`, `Critical`. Values that mark an account critical: Tier 1 / T1 / 1,
 Tier 0, Critical, Mission critical, Business critical, CIF, Critical or important, P1, High, Gold,
 Platinum, True, Yes. A `Channel` (or `BusinessChannel`, `CustomerChannel`) tag names the customer
-channel the account serves. When no account is critical, every figure below covers all in-scope
+channel the account serves. When no account is critical, every figure below covers all in scope
 accounts and says so.
 
 **Correlated failure.** The share of critical spend in its dominant region, from Cost Explorer spend
 by region (global services excluded and shown separately). 90% or more is *High*, 70% to 90%
 *Elevated*, below that *Moderate*. Each channel's dominant region is shown; two or more channels with
-the same dominant region have no anti-affinity: one regional event takes them all down together, and
-a card rail with stand-in processing gains nothing from it if the mobile app fails with it.
+the same dominant region have no anti affinity: one regional event takes them all down together, and
+a card rail with stand in processing gains nothing from it if the mobile app fails with it.
 
 **Stressed exit.** Critical spend split by how fast it could move if AWS stopped serving you with
 little notice: tiers 1 to 2 in weeks (rehost as is), tier 3 in months (rework), tiers 4 to 5 not at
-all without a pre-built fallback, a manual workaround or a stand-in process. Critical accounts with a
+all without a prebuilt fallback, a manual workaround or a stand in process. Critical accounts with a
 quarter or more of their spend on tiers 4 to 5 are listed.
 
-**Data held.** Cost Explorer bills storage in GB-months, so the usage quantity of a storage line is the
+**Data held.** Cost Explorer bills storage in GB months, so the usage quantity of a storage line is the
 average data held over the month; nothing is read from the data itself. Lines are classed as copies
-(snapshots, backups, point-in-time recovery, Multi-AZ mirrors, AWS Backup), archives (Glacier tiers)
-or live data; early-deletion fees are dropped. Live data and archives must move; copies are rebuilt at
+(snapshots, backups, point in time recovery, Multi-AZ mirrors, AWS Backup), archives (Glacier tiers)
+or live data; early deletion fees are dropped. Live data and archives must move; copies are rebuilt at
 the target. Egress to the internet at list price is $0.05 to $0.15 per GB; AWS credits it for
 customers leaving AWS, on approval, for a move completed within 60 days, so the view says what internet
 capacity that window would need. The region of each line comes
@@ -419,19 +419,19 @@ largest account is sized against the 1 TB per import job limit outside us-east-1
 eu-west-1.
 
 **Links for the migration.** Direct Connect ports in use today are counted from Cost Explorer
-port-hours for the last complete month (`<region>-<location>-PortUsage:10G`, hosted `HCPortUsage`,
-flat-rate `FlatRatePortUsage`; a `-Pair` line is two ports): hours divided by the hours in the month.
+port hours for the last complete month (`<region>-<location>-PortUsage:10G`, hosted `HCPortUsage`,
+flat rate `FlatRatePortUsage`; a `-Pair` line is two ports): hours divided by the hours in the month.
 Those links carry production and are left alone. The copy gets new dedicated 10 Gbps links, in three
 options: Cheap (1 link), Medium (2) and Urgent (4). Time assumes half the line rate is usable. Cost is
 AWS list price from `data/direct_connect.json` (refreshed by `scripts/refresh_direct_connect.py` from
-AWS's public Direct Connect price list): port-hours for the copy plus one month to commission, test
+AWS's public Direct Connect price list): port hours for the copy plus one month to commission, test
 and run the final sync, and data out per GB from each region holding data to a Direct Connect location
 in the country of the primary region (where today's links are, or else the region with most spend).
-Data out is the same for every option. Your carrier's circuit and cross-connect are added only when
-entered under Exit model. The view also notes the cheapest flat-rate port (no per-GB charge) in the
+Data out is the same for every option. Your carrier's circuit and cross connect are added only when
+entered under Exit model. The view also notes the cheapest flat rate port (no per GB charge) in the
 region, as something to ask AWS about; it is not used in the figures.
 
-## Multi-region
+## Multi region
 
 The cost of a second region (run, build, staff, region choice, failover risks) has its own model: see
 [MULTI_REGION.md](MULTI_REGION.md).
