@@ -1496,8 +1496,108 @@ def check_flow_athena(ctx: Ctx, region: str, flows: list[dict]) -> None:
                 source="VPC flow logs (S3, Athena)", check="flow_rejects")  # fmt: skip
 
 
+REPLICA_DAYS = 14  # a replica idle this long is not waiting for a busy day
+IDLE_CONNS = 1  # at most this many connections all fortnight: a monitor at most, no reader
+WRITER_HOT = 60.0  # writer CPU, daily average %, at which idle readers are a missed relief
+
+
+def replica_findings(dbs: list[dict], conns: dict, cpu: dict, region: str, since: datetime) -> list[dict]:
+    """Read replicas nobody reads. A plain RDS replica in the same region with no connections for two weeks;
+    Aurora readers beyond the one kept as failover target with none; and a hot Aurora writer whose readers
+    all sit idle, so reads that could move there do not. Cross region replicas are disaster recovery copies
+    and are left alone, as are databases younger than the fortnight read."""
+    out = []
+
+    def idle(name: str) -> bool | None:
+        pts = conns.get(name) or []
+        return None if len(pts) < REPLICA_DAYS - 3 else max(v for _, v in pts) <= IDLE_CONNS
+
+    def old(d: dict) -> bool:
+        made = d.get("InstanceCreateTime")
+        return bool(made) and made <= since
+
+    usable = [d for d in dbs if d.get("DBInstanceStatus") == "available" and old(d)]
+    for d in usable:
+        src = d.get("ReadReplicaSourceDBInstanceIdentifier")
+        if not src or d["Engine"].startswith("aurora"):
+            continue
+        if src.startswith("arn:") and src.split(":")[3] != region:
+            continue  # a copy in another region: disaster recovery, idle by design
+        if idle(d["DBInstanceIdentifier"]):
+            out.append({"rule": "rds_replica_idle", "res": d["DBInstanceIdentifier"], "severity": "medium",
+                        "title": "Read replica nobody reads",
+                        "note": f"Replica of {src}, {d['DBInstanceClass']}; at most {IDLE_CONNS} connection in "
+                                f"{REPLICA_DAYS} days.",
+                        "why": "A full database instance paid for and kept in step with its source, but no application "
+                               "connects to it. Either point reads at it, keep it on purpose as a standby (and say so "
+                               "in a tag), or remove it."})  # fmt: skip
+    clusters: dict[str, list[dict]] = {}
+    for d in usable:
+        if d["Engine"].startswith("aurora") and d.get("DBClusterIdentifier"):
+            clusters.setdefault(d["DBClusterIdentifier"], []).append(d)
+    for cl, members in clusters.items():
+        writer = [d for d in members if d.get("_writer")]
+        readers = [d for d in members if not d.get("_writer")]
+        if not readers:
+            continue
+        verdict = {d["DBInstanceIdentifier"]: idle(d["DBInstanceIdentifier"]) for d in readers}
+        if any(v is None for v in verdict.values()):
+            continue
+        quiet = [d for d in readers if verdict[d["DBInstanceIdentifier"]]]
+        if len(quiet) == len(readers) and writer:
+            pts = cpu.get(writer[0]["DBInstanceIdentifier"]) or []
+            top = max((v for _, v in pts), default=0.0)
+            if top >= WRITER_HOT:
+                out.append({"rule": "aurora_reads_on_writer", "res": cl, "severity": "medium",
+                            "title": "Reads stay on a busy writer while the readers sit idle",
+                            "note": f"Writer {writer[0]['DBInstanceIdentifier']} reached {top:.0f}% CPU (daily "
+                                    f"average); {len(readers)} reader(s) had no connections in {REPLICA_DAYS} days.",
+                            "why": "Aurora readers can take read queries off the writer through the reader "
+                                   "endpoint. Here every query goes to the writer, so the writer runs hotter than it "
+                                   "needs to and has less headroom at peak."})  # fmt: skip
+        # keep the first failover target; any further idle reader is spend with no use
+        keep = min(readers, key=lambda d: (d.get("PromotionTier", 15), d["DBInstanceIdentifier"]))
+        for d in quiet:
+            if d is keep or len(readers) < 2:
+                continue
+            out.append({"rule": "rds_replica_idle", "res": d["DBInstanceIdentifier"], "severity": "medium",
+                        "title": "Aurora reader nobody reads",
+                        "note": f"In cluster {cl}, {d['DBInstanceClass']}; no connections in {REPLICA_DAYS} days. "
+                                f"{keep['DBInstanceIdentifier']} is kept as the failover target.",
+                        "why": "One idle reader is a sensible failover target. Further readers with no connections "
+                               "are paid for and do no work: send reads to them through the reader endpoint, or "
+                               "remove them."})  # fmt: skip
+    for f in out:
+        f.update(region=region, area="usage", service_label="Amazon RDS")
+    return out
+
+
+def check_replicas(ctx: Ctx, region: str) -> None:
+    """Read replicas and Aurora readers with no connections for two weeks, and hot writers they could relieve."""
+    rds = ctx.client("rds", region)
+    dbs = list(_pages(rds, "describe_db_instances", "DBInstances"))
+    if not any(d.get("ReadReplicaSourceDBInstanceIdentifier") or d.get("DBClusterIdentifier") for d in dbs):
+        return
+    with contextlib.suppress(ClientError):
+        for c in _pages(rds, "describe_db_clusters", "DBClusters"):
+            writers = {m["DBInstanceIdentifier"] for m in c.get("DBClusterMembers") or [] if m.get("IsClusterWriter")}
+            for d in dbs:
+                if d.get("DBClusterIdentifier") == c["DBClusterIdentifier"]:
+                    d["_writer"] = d["DBInstanceIdentifier"] in writers
+    end = ctx.end
+    since = end - timedelta(days=REPLICA_DAYS)
+    probe = {"ns": "AWS/RDS", "dims": RDS_I}
+    q = [{"Id": i, "Expression": hc._search(probe, m, st, 86400), "Label": hc._label(RDS_I), "ReturnData": True}
+         for i, m, st in (("c", "DatabaseConnections", "Maximum"), ("u", "CPUUtilization", "Average"))]  # fmt: skip
+    got = _metric_data(ctx.client("cloudwatch", region), q, since, end)
+    rows = replica_findings(dbs, got.get("c") or {}, got.get("u") or {}, region, since)
+    with ctx._lock:
+        ctx.risks.extend({"account": ctx.account, "account_name": ctx.name, **r} for r in rows)
+
+
 REGION_CHECKS = [
     ("rds_deep", check_rds_deep),
+    ("replicas", check_replicas),
     ("db_logs", check_db_logs),
     ("storage", check_storage),
     ("routes", check_routes),
@@ -1512,6 +1612,7 @@ REGION_CHECKS = [
 ]
 CHECK_LABELS = {
     "rds_deep": "database connections, IOPS, storage, vacuum and Performance Insights",
+    "replicas": "read replicas and Aurora readers nobody reads",
     "db_logs": "database engine logs",
     "storage": "EBS volumes, EFS, FSx, disk and memory (CloudWatch agent)",
     "routes": "blackhole routes and VPC endpoints",

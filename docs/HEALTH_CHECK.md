@@ -53,6 +53,28 @@ In every region with recent activity, plus us-east-1:
 | Quotas | Quotas close to their limit, from AWS/Usage metrics |
 | Other | Certificates in use that expire, AWS Health events, and the Outage Risk checks |
 
+## Health Score
+
+Each account checked gets a score out of 100 and a red, amber or green rating. It is built from seven parts:
+
+| Part | Points | What counts against it |
+|---|---|---|
+| Live faults | 20 | Faults in the window that were not there a day earlier |
+| Standing faults | 10 | Faults in the window that were already there a day earlier |
+| Limits and capacity | 20 | Quotas and limits near their ceiling, resources running hot, throttling |
+| Resilience | 15 | Single points of failure, one zone, no failover |
+| Old versions and hardware | 15 | Databases, EKS, operating systems and Lambda runtimes out of support or close to it; previous generation instances |
+| Use of what is paid for | 10 | Read replicas and Aurora readers with no connections for 14 days; a hot Aurora writer whose readers sit idle |
+| Visibility | 10 | Logging and monitoring that is off; checks that could not read something |
+
+- Findings cost points by severity: critical 40, high 15, medium 5, low 1.
+- Each part loses half of what is left for every 35 points against it, so the first issues cost most.
+- Many findings of one kind (forty old instances) count as one issue that grows with the log of the count.
+- Green is 80 or more, amber 60 to 79, red below 60.
+- A critical fault live now makes the account red. A high one keeps it amber at best.
+- Accounts read only for their shared network are not scored.
+- Cross region read replicas are treated as disaster recovery copies and never called idle. One idle Aurora reader is kept as the failover target.
+
 ## Shared network accounts
 
 Many organisations run the transit gateway, shared VPCs, Resolver rules and private DNS zones in a separate

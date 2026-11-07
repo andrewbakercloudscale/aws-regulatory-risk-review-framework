@@ -30,7 +30,7 @@ from pathlib import Path
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from . import sso
+from . import healthscore, sso
 from .aws_session import BOTO_CONFIG, assume_role_session, caller_identity, make_session
 from .collectors import healthcheck as hc
 from .config import settings
@@ -843,6 +843,15 @@ def build_report(doc: dict) -> dict:
                 "signals": len(a.get("signals") or []),
                 "changes": len(a.get("changes") or []),
                 "shared_for": a.get("shared_for"),
+                # an account read for its shared network only is not scored: most checks did not run there
+                "health": None
+                if a.get("shared_for")
+                else healthscore.score_account(
+                    [_legacy_title(x) for x in a.get("signals") or []],
+                    [r for r in a.get("risks") or [] if r.get("severity") in SEV],
+                    a.get("readiness") or [],
+                    a.get("gaps") or [],
+                ),
             }
             for a in accounts
         ],  # fmt: skip

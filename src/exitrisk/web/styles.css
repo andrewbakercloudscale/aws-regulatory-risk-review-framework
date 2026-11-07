@@ -1050,3 +1050,22 @@ details.hc-more > summary { cursor: pointer; font-weight: 600; margin: 4px 0 10p
 .hc-ok { color: var(--good, #1a7f37); font-weight: 600; }
 .hc-policy { max-height: 260px; overflow: auto; font-size: 12px; background: var(--surface); padding: 10px; border-radius: 8px; border: 1px solid var(--border); }
 body[data-view="health"] .scopebar, body[data-view="health"] #reportBar > .menu, body[data-view="health"] #btnJumpAi { display: none; }
+.hs-acct { display: grid; grid-template-columns: 120px 1fr; gap: 18px; align-items: start; padding: 12px 0; border-top: 1px solid var(--grid); }
+.hs-acct:first-of-type { border-top: 0; }
+.hs-acct h3 { margin: 0 0 2px; }
+.hs-acct p { margin: 0 0 10px; }
+.hs-dial { --rag: var(--muted); display: grid; place-items: center; align-content: center; width: 112px; height: 112px; border-radius: 50%; border: 8px solid var(--rag); background: color-mix(in srgb, var(--rag) 10%, var(--surface)); }
+.hs-dial b { font-size: 34px; line-height: 1; }
+.hs-dial span { font-size: 12px; color: var(--ink-2); }
+.hs-dial i { font-style: normal; font-size: 12px; font-weight: 700; color: var(--rag); text-transform: uppercase; letter-spacing: .04em; }
+.rag-green { --rag: var(--t1); }
+.rag-amber { --rag: var(--sev-warning); }
+.rag-red { --rag: var(--sev-critical); }
+.hs-parts { display: grid; gap: 6px; }
+.hs-part { display: grid; grid-template-columns: 190px 160px 56px 1fr; gap: 10px; align-items: center; font-size: 13px; }
+.hs-bar { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
+.hs-bar i { display: block; height: 100%; background: var(--rag); }
+.hs-num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.hs-top { color: var(--ink-2); line-height: 1.4; }
+@media (max-width: 760px) { .hs-acct { grid-template-columns: 1fr; } .hs-part { grid-template-columns: 1fr 1fr 48px; } .hs-top { grid-column: 1 / -1; } }
+@media print { .hs-acct { break-inside: avoid; } }

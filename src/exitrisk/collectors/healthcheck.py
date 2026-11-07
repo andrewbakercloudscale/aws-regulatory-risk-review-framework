@@ -2698,8 +2698,8 @@ def _merge_deep(deep) -> None:
         return
     _merged = True
     PROBES.extend(deep.PROBES)
-    REGION_CHECKS[3:3] = deep.REGION_CHECKS[:2]  # the database deep dive reads logs: among the slow ones
-    REGION_CHECKS.extend(deep.REGION_CHECKS[2:])
+    REGION_CHECKS[3:3] = deep.REGION_CHECKS[:3]  # the database deep dive reads logs: among the slow ones
+    REGION_CHECKS.extend(deep.REGION_CHECKS[3:])
     CHECK_LABELS.update(deep.CHECK_LABELS)
 
 

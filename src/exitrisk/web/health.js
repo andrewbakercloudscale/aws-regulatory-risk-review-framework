@@ -345,6 +345,8 @@
         <dl class="hc-legend">${tiles.map(([l, , , tip]) => `<dt>${l}</dt><dd>${esc(tip.replace("; click to go there", ""))}</dd>`).join("")}</dl>
       </section>
 
+      ${healthCard(mine)}
+
       <section class="card">
         <h2>Top ${top.length || 10} issues</h2>
         ${intro(`<b>What this is.</b> The issues most worth acting on, most critical first. Where several findings tell one story (a change followed by errors), they are joined into one row and the others are listed under <i>Why</i>.
@@ -426,6 +428,33 @@
   }
 
   // A plain words explanation above each part, so the report reads well when sent to someone who never ran it.
+  // ------------------------------------------------------------------ health score
+  const RAG_WORD = { green: "Green", amber: "Amber", red: "Red" };
+  function healthCard(accounts) {
+    const scored = accounts.filter((a) => a.health);
+    if (!scored.length) return "";
+    const one = (a) => {
+      const h = a.health;
+      return `<div class="hs-acct">
+        <div class="hs-dial rag-${esc(h.rag)}" title="${esc(h.why)}"><b>${h.score}</b><span>/100</span><i>${RAG_WORD[h.rag] || esc(h.rag)}</i></div>
+        <div class="hs-body">
+          <h3>${esc(a.name || a.id)} <span class="muted small">${esc(a.id)}</span></h3>
+          <p class="small">${esc(h.why)}</p>
+          <div class="hs-parts">${h.parts.map((p) => `<div class="hs-part" title="${esc(p.what)}">
+            <span class="hs-label">${esc(p.label)}</span>
+            <span class="hs-bar"><i class="rag-${esc(p.rag)}" style="width:${Math.max(2, (100 * p.score) / p.weight).toFixed(0)}%"></i></span>
+            <span class="hs-num">${Math.round(p.score)}<span class="muted">/${p.weight}</span></span>
+            <span class="hs-top small">${p.top.length ? p.top.map((t) => `${sev(t.severity)} ${esc(t.title)}`).join("<br>") : `<span class="muted">Nothing found</span>`}</span>
+          </div>`).join("")}</div>
+        </div></div>`;
+    };
+    return `<section class="card hs-card">
+      <h2>Health Score</h2>
+      ${intro(`<b>What this is.</b> One figure out of 100 for each account, from everything this check found, in seven parts: live faults, standing faults, limits and capacity, resilience, old versions and hardware, use of what is paid for (read replicas nobody reads), and visibility. Each part loses half of what is left for every 35 points of findings against it (critical 40, high 15, medium 5, low 1), and many alike findings of one kind count once, growing with their number. <b>Green</b> is 80 or more, <b>amber</b> 60 to 79, <b>red</b> below 60. A critical fault live now makes the account red, and a high one keeps it amber at best, whatever the figure.`)}
+      ${scored.map(one).join("")}
+    </section>`;
+  }
+
   function intro(html) { return `<div class="hc-intro">${html}</div>`; }
 
   function signalsTable(signals) {
