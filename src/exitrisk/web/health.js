@@ -345,7 +345,7 @@
         <dl class="hc-legend">${tiles.map(([l, , , tip]) => `<dt>${l}</dt><dd>${esc(tip.replace("; click to go there", ""))}</dd>`).join("")}</dl>
       </section>
 
-      ${healthCard(mine)}
+      ${healthCard(mine, r.unreachable || [])}
 
       <section class="card">
         <h2>Top ${top.length || 10} issues</h2>
@@ -429,17 +429,21 @@
 
   // A plain words explanation above each part, so the report reads well when sent to someone who never ran it.
   // ------------------------------------------------------------------ health score
-  const RAG_WORD = { green: "Green", amber: "Amber", red: "Red" };
-  function healthCard(accounts) {
+  const RAG_WORD = { green: "Green", amber: "Amber", red: "Red", unrated: "Not rated" };
+  function healthCard(accounts, unreached = []) {
     const scored = accounts.filter((a) => a.health);
-    if (!scored.length) return "";
+    if (!scored.length && !unreached.length) return "";
     const one = (a) => {
       const h = a.health;
       return `<div class="hs-acct">
-        <div class="hs-dial rag-${esc(h.rag)}" title="${esc(h.why)}"><b>${h.score}</b><span>/100</span><i>${RAG_WORD[h.rag] || esc(h.rag)}</i></div>
+        <div class="hs-side">
+          <div class="hs-dial rag-${esc(h.rag)}" title="${esc(h.why)}"><b>${h.rag === "unrated" ? "?" : h.score}</b><span>/100</span><i>${RAG_WORD[h.rag] || esc(h.rag)}</i></div>
+          ${h.partial ? `<div class="hs-partial" title="${esc(h.why)}">Partly read<br>${Math.round(100 * (h.coverage ?? 1))}% of checks ran</div>` : ""}
+        </div>
         <div class="hs-body">
           <h3>${esc(a.name || a.id)} <span class="muted small">${esc(a.id)}</span></h3>
           <p class="small">${esc(h.why)}</p>
+          ${h.blind?.length ? `<p class="hs-blind small"><b>Could not run:</b> ${h.blind.map(esc).join(", ")}. See Coverage at the end for the reason and the fix.</p>` : ""}
           <div class="hs-parts">${h.parts.map((p) => `<div class="hs-part" title="${esc(p.what)}">
             <span class="hs-label">${esc(p.label)}</span>
             <span class="hs-bar"><i class="rag-${esc(p.rag)}" style="width:${Math.max(2, (100 * p.score) / p.weight).toFixed(0)}%"></i></span>
@@ -450,8 +454,9 @@
     };
     return `<section class="card hs-card">
       <h2>Health Score</h2>
-      ${intro(`<b>What this is.</b> One figure out of 100 for each account, from everything this check found, in seven parts: live faults, standing faults, limits and capacity, resilience, old versions and hardware, use of what is paid for (read replicas nobody reads), and visibility. Each part loses half of what is left for every 35 points of findings against it (critical 40, high 15, medium 5, low 1), and many alike findings of one kind count once, growing with their number. <b>Green</b> is 80 or more, <b>amber</b> 60 to 79, <b>red</b> below 60. A critical fault live now makes the account red, and a high one keeps it amber at best, whatever the figure.`)}
+      ${intro(`<b>What this is.</b> One figure out of 100 for each account, from everything this check found, in seven parts: live faults, standing faults, limits and capacity, resilience, old versions and hardware, use of what is paid for (read replicas nobody reads), and visibility. Each part loses half of what is left for every 35 points of findings against it (critical 40, high 15, medium 5, low 1), and many alike findings of one kind count once, growing with their number. <b>Green</b> is 80 or more, <b>amber</b> 60 to 79, <b>red</b> below 60. A critical fault live now makes the account red, and a high one keeps it amber at best, whatever the figure. What could not be read is never counted as healthy: a check that could not run costs Visibility points and keeps the account amber at best, and an account where fewer than half the checks ran is not rated.`)}
       ${scored.map(one).join("")}
+      ${unreached.map((u) => `<div class="hs-acct"><div class="hs-side"><div class="hs-dial rag-unrated"><b>?</b><span>/100</span><i>Not rated</i></div></div><div class="hs-body"><h3>${esc(u.name || u.account)} <span class="muted small">${esc(u.account)}</span></h3><p class="small">Not rated: the account could not be reached (${esc(u.code)}: ${esc(u.message)}).</p></div></div>`).join("")}
     </section>`;
   }
 
@@ -486,7 +491,7 @@
   function scoreChips(r) {
     const list = r.scores || [];
     if (!list.length) return `<span class="muted">${r.status === "done" ? "n/a" : ""}</span>`;
-    return `<span class="hs-chips">${list.map((x) => `<span class="hs-chip rag-${esc(x.rag)}" title="${esc(`${x.name}: ${x.why}`)}"><b>${x.score}</b>${list.length > 1 ? ` ${esc(x.name)}` : ""}</span>`).join("")}</span>`;
+    return `<span class="hs-chips">${list.map((x) => `<span class="hs-chip rag-${esc(x.rag)}" title="${esc(`${x.name}: ${x.why}`)}"><b>${x.score ?? "?"}</b>${list.length > 1 ? ` ${esc(x.name)}` : ""}${x.partial ? `<span class="hs-chip-note">partly read</span>` : ""}</span>`).join("")}</span>`;
   }
 
   async function loadRuns() {

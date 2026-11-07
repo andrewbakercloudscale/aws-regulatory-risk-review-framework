@@ -804,6 +804,7 @@ class Ctx:
         self.changes: list[dict] = []
         self.gaps: list[dict] = []
         self.checked: list[str] = []
+        self.ran = 0  # checks run, one per check and region: the base the Health Score's coverage is taken from
         self.unhealthy_tgs: list[tuple[str, dict]] = []
         self.no_history: set[str] = set()  # log groups with nothing a day earlier: no baseline to judge by
         self.readiness: list[dict] = []  # data sources that are off, so the next check can see more
@@ -2712,11 +2713,15 @@ SHARED_CHECKS = {"network", "routes", "dns", "flowlogs", "metrics", "alarms", "c
 
 
 def run_check(ctx: Ctx, region: str, name: str, fn) -> None:
+    with ctx._lock:
+        ctx.ran += 1
     try:
         fn(ctx, region) if region != "global" else fn(ctx)
     except (ClientError, BotoCoreError) as exc:
         code = describe_exception(exc)[0]
         if code in _NOT_HERE and name not in ("health",):
+            with ctx._lock:
+                ctx.ran -= 1  # the service is not offered here: nothing to check, not a blind spot
             return
         log.warning("health check %s %s %s failed: %s", ctx.account, region, name, code)
         ctx.gap(region, CHECK_LABELS.get(name, name), exc)
@@ -2754,4 +2759,5 @@ def result(ctx: Ctx, regions: list[str]) -> dict:
         "risks": ctx.risks,
         "scanned_gb": round(ctx.scanned_gb, 2),
         "shared_for": getattr(ctx, "shared_for", None),
+        "ran": ctx.ran,
     }

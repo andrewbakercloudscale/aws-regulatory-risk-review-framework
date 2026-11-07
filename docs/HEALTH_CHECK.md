@@ -73,6 +73,13 @@ Each account checked gets a score out of 100 and a red, amber or green rating. I
 - Green is 80 or more, amber 60 to 79, red below 60.
 - A critical fault live now makes the account red. A high one keeps it amber at best.
 - Accounts read only for their shared network are not scored.
+- What could not be read is never counted as healthy. A check that was refused or failed is a blind spot: it costs
+  Visibility points (high when it failed in every region), and any blind spot keeps the account amber at best.
+  The score shows "Partly read" with the share of checks that ran, and names the checks that could not run.
+- An account where fewer than half the checks ran, or that could not be reached, is not rated.
+- A partial read (more CloudTrail events than one read returns) and AWS Health without a support plan cost
+  little and do not cap the rating: the rest of the check still saw.
+- A run that did not finish is rated amber at best.
 - Cross region read replicas are treated as disaster recovery copies and never called idle. One idle Aurora reader is kept as the failover target.
 
 ## Shared network accounts

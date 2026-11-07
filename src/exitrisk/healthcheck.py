@@ -483,15 +483,21 @@ def delete(run_id: str) -> None:
     _path(run_id).unlink(missing_ok=True)
 
 
-def account_health(a: dict) -> dict | None:
+def account_health(a: dict, finished: bool = True) -> dict | None:
     """The Health Score of one account of a run, or None for one read only for its shared network."""
     if a.get("shared_for"):
         return None
+    regions = a.get("regions") or []
+    # runs saved before checks were counted: every check in every region, and the three global ones
+    ran = a.get("ran") or len(hc.REGION_CHECKS) * len(regions) + 3
     return healthscore.score_account(
         [_legacy_title(x) for x in a.get("signals") or []],
         [r for r in a.get("risks") or [] if r.get("severity") in SEV],
         a.get("readiness") or [],
         a.get("gaps") or [],
+        ran=ran,
+        regions=max(1, len(regions)),
+        finished=finished,
     )
 
 
@@ -513,8 +519,12 @@ def list_runs() -> list[dict]:
         if d.get("raw"):
             rep = build_report(d)
             scores = [{"id": a["id"], "name": a.get("name") or a["id"], "score": a["health"]["score"],
-                       "rag": a["health"]["rag"], "why": a["health"]["why"]}
+                       "rag": a["health"]["rag"], "why": a["health"]["why"], "partial": a["health"]["partial"]}
                       for a in rep["accounts"] if a.get("health")]  # fmt: skip
+            # accounts the run could not reach at all: no score, said so rather than left out
+            scores += [{"id": u.get("account"), "name": u.get("name") or u.get("account"), "score": None,
+                        "rag": "unrated", "why": f"Not reached: {u.get('code')}", "partial": True}
+                       for u in rep.get("unreachable") or []]  # fmt: skip
             top = rep["top"][0]["title"] if rep["top"] else ""
         row = {
             "id": d["id"], "created": d.get("created"), "status": d.get("status"),
@@ -875,7 +885,7 @@ def build_report(doc: dict) -> dict:
                 "changes": len(a.get("changes") or []),
                 "shared_for": a.get("shared_for"),
                 # an account read for its shared network only is not scored: most checks did not run there
-                "health": account_health(a),
+                "health": account_health(a, finished=doc.get("status") in (None, "done")),
             }
             for a in accounts
         ],  # fmt: skip

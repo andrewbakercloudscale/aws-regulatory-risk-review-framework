@@ -5,6 +5,11 @@ loses half of what is left for each 35 points against it, so a few issues cost a
 costs little: the score separates a healthy account from an unhealthy one rather than counting rows.
 Many alike findings of one rule (forty old instances) count as one issue that grows with the log of
 the count. A fault live now overrides the number: critical is red, high is at best amber.
+
+What could not be read is never taken as healthy. A check refused or failed in a region is a blind spot:
+it costs Visibility points (high when it failed everywhere), any blind spot caps the rating at amber,
+and an account where less than half the checks ran is not rated at all. A partial read (more events than
+one read returns) and AWS Health without a support plan cost little: the rest of the check still saw.
 """
 
 from __future__ import annotations
@@ -19,6 +24,9 @@ import yaml
 POINTS = {"critical": 40, "high": 15, "medium": 5, "low": 1}
 HALF = 35.0  # points against a part that halve what is left of it
 GREEN, AMBER = 80, 60
+MIN_COVERAGE = 0.5  # below this share of checks run, no rating is given
+# Gaps that still leave the check seeing most of what it looks for: not blind spots.
+MINOR_GAPS = {"Partial", "SubscriptionRequiredException", "ResourceNotFoundException", "MalformedQueryException"}
 
 PARTS = [
     ("live", "Live faults", 20, "Faults in the window that were not there a day earlier."),
@@ -69,8 +77,23 @@ def rag(score: float) -> str:
     return "green" if score >= GREEN else "amber" if score >= AMBER else "red"
 
 
-def score_account(signals: list[dict], risks: list[dict], readiness: list[dict], gaps: list[dict]) -> dict:
-    """The Health Score of one account from what its health check found."""
+def blind_spots(gaps: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(blind, minor): gaps where a check did not run, and gaps where it ran but read only part."""
+    blind = [g for g in gaps if g.get("code") not in MINOR_GAPS]
+    return blind, [g for g in gaps if g.get("code") in MINOR_GAPS]
+
+
+def score_account(
+    signals: list[dict],
+    risks: list[dict],
+    readiness: list[dict],
+    gaps: list[dict],
+    ran: int = 0,
+    regions: int = 1,
+    finished: bool = True,
+) -> dict:
+    """The Health Score of one account from what its health check found. ``ran`` is the checks run (one per
+    check and region); ``regions`` how many regions were read, for the share of a check that failed."""
     items: dict[str, list[tuple[str, str, str]]] = {k: [] for k, *_ in PARTS}  # part: [(group, severity, title)]
     for s in signals:
         title = s.get("title", "")
@@ -83,8 +106,15 @@ def score_account(signals: list[dict], risks: list[dict], readiness: list[dict],
         )
     for x in readiness:
         items["visibility"].append((f"ready:{x.get('item')}", "medium", _off(x.get("item") or "")))
-    for g in gaps:
-        items["visibility"].append((f"gap:{g.get('check')}", "low", f"Could not check {g.get('check')}"))
+    blind, minor = blind_spots(gaps)
+    where: dict[str, set] = {}
+    for g in blind:
+        where.setdefault(g.get("check") or "?", set()).add(g.get("region"))
+    for check, regs in where.items():
+        everywhere = len(regs - {"global"}) >= regions or "global" in regs or regions <= 1
+        items["visibility"].append((f"gap:{check}", "high" if everywhere else "medium", f"Could not run: {check}"))
+    for g in minor:
+        items["visibility"].append((f"gap:{g.get('check')}", "low", f"Read only in part: {g.get('check')}"))
     parts = []
     for key, label, weight, what in PARTS:
         groups: dict[str, list[tuple[str, str]]] = {}
@@ -111,4 +141,26 @@ def score_account(signals: list[dict], risks: list[dict], readiness: list[dict],
     weakest = min(parts, key=lambda p: p["score"] / p["weight"])
     if weakest["score"] < weakest["weight"] * 0.8:
         why += f" Weakest: {weakest['label'].lower()}."
-    return {"score": score, "rag": level, "why": why, "parts": parts}
+    # what could not be seen: coverage first, then the cap
+    failed = len(blind)
+    coverage = max(0.0, 1 - failed / ran) if ran else (0.0 if failed else 1.0)
+    names = sorted(where)
+    unseen = ", ".join(names[:4]) + (f" and {len(names) - 4} more" if len(names) > 4 else "")
+    if coverage < MIN_COVERAGE:
+        level = "unrated"
+        why = (
+            f"Not rated: only {coverage:.0%} of the checks could run ({failed} of {ran or failed} failed: {unseen})."
+            " A score from so little would look healthier than the account may be."
+        )
+    elif names:
+        if level == "green":
+            level = "amber"
+        why += (
+            f" {len(names)} check{'s' if len(names) > 1 else ''} could not run ({unseen}), so this is"
+            f" from {coverage:.0%} of the checks and rated amber at best: what was not read is not counted as healthy."
+        )
+    if not finished and level != "unrated":
+        level = "amber" if level == "green" else level
+        why += " The run did not finish, so not everything was read; rated amber at best."
+    return {"score": score, "rag": level, "why": why, "parts": parts, "coverage": round(coverage, 3),
+            "blind": names, "partial": bool(names) or not finished}  # fmt: skip

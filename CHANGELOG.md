@@ -6,6 +6,12 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- Health Score: checks that could not run are no longer counted as healthy. Each costs Visibility points (high
+  when it failed in every region), any one keeps the account amber at best, the score shows "Partly read" with
+  the share of checks that ran and names them, and an account where fewer than half ran or that could not be
+  reached is not rated. Earlier health checks marks partly read scores too.
+
 ## [0.34.0] - 2026-11-07
 
 ### Added

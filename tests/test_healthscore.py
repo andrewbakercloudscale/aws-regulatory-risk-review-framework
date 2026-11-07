@@ -64,3 +64,35 @@ def test_aurora_keeps_one_failover_reader_and_flags_hot_writer():
     # one reader alone is the failover target, and a quiet writer needs no relief
     out = D.replica_findings(dbs[:2], {"r1": days(0)}, {"w": days(20)}, "x", SINCE)
     assert out == []
+
+
+def gap(check, region, code="AccessDenied"):
+    return {"check": check, "region": region, "code": code}
+
+
+def test_blind_spot_caps_at_amber_and_costs_visibility():
+    h = S.score_account([], [], [], [gap("databases", "eu-west-1")], ran=60, regions=2)
+    assert h["rag"] == "amber" and h["partial"] and h["blind"] == ["databases"]
+    assert "could not run" in h["why"] and h["coverage"] < 1
+    vis = next(p for p in h["parts"] if p["key"] == "visibility")
+    one = vis["score"]
+    both = S.score_account(
+        [], [], [], [gap("databases", "eu-west-1"), gap("databases", "af-south-1")], ran=60, regions=2
+    )
+    assert next(p for p in both["parts"] if p["key"] == "visibility")["score"] < one  # failed everywhere: high
+
+
+def test_minor_gaps_do_not_cap():
+    gaps = [gap("Recent changes", "x", "Partial"), gap("AWS Health", "x", "SubscriptionRequiredException")]
+    h = S.score_account([], [], [], gaps, ran=60)
+    assert h["rag"] == "green" and not h["partial"]
+
+
+def test_mostly_blind_is_not_rated():
+    gaps = [gap(f"check{i}", "r") for i in range(40)]
+    h = S.score_account([], [], [], gaps, ran=60)
+    assert h["rag"] == "unrated" and "Not rated" in h["why"]
+
+
+def test_unfinished_run_capped():
+    assert S.score_account([], [], [], [], ran=60, finished=False)["rag"] == "amber"
