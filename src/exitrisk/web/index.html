@@ -22,7 +22,7 @@
     <select id="scanSelect" title="Stored scans"></select>
     <button id="btnSso" class="btn" title="Sign in through your AWS access portal (IAM Identity Center)"><span class="dot" id="ssoDot"></span><span id="ssoLabel">AWS sign-in</span></button>
     <button id="btnNewScan" class="btn primary">New scan</button>
-    <a id="btnHealth" class="btn" href="/?view=health" title="Something is broken now: deep check of one or a few accounts and the ten most likely causes">Health check</a>
+    <a id="btnHealth" class="btn" href="/?view=health" title="Deep check of one or a few accounts: a Health Score out of 100 and the ten issues most worth acting on, during an incident or any time">Health check</a>
     <button id="btnScanRunning" class="btn scan-running" title="A scan is running: open it to follow or stop it" hidden><span class="spin" aria-hidden="true"></span>Scan running <span id="scanRunPct"></span></button>
     <span class="tb-sep" aria-hidden="true"></span>
     <button id="btnExcl" class="btn" title="AWS products left out of the score and estimate">Exclusions<span id="exclCount" class="count-badge" hidden></span></button>
@@ -115,7 +115,7 @@
       </li>
       <li class="card">
         <h3><span class="step-n">!</span> Something broken right now?</h3>
-        <p>A <strong>Health check</strong> reads everything in one or a few accounts (alarms, AWS Health, recent changes, load balancers, functions, databases, queues, networks, quotas) and ranks the ten most likely causes. Works with an SSO sign-in or an access key from your credentials file.</p>
+        <p>A <strong>Health check</strong> reads everything in one or a few accounts (alarms, AWS Health, recent changes, load balancers, functions, databases, queues, networks, quotas), gives each a Health Score out of 100, and ranks the ten issues most worth acting on. Use it during an incident or as a routine check. Works with an SSO sign-in or an access key from your credentials file.</p>
         <div class="row"><a class="btn" href="/health">Health check</a></div>
       </li>
     </ol>
@@ -129,7 +129,7 @@
       <button type="button" class="vtab" data-view="assurance" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span><b>Cloud Assurance Report</b><small>Controls and governance by account</small></span></button>
       <button type="button" class="vtab" data-view="outage" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19z"/><path d="M12 10v5"/><path d="M12 17.5v.5"/></svg><span><b>Outage Risk Report</b><small>What fails at peak, and where to start</small></span></button>
       <button type="button" class="vtab" data-view="compromise" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/><path d="M12 8v3"/><path d="M12 13.5v.5"/></svg><span><b>Developer Compromise</b><small>What a stolen laptop could change</small></span></button>
-      <button type="button" class="vtab" data-view="health" aria-pressed="false" title="Deep dive into one or more accounts during an outage"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2.5-6 4 12 2.5-6H21"/></svg><span><b>Health Check</b><small>Outage now: deep dive into accounts</small></span></button>
+      <button type="button" class="vtab" data-view="health" aria-pressed="false" title="Deep check of one or more accounts, during an incident or any time"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2.5-6 4 12 2.5-6H21"/></svg><span><b>Health Check</b><small>Health Score and live issues by account</small></span></button>
     </nav>
     <button type="button" id="btnJumpAi" class="btn ai-jump" title="Go to the AI review (section 2)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>AI review<span id="aiDot" class="dot" hidden></span></button>
     <div class="menu">
@@ -145,8 +145,8 @@
 
   <div id="hcView" class="hc-view" hidden>
   <section class="card hc-setup no-print" aria-labelledby="hcSetupTitle">
-    <h2 id="hcSetupTitle">What is wrong, and where?</h2>
-    <p class="muted small">Pick the accounts having trouble. The check reads every region in use: alarms, AWS Health, recent changes, refused calls, load balancers, containers, functions, databases, queues, networks, certificates, DNS, VPC flow logs, error spikes in the busiest log groups (Logs Insights) and quotas, then ranks the ten most likely causes. It also runs the Outage Risk checks for other issues in the accounts, and lists data sources to turn on. Read only; Logs Insights is billed by AWS at US$0.005 a GB read.</p>
+    <h2 id="hcSetupTitle">Which accounts should be checked?</h2>
+    <p class="muted small">Pick the accounts to check: ones having trouble now, or ones you want a regular health check and Health Score for. The check reads every region in use: alarms, AWS Health, recent changes, refused calls, load balancers, containers, functions, databases, queues, networks, certificates, DNS, VPC flow logs, error spikes in the busiest log groups (Logs Insights) and quotas, then ranks the ten issues most worth acting on and scores each account out of 100. It also runs the Outage Risk checks for other issues in the accounts, and lists data sources to turn on. Read only; Logs Insights is billed by AWS at US$0.005 a GB read.</p>
     <div class="hc-form">
       <div class="field">
         <label for="hcProfile">Credentials</label>
@@ -173,7 +173,7 @@
       </div>
       <div class="field">
         <label for="hcSymptoms">Symptoms <span class="muted">(optional)</span></label>
-        <textarea id="hcSymptoms" maxlength="2000" placeholder="e.g. payments API returning 502 since 09:40, call centre agents cannot log in"></textarea>
+        <textarea id="hcSymptoms" maxlength="2000" placeholder="Leave empty for a routine health check, or describe what is wrong, e.g. payments API returning 502 since 09:40"></textarea>
       </div>
       <div class="span-2 hc-opts">
         <label class="check"><input type="checkbox" id="hcShared" checked> Also check the accounts that own the shared network <span class="muted">(transit gateway, shared VPCs, DNS rules and zones these accounts use; network checks only, up to 3)</span></label>

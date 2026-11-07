@@ -483,19 +483,50 @@ def delete(run_id: str) -> None:
     _path(run_id).unlink(missing_ok=True)
 
 
+def account_health(a: dict) -> dict | None:
+    """The Health Score of one account of a run, or None for one read only for its shared network."""
+    if a.get("shared_for"):
+        return None
+    return healthscore.score_account(
+        [_legacy_title(x) for x in a.get("signals") or []],
+        [r for r in a.get("risks") or [] if r.get("severity") in SEV],
+        a.get("readiness") or [],
+        a.get("gaps") or [],
+    )
+
+
+_LISTED: dict[str, tuple[float, dict]] = {}  # run file: (modified, its row), so a long list is not re-scored
+
+
 def list_runs() -> list[dict]:
     out = []
     for p in sorted(_dir().glob("hc-*.json"), reverse=True):
         try:
+            mtime = p.stat().st_mtime
+            if (hit := _LISTED.get(str(p))) and hit[0] == mtime:
+                out.append(hit[1])
+                continue
             d = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        out.append({
+        scores, top = [], ""
+        if d.get("raw"):
+            rep = build_report(d)
+            scores = [{"id": a["id"], "name": a.get("name") or a["id"], "score": a["health"]["score"],
+                       "rag": a["health"]["rag"], "why": a["health"]["why"]}
+                      for a in rep["accounts"] if a.get("health")]  # fmt: skip
+            top = rep["top"][0]["title"] if rep["top"] else ""
+        row = {
             "id": d["id"], "created": d.get("created"), "status": d.get("status"),
             "hours": (d.get("window") or {}).get("hours"),
             "accounts": [a.get("name") or a["id"] for a in (d.get("request") or {}).get("accounts") or []],
             "symptoms": ((d.get("request") or {}).get("symptoms") or "")[:120],
-        })  # fmt: skip
+            "scores": scores,
+            "top": top[:160],  # what the check found first, for runs started with no symptoms given
+        }  # fmt: skip
+        if d.get("status") not in ("running", "queued"):
+            _LISTED[str(p)] = (mtime, row)
+        out.append(row)
     return out
 
 
@@ -844,14 +875,7 @@ def build_report(doc: dict) -> dict:
                 "changes": len(a.get("changes") or []),
                 "shared_for": a.get("shared_for"),
                 # an account read for its shared network only is not scored: most checks did not run there
-                "health": None
-                if a.get("shared_for")
-                else healthscore.score_account(
-                    [_legacy_title(x) for x in a.get("signals") or []],
-                    [r for r in a.get("risks") or [] if r.get("severity") in SEV],
-                    a.get("readiness") or [],
-                    a.get("gaps") or [],
-                ),
+                "health": account_health(a),
             }
             for a in accounts
         ],  # fmt: skip

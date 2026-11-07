@@ -6,16 +6,21 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-07
+
 ### Added
 - Health Check: a Health Score out of 100 per account, rated red, amber or green, in seven parts: live faults,
   standing faults, limits and capacity, resilience, old versions and hardware, use of what is paid for, and
   visibility. Earlier runs are scored too when opened.
 - Health Check: read replicas and Aurora readers with no connections for 14 days, and hot Aurora writers whose
   readers sit idle. Cross region replicas and the first failover reader are left alone.
+- Health Check: Earlier health checks lists each account's Health Score in its colour, and, for a run started
+  with no symptoms given, the top issue it found.
 
 ### Changed
 - Health Check is a view of the console like the other five reports: the top bar and report tabs stay, and an
   expired sign-in opens the console's own AWS sign-in instead of a second one. `/health` still works.
+- Health Check wording covers a routine check as well as an incident: pick any accounts to check, symptoms optional.
 
 ## [0.33.0] - 2026-11-07
 

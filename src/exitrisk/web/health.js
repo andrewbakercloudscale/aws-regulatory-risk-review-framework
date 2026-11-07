@@ -482,11 +482,18 @@
   }
 
   // ------------------------------------------------------------------ earlier runs
+  // One chip per scored account: its score in its rating's colour, the account named when there are several.
+  function scoreChips(r) {
+    const list = r.scores || [];
+    if (!list.length) return `<span class="muted">${r.status === "done" ? "n/a" : ""}</span>`;
+    return `<span class="hs-chips">${list.map((x) => `<span class="hs-chip rag-${esc(x.rag)}" title="${esc(`${x.name}: ${x.why}`)}"><b>${x.score}</b>${list.length > 1 ? ` ${esc(x.name)}` : ""}</span>`).join("")}</span>`;
+  }
+
   async function loadRuns() {
     try {
       const { runs, running } = await api("/api/health-checks");
       $("#hcRuns").innerHTML = runs.length
-        ? `<thead><tr><th>When</th><th>Accounts</th><th>Window</th><th>Symptoms</th><th>Status</th><th></th></tr></thead><tbody>${runs.map((r) => `<tr data-id="${esc(r.id)}" class="${r.id === state.reportId ? "chosen" : ""}"><td class="nowrap">${when(r.created)}</td><td>${esc(r.accounts.join(", "))}</td><td>${esc(r.hours)} h</td><td class="muted">${esc(r.symptoms)}</td><td>${esc(r.status)}</td><td><button class="btn ghost" data-del="${esc(r.id)}" type="button" title="Delete this run">Delete</button></td></tr>`).join("")}</tbody>`
+        ? `<thead><tr><th>When</th><th>Accounts</th><th>Health Score</th><th>Window</th><th title="The symptoms given when the check was started; when none were given, the top issue it found">Symptoms or top issue</th><th>Status</th><th></th></tr></thead><tbody>${runs.map((r) => `<tr data-id="${esc(r.id)}" class="${r.id === state.reportId ? "chosen" : ""}"><td class="nowrap">${when(r.created)}</td><td>${esc(r.accounts.join(", "))}</td><td>${scoreChips(r)}</td><td>${esc(r.hours)} h</td><td class="small">${r.symptoms ? esc(r.symptoms) : r.top ? `<span class="muted">Found:</span> ${esc(r.top)}` : `<span class="muted">${r.status === "done" ? "No fault found" : ""}</span>`}</td><td>${esc(r.status)}</td><td><button class="btn ghost" data-del="${esc(r.id)}" type="button" title="Delete this run">Delete</button></td></tr>`).join("")}</tbody>`
         : `<tbody><tr><td class="muted">None yet.</td></tr></tbody>`;
       if (running?.length && !state.runId) follow(running[0]);
     } catch (e) {
