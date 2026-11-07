@@ -3396,7 +3396,7 @@
     window.addEventListener("beforeprint", () => { if (state.view === "outage") document.querySelectorAll("#orContent details").forEach((d) => { fillOrReview(d); d.open = true; }); });
   }
 
-  const VIEWS = ["exit", "multiregion", "assurance", "outage", "compromise"];
+  const VIEWS = ["exit", "multiregion", "assurance", "outage", "compromise", "health"];
   function setView(v) {
     state.view = VIEWS.includes(v) ? v : "exit";
     document.body.dataset.view = state.view;
@@ -3416,6 +3416,11 @@
     $("#cpEmpty").hidden = !cpOn || !state.cp || state.cp.available;
     $("#cpPick").hidden = !cpOn || !state.cp || (state.cp.available && !state.cpPicking);
     if (!cpOn) $("#cpError").hidden = true;
+    // Health Check needs no scan: it keeps the report tabs and reads accounts of its own.
+    const hc = state.view === "health";
+    $("#hcView").hidden = !hc;
+    if (hc) { $("#reportBar").hidden = false; $("#empty").hidden = true; }
+    else if (!state.report && !state.scanId) $("#empty").hidden = false;
     // Export follows the report on screen; the one-page summary exists only for exit risk.
     const mr = state.view === "multiregion", as = state.view === "assurance", or = state.view === "outage", cp = cpOn;
     $("#btnPdf b").textContent = mr ? "Multi-Region Report" : as ? "Cloud Assurance Report" : or ? "Outage Risk Report" : cp ? "Developer Compromise Report" : "Exit Risk Report";
@@ -3425,12 +3430,14 @@
     if (!PRINT) {
       const url = new URL(location.href);
       if (state.view !== "exit") url.searchParams.set("view", state.view); else url.searchParams.delete("view");
+      if (!hc) url.searchParams.delete("run");
       history.replaceState(null, "", url);
     }
     if (state.view === "multiregion" && !state.mr) loadMultiRegion();
     if (state.view === "assurance" && !state.as) loadAssurance();
     if (state.view === "outage" && !state.or) loadOutage();
     if (state.view === "compromise" && !state.cp) loadCompromise();
+    if (hc) window.HealthCheck?.show();
     Object.values(state.charts).forEach((c) => c.resize());
   }
 
@@ -3794,6 +3801,7 @@
     $("#btnMrRetry").addEventListener("click", () => loadMultiRegion());
     $("#btnMrLog").addEventListener("click", () => $("#btnLogs").click());
     for (const b of document.querySelectorAll(".vtab[data-view]")) b.addEventListener("click", () => setView(b.dataset.view));
+    $("#btnHealth").addEventListener("click", (ev) => { ev.preventDefault(); setView("health"); window.scrollTo(0, 0); });
     $("#mrForm").addEventListener("change", (ev) => {
       const el = ev.target;
       state.mrConfirmed = true;
@@ -4226,14 +4234,14 @@
 
   // While a report is being built and nothing of it is on screen yet (a refresh, a new scan, a filter
   // change on a view not shown before), say so instead of leaving the page blank.
-  const VIEW_NAMES = { exit: "Exit Risk Report", multiregion: "Multi-Region Report", assurance: "Cloud Assurance Report", outage: "Outage Risk Report", compromise: "Developer Compromise Report" };
+  const VIEW_NAMES = { exit: "Exit Risk Report", multiregion: "Multi-Region Report", assurance: "Cloud Assurance Report", outage: "Outage Risk Report", compromise: "Developer Compromise Report", health: "Health Check" };
   function loading(view, on) {
     state.loading = { ...(state.loading || {}), [view]: on };
     syncLoading();
   }
   function syncLoading() {
     const v = state.view || "exit";
-    const shown = v === "exit" ? state.report : v === "multiregion" ? state.mr : v === "outage" ? state.or : v === "compromise" ? state.cp : state.as;
+    const shown = v === "health" ? true : v === "exit" ? state.report : v === "multiregion" ? state.mr : v === "outage" ? state.or : v === "compromise" ? state.cp : state.as;
     const el = $("#viewLoading");
     // Every view waits for the scan's report first.
     const on = !!(state.loading?.[v] || state.loading?.exit) && !shown;
@@ -4460,6 +4468,7 @@
           if (st.status !== "complete") { $("#ssoError").textContent = `${st.message} Press Sign in to try again.`; return; }
           toast(`Signed in to ${s.name}`);
           await refreshSsoBadge();
+          document.dispatchEvent(new CustomEvent("exitrisk:signin"));
           if (sso.overScan) {
             const after = sso.after;
             sso.overScan = false;
@@ -4984,6 +4993,7 @@
     bindMultiRegion();
     bindAssurance();
     bindOutage();
+    if (state.view === "health") setView("health");
     if (["balanced", "spend", "equal"].includes(params.get("weighting"))) $("#fWeighting").value = params.get("weighting");
     if (["Moderate", "High"].includes(params.get("min_rating"))) $("#fMinRating").value = params.get("min_rating");
     for (const k of ["include", "exclude", "mode"]) if (params.get(k)) $(`#f${k[0].toUpperCase()}${k.slice(1)}`).value = params.get(k);
@@ -4998,5 +5008,7 @@
 
   }
 
+  // Other views of the console (Health Check) sign in through the same dialog: it closes once signed in.
+  window.ExitRisk = { signIn: (session) => openSsoDialog(null, true, session) };
   document.addEventListener("DOMContentLoaded", boot);
 })();

@@ -23,10 +23,11 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from importlib import resources
 from typing import Annotated
+from urllib.parse import quote
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -1096,8 +1097,9 @@ def create_app(allow_remote: bool = False, scheduler: bool = False) -> FastAPI:
         return {"deleted": True}
 
     @app.get("/health")
-    def health_page():
-        return FileResponse(str(WEB_DIR.joinpath("health.html")), headers={"Cache-Control": "no-store"})
+    def health_page(run: str = ""):
+        # Health Check is a view of the console now, under the same top bar and sign-in.
+        return RedirectResponse("/?view=health" + (f"&run={quote(run)}" if run else ""), status_code=307)
 
     @app.get("/")
     def index():

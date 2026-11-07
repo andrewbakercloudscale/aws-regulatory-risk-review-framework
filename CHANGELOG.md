@@ -6,6 +6,10 @@ and the project uses [semantic versioning](https://semver.org/). The service cat
 
 ## [Unreleased]
 
+### Changed
+- Health Check is a view of the console like the other five reports: the top bar and report tabs stay, and an
+  expired sign-in opens the console's own AWS sign-in instead of a second one. `/health` still works.
+
 ## [0.33.0] - 2026-11-07
 
 ### Added

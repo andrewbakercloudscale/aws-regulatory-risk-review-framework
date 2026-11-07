@@ -3,12 +3,9 @@
   "use strict";
   const $ = (sel) => document.querySelector(sel);
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const LS_THEME = "exitrisk.theme";
   const LS_PROFILE = "exitrisk.health.profile";
   const SEV_DOT = { critical: "var(--sev-critical)", high: "var(--sev-error)", medium: "var(--sev-warning)", low: "var(--sev-info)" };
   const state = { accounts: [], chosen: new Map(), details: {}, max: 10, runId: null, poll: null, reportId: null };
-
-  try { const t = localStorage.getItem(LS_THEME); if (t) document.documentElement.dataset.theme = t; } catch { /* storage may be blocked */ }
 
   async function api(path, opts = {}) {
     const init = { ...opts, headers: { "Content-Type": "application/json", "X-ExitRisk": "1", ...(opts.headers || {}) } };
@@ -127,29 +124,12 @@
     let st = null;
     if (d?.kind === "sso") { try { st = await api(`/api/sign-in?profile=${encodeURIComponent(profile)}`); } catch { /* ignore */ } }
     if (st?.sso && !st.signed_in) {
-      box.innerHTML = `Your AWS sign-in for <b>${esc(profile)}</b> has expired. <button class="btn primary" id="hcSso" type="button">Sign in</button> <span id="hcSsoMsg" class="muted small"></span>`;
-      $("#hcSso").addEventListener("click", () => ssoSignIn(st.session));
+      // The one sign-in of the console (the top bar's), so a sign-in here counts for every report.
+      box.innerHTML = `Your AWS sign-in for <b>${esc(profile)}</b> has expired. <button class="btn primary" id="hcSso" type="button">Sign in</button>`;
+      $("#hcSso").addEventListener("click", () => window.ExitRisk?.signIn(st.session));
       return;
     }
     box.innerHTML = `<span class="error-text">${esc(e.message)}</span>${e.hint ? `<div class="muted small">${esc(e.hint)}</div>` : ""}`;
-  }
-
-  async function ssoSignIn(session) {
-    const tab = window.open("about:blank", "_blank");
-    try {
-      const login = await api("/api/sso/login", { method: "POST", body: { session } });
-      if (tab) { tab.opener = null; tab.location.href = login.verification_uri; }
-      $("#hcSsoMsg").innerHTML = `Approve code <b>${esc(login.user_code)}</b> in the tab that opened (<a href="${esc(login.verification_uri)}" target="_blank" rel="noopener">open it again</a>).`;
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const s = await api(`/api/sso/login/${encodeURIComponent(login.id)}`);
-        if (s.status === "complete") return profileChanged();
-        if (s.status !== "pending") { $("#hcSsoMsg").textContent = s.message || `Sign-in ${s.status}.`; return; }
-      }
-    } catch (e) {
-      if (tab) tab.close();
-      $("#hcSsoMsg").textContent = e.message;
-    }
   }
 
   // ------------------------------------------------------------------ accounts
@@ -272,7 +252,7 @@
 
   function showRunning() {
     state.reportId = null;
-    $("#btnPdf").disabled = true;
+    $("#hcPdf").disabled = true;
     $("#hcReport").innerHTML = runningCard();
   }
 
@@ -325,8 +305,8 @@
   // ------------------------------------------------------------------ report
   function showReport(r) {
     state.reportId = r.id;
-    $("#btnPdf").disabled = false;
-    history.replaceState(null, "", `/health?run=${encodeURIComponent(r.id)}`);
+    $("#hcPdf").disabled = false;
+    setRunParam(r.id);
     const s = r.summary;
     const mine = r.accounts.filter((a) => !a.shared_for);
     const shared = r.accounts.filter((a) => a.shared_for);
@@ -529,7 +509,7 @@
   $("#hcStop").addEventListener("click", stop);
   // Printing from the browser menu too: hidden sections must be on paper.
   window.addEventListener("beforeprint", () => { for (const d of document.querySelectorAll("details.hc-more")) d.open = true; });
-  $("#btnPdf").addEventListener("click", () => {
+  $("#hcPdf").addEventListener("click", () => {
     for (const d of document.querySelectorAll("details.hc-more")) d.open = true;
     setTimeout(() => window.print(), 200);
   });
@@ -547,15 +527,32 @@
     if (del) {
       e.stopPropagation();
       try { await api(`/api/health-check/${encodeURIComponent(del.dataset.del)}`, { method: "DELETE" }); } catch (err) { $("#hcError").textContent = err.message; }
-      if (del.dataset.del === state.reportId) { $("#hcReport").innerHTML = ""; $("#btnPdf").disabled = true; state.reportId = null; history.replaceState(null, "", "/health"); }
+      if (del.dataset.del === state.reportId) { $("#hcReport").innerHTML = ""; $("#hcPdf").disabled = true; state.reportId = null; setRunParam(null); }
       return loadRuns();
     }
     const tr = e.target.closest("tr[data-id]");
     if (tr) openRun(tr.dataset.id);
   });
 
-  loadProfiles();
-  loadRuns();
-  const want = new URLSearchParams(location.search).get("run");
-  if (want) openRun(want);
+  // The run on screen goes in the address, so a reload or a shared link opens it again.
+  function setRunParam(id) {
+    const u = new URL(location.href);
+    if (id) u.searchParams.set("run", id); else u.searchParams.delete("run");
+    history.replaceState(null, "", u);
+  }
+
+  // A view of the console: nothing is read until it is first opened.
+  let started = false;
+  window.HealthCheck = {
+    show() {
+      if (started) return;
+      started = true;
+      loadProfiles();
+      loadRuns();
+      const want = new URLSearchParams(location.search).get("run");
+      if (want) openRun(want);
+    },
+  };
+  // Signed in from the top bar: read the accounts again if they could not be read before.
+  document.addEventListener("exitrisk:signin", () => { if (started && !state.accounts.length) profileChanged(); });
 })();

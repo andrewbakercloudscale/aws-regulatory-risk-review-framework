@@ -9,7 +9,7 @@ It is not tied to a scan, so it works with an access key in an account outside y
 
 ## Running it
 
-1. Open the console and choose **Health check** in the top bar (or go to `/health`).
+1. Open the console and choose **Health check** in the top bar or the Health Check report tab (or go to `/health`). It keeps the console's top bar and its one AWS sign-in.
 2. **Sign in**:
    - **SSO**: the portal lists every account you can reach;
    - **Access key**: the console reads `~/.aws/credentials` and `~/.aws/config` and lists each profile with
